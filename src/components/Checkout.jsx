@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatPrice, lineTotal } from "../utils/format.js";
 import { validateCoupon, shippingQuote } from "../api.js";
 import { isValidPhone } from "../utils/validation.js";
@@ -38,6 +38,7 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
   const [shipping, setShipping] = useState(null); // { km, cost }
   const [shippingError, setShippingError] = useState("");
   const [shippingBusy, setShippingBusy] = useState(false);
+  const shippingBusyRef = useRef(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -49,7 +50,9 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
   const finalTotal = (coupon ? coupon.totalAfter : total) + shippingCost;
   const discount = coupon ? coupon.discount : 0;
 
-  // Cotización de envío con debounce (no satura la API mientras se escribe)
+  // Cotización de envío con debounce (no satura la API). Espera una dirección
+  // con un mínimo de texto y nunca encola una segunda consulta mientras una va
+  // en curso. Si el servicio falla, conserva la última cotización válida.
   useEffect(() => {
     if (!wantsDelivery || !isTandil) {
       setShipping(null);
@@ -58,24 +61,28 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
       return;
     }
     const addr = address.trim();
-    setShippingBusy(true);
-    setShippingError("");
-    if (addr.length < 5) {
+    if (addr.length < 8) {
       setShipping(null);
+      setShippingError("");
       setShippingBusy(false);
       return;
     }
+    if (shippingBusyRef.current) return; // una consulta por vez
+    setShippingBusy(true);
+    setShippingError("");
     const t = setTimeout(async () => {
+      shippingBusyRef.current = true;
       try {
         const res = await shippingQuote(branch.id, addr);
         setShipping({ km: res.km, cost: res.cost });
+        setShippingError("");
       } catch (err) {
-        setShipping(null);
         setShippingError(err.message);
       } finally {
+        shippingBusyRef.current = false;
         setShippingBusy(false);
       }
-    }, 700);
+    }, 1200);
     return () => clearTimeout(t);
   }, [wantsDelivery, isTandil, address, branch.id]);
 
