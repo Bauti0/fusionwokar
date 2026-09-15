@@ -2,10 +2,9 @@
 // FUSIÓN WOK — Cálculo de envío (Tandil, por ahora)
 // Costo = $4.000 base + $1.000 por km (redondeado al km entero).
 //   - Origen: Chacabuco 660, Tandil, Buenos Aires.
-//   - Geocodificación y distancia por ruta (driving).
-//   - Proveedor: Google Maps si GOOGLE_MAPS_API_KEY está
-//     seteada; si no, fallback gratuito: Nominatim (OSM) para
-//     geocodificar + OSRM para la ruta. Ambos con caché.
+//   - Geocodificación y distancia por ruta (driving), 100% gratis:
+//       · Nominatim (OpenStreetMap) geocodifica las direcciones.
+//       · OSRM (router public) calcula la distancia por calles.
 //   - MAX_KM evita que direcciones absurdas disparen el costo.
 // Necochea aún NO implementado: devuelve costo 0.
 // ============================================================
@@ -13,7 +12,6 @@
 const SHIPPING_BASE_COST = Number(process.env.SHIPPING_BASE_COST || 4000);
 const SHIPPING_PER_KM = Number(process.env.SHIPPING_PER_KM || 1000);
 const MAX_DELIVERY_KM = Number(process.env.SHIPPING_MAX_KM || 40);
-const GOOGLE_KEY = (process.env.GOOGLE_MAPS_API_KEY || "").trim();
 
 const ORIGIN_QUERY = "Chacabuco 660, Tandil, Buenos Aires, Argentina";
 const GEO_TIMEOUT_MS = 9000;
@@ -52,12 +50,6 @@ async function fetchJson(url) {
 
 // Geocodifica una dirección → { lat, lng } o null
 async function geocode(query) {
-  if (GOOGLE_KEY) {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${encodeURIComponent(GOOGLE_KEY)}`;
-    const j = await fetchJson(url);
-    const loc = j?.results?.[0]?.geometry?.location;
-    if (j?.status === "OK" && loc) return { lat: loc.lat, lng: loc.lng };
-  }
   const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
   const j = await fetchJson(url);
   const hit = Array.isArray(j) ? j[0] : null;
@@ -67,18 +59,6 @@ async function geocode(query) {
 
 // Distancia de ruta (driving) en km entre dos coordenadas
 async function roadDistanceKm(from, to) {
-  if (GOOGLE_KEY) {
-    const url =
-      `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${from.lat},${from.lng}` +
-      `&destinations=${to.lat},${to.lng}&mode=driving` +
-      `&key=${encodeURIComponent(GOOGLE_KEY)}`;
-    const j = await fetchJson(url);
-    const el = j?.rows?.[0]?.elements?.[0];
-    if (el?.status === "OK" && typeof el.distance?.value === "number") {
-      return el.distance.value / 1000;
-    }
-    throw new Error("Google Maps no pudo calcular la distancia");
-  }
   // OSRM: router público y gratis (suficiente para un restaurante de barrio)
   const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false&alternatives=false`;
   const j = await fetchJson(url);
