@@ -84,6 +84,7 @@ export default function AdminPanel({ onLogout }) {
   const [search, setSearch] = useState("");
   const [includePending, setIncludePending] = useState(false);
   const [printOrder, setPrintOrder] = useState(null);
+  const [printComanda, setPrintComanda] = useState(null);
   const [hasMore, setHasMore] = useState(false);
   const pageRef = useRef(1);
   const seenRef = useRef(loadSeen());
@@ -537,6 +538,12 @@ export default function AdminPanel({ onLogout }) {
                 >
                   🖨️ Imprimir ticket
                 </button>
+                <button
+                  className="btn btn--ghost btn--block"
+                  onClick={() => setPrintComanda(selected)}
+                >
+                  🍳 Imprimir comanda (cocina)
+                </button>
                 {lastWhatsApp && (
                   <a
                     className="btn btn--ghost btn--block"
@@ -554,6 +561,9 @@ export default function AdminPanel({ onLogout }) {
       )}
 
       {printOrder && <TicketPrint order={printOrder} onClose={() => setPrintOrder(null)} />}
+      {printComanda && (
+        <TicketPrint order={printComanda} variant="comanda" onClose={() => setPrintComanda(null)} />
+      )}
     </div>
   );
 }

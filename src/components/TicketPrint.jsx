@@ -8,6 +8,9 @@ import ConfirmModal from "./ui/ConfirmModal.jsx";
 // TicketPrint — imprime el ticket de cocina/entrega en 80mm.
 // Abre una ventana con el ticket listo y dispara print()
 // (la impresora térmica debe estar configurada como predeterminada)
+// Prop `variant`:
+//   "ticket"  → ticket completo para la bolsa del pedido (importes, cliente, etc.)
+//   "comanda" → comanda para la cocina, SOLO cantidades y nombre del producto
 // ============================================================
 
 // Escapa texto para evitar inyección de HTML/XSS en el ticket
@@ -83,7 +86,44 @@ function buildTicketHtml(order) {
 </body></html>`;
 }
 
-export default function TicketPrint({ order, onClose }) {
+// Comanda de cocina: SOLO cantidades y nombre del producto.
+function buildComandaHtml(order) {
+  const branch = BRANCHES[order.branch];
+  const date = new Date(order.createdAt).toLocaleString("es-AR", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+
+  const items = order.items
+    .map((it) => `<tr><td class="qty">${it.qty}×</td><td>${esc(it.name)}</td></tr>`)
+    .join("");
+
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Comanda ${esc(order.orderNumber)}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { width:80mm; font-family:'Courier New',monospace; font-size:15px; color:#000; padding:4mm; }
+  .center { text-align:center; }
+  h1 { font-size:17px; margin-bottom:2px; }
+  .line { border-top:1px dashed #000; margin:6px 0; }
+  table { width:100%; border-collapse:collapse; }
+  td { vertical-align:top; padding:2px 0; }
+  .qty { width:18%; }
+  .b { font-weight:bold; }
+  .big { font-size:18px; }
+</style></head><body>
+  <div class="center">
+    <h1>FUSIÓN WOK</h1>
+    <div>${esc(branch.name)}</div>
+  </div>
+  <div class="line"></div>
+  <div class="center big b">COMANDA · ${esc(order.orderNumber)}</div>
+  <div class="center">${esc(date)} · ${order.orderMode === "delivery" ? "DELIVERY 🛵" : "RETIRO 🥡"}</div>
+  <div class="line"></div>
+  <table>${items}</table>
+</body></html>`;
+}
+
+export default function TicketPrint({ order, onClose, variant = "ticket" }) {
   const done = useRef(false);
   const [blocked, setBlocked] = useState(false);
 
@@ -95,7 +135,7 @@ export default function TicketPrint({ order, onClose }) {
       setBlocked(true);
       return;
     }
-    win.document.write(buildTicketHtml(order));
+    win.document.write(variant === "comanda" ? buildComandaHtml(order) : buildTicketHtml(order));
     win.document.close();
     const t = setTimeout(() => {
       win.focus();
