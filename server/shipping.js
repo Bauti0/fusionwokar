@@ -1,7 +1,10 @@
 // ============================================================
 // FUSIÓN WOK — Cálculo de envío (Tandil, por ahora)
-// Costo = $4.000 base + $100 por cuadra (una cuadra = 100 m).
-// 0 cuadras = solo base (p. ej. la dirección del propio local).
+// Regla real:
+//   - Las primeras 20 cuadras a la redonda del local: $4.000 fijos.
+//   - Cada cuadra extra: $100.
+//   - La cuadra en Tandil ≈ 130 m (configurable con SHIPPING_BLOCK_METERS).
+//   0 cuadras (la dirección del propio local) también paga $4.000.
 //   - Origen: Chacabuco 660, Tandil, Buenos Aires.
 //   - Servicios 100% gratis, con respaldos para que una limitación
 //     de tráfico (429) o una caída no dejen sin envío:
@@ -9,16 +12,21 @@
 //       2) Ruta por calles: OpenRouteService si ORS_API_KEY está seteada
 //          (clave gratuita en openrouteservice.org) → si no, OSRM → si
 //          falla, distancia en línea recta (factor ~1.25x).
-//   - MAX_KM evita que direcciones absurdas disparen el costo.
+//   - MAX_BLOCKS evita que direcciones absurdas disparen el costo.
 // Necochea aún NO implementado: devuelve costo 0.
 // ============================================================
 
+// Franquicia: hasta esta cantidad de cuadras se cobra solo la base
+const FLAT_BLOCKS = Number(process.env.SHIPPING_FLAT_BLOCKS || 20);
+// Costo fijo de la franquicia (base)
 const SHIPPING_BASE_COST = Number(process.env.SHIPPING_BASE_COST || 4000);
+// Costo por cuadra extra por encima de la franquicia
 const SHIPPING_PER_BLOCK = Number(process.env.SHIPPING_PER_BLOCK || 100);
-const MAX_DELIVERY_KM = Number(process.env.SHIPPING_MAX_KM || 40);
+// Tope de reparto total en cuadras (~39 km con cuadras de 130 m)
+const MAX_BLOCKS = Number(process.env.SHIPPING_MAX_BLOCKS || 300);
 const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
-// Una cuadra ≈ 100 m (los geocoders devuelven metros)
-const BLOCK_METERS = 100;
+// Una cuadra en Tandil ≈ 130 m (los geocoders devuelven metros)
+const BLOCK_METERS = Number(process.env.SHIPPING_BLOCK_METERS || 130);
 // Multiplicador línea recta → calles (distancia de ruta aproximada)
 const ROAD_FACTOR = 1.25;
 // El local es fijo: cacheamos ~1 h
@@ -28,14 +36,12 @@ const KM_TTL = 30 * 60 * 1000;
 // Ante un fallo transitorio (429/caída) no volvemos a golpear el servicio
 // por 90 s, así el cliente puede reintentar sin saturar nada.
 const FAIL_TTL = 90 * 1000;
-// Tope de reparto en cuadras (= MAX_DELIVERY_KM * 10)
-const MAX_BLOCKS = MAX_DELIVERY_KM * (1000 / BLOCK_METERS);
 
 const ORIGIN_QUERY = "Chacabuco 660, Tandil, Buenos Aires, Argentina";
 const GEO_TIMEOUT_MS = 9000;
 const USER_AGENT = "FusionWok-app/1.0 (contacto: instagram.com/fusionwoktandil)";
 
-const blockCache = new Map(); // dirección → { blocks, at }
+const blockCache = new Map(); // dirección → { blocks, cost, at }
 const failCache = new Map(); // dirección → { at } (fallos transitorios)
 let originCoords = null;
 let originAt = 0;
@@ -211,7 +217,7 @@ export async function computeShipping(branch, address) {
 
   const cached = blockCache.get(key);
   if (cached && Date.now() - cached.at < KM_TTL) {
-    return { cost: SHIPPING_BASE_COST + cached.blocks * SHIPPING_PER_BLOCK, blocks: cached.blocks, supported: true };
+    return { cost: cached.cost, blocks: cached.blocks, supported: true };
   }
   const failed = failCache.get(key);
   if (failed && Date.now() - failed.at < FAIL_TTL) {
@@ -224,16 +230,29 @@ export async function computeShipping(branch, address) {
     throw unknown("No pudimos ubicar esa dirección. Revisá calle y número.");
   }
   const km = await roadDistanceKm(await getOrigin(), dest);
+  const exact = (km * 1000) / BLOCK_METERS;
 
-  // Cuadras = metros / 100, redondeado (0 cuadras = solo la base)
-  const blocks = Math.round((km * 1000) / BLOCK_METERS);
-  if (blocks > MAX_BLOCKS) {
+  // Fuera de zona de reparto
+  if (exact > MAX_BLOCKS) {
     failCache.set(key, { at: Date.now() });
     throw new ShippingError(
       "zone",
-      `Esa dirección queda a ${blocks} cuadras. Nuestro reparto cubre hasta ${MAX_BLOCKS} cuadras (~${MAX_DELIVERY_KM} km).`
+      `Esa dirección queda a ${Math.round(exact)} cuadras. Nuestro reparto cubre hasta ${MAX_BLOCKS} cuadras (~${Math.round((MAX_BLOCKS * BLOCK_METERS) / 1000)} km).`
     );
   }
-  blockCache.set(key, { blocks, at: Date.now() });
-  return { cost: SHIPPING_BASE_COST + blocks * SHIPPING_PER_BLOCK, blocks, supported: true };
+
+  // Dentro de la franquicia (hasta 20 cuadras): costo fijo.
+  // Después: la primera cuadra entera o parcial que salga de la franquicia
+  // paga como extra ($100), igual que cada cuadra adicional.
+  let cost, blocks;
+  if (exact <= FLAT_BLOCKS) {
+    cost = SHIPPING_BASE_COST;
+    blocks = Math.round(exact);
+  } else {
+    const extra = Math.ceil(exact) - FLAT_BLOCKS;
+    cost = SHIPPING_BASE_COST + extra * SHIPPING_PER_BLOCK;
+    blocks = Math.ceil(exact);
+  }
+  blockCache.set(key, { blocks, cost, at: Date.now() });
+  return { cost, blocks, supported: true };
 }

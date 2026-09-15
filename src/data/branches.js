@@ -54,7 +54,7 @@ export const BRANCHES = {
       { days: [5, 6], from: "11:30", to: "15:30" },
       { days: [5, 6], from: "19:30", to: "23:30" },
     ],
-    deliveryInfo: "🛵 Envío: $4.000 base + $100 por cuadra (una cuadra ≈ 100 m). Ingresá tu dirección y te mostramos el costo.",
+    deliveryInfo: "🛵 Envío: $4.000 hasta 20 cuadras a la redonda · +$100 por cuadra extra. Ingresá tu dirección y te mostramos el costo.",
     supportsDelivery: true,
   },
 };
