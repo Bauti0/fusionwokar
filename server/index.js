@@ -241,7 +241,18 @@ app.use("/api/admin", (req, res, next) => {
 });
 
 // ---------- utilidades ----------
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+// Base URL para canonical/og:image/sitemap. Si PUBLIC_BASE_URL está seteado
+// se usa tal cual (importante con tu dominio propio). Si no, se deriva del
+// request (Host + proto) → funciona sin config en el subdominio *.onrender.com
+// y en cualquier dominio que apunte al servicio.
+const ENV_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+function requestBaseUrl(req) {
+  if (ENV_BASE_URL) return ENV_BASE_URL;
+  const host = req.headers.host;
+  if (!host) return `http://localhost:${PORT}`;
+  const proto = req.headers["x-forwarded-proto"];
+  return `${proto && String(proto).includes("https") ? "https" : "http"}://${host}`;
+}
 const TOKEN_TTL_MS = Number(process.env.ADMIN_TOKEN_TTL_MS || 24 * 3600 * 1000); // 24h por defecto
 
 // Carpeta de imágenes de producto (servida como /uploads)
@@ -622,11 +633,11 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
           title: `Pedido Fusión Wok ${orderNumber}`,
           description: `${items.length} items · ${branch}`,
           backUrls: {
-            success: `${PUBLIC_BASE_URL}/?pago=aprobado&pedido=${orderNumber}`,
-            pending: `${PUBLIC_BASE_URL}/?pago=pendiente&pedido=${orderNumber}`,
-            failure: `${PUBLIC_BASE_URL}/?pago=rechazado&pedido=${orderNumber}`,
+            success: `${requestBaseUrl(req)}/?pago=aprobado&pedido=${orderNumber}`,
+            pending: `${requestBaseUrl(req)}/?pago=pendiente&pedido=${orderNumber}`,
+            failure: `${requestBaseUrl(req)}/?pago=rechazado&pedido=${orderNumber}`,
           },
-          notificationUrl: `${PUBLIC_BASE_URL}/api/webhooks/mercadopago`,
+          notificationUrl: `${requestBaseUrl(req)}/api/webhooks/mercadopago`,
         });
         mpPreferenceId = pref.id;
         initPoint = pref.init_point || pref.sandbox_init_point || null;
@@ -2019,18 +2030,6 @@ app.use(
   express.static(distAssetsDir, { maxAge: "1y", immutable: true })
 );
 
-// index.html y demás estáticos sin hash: negocian con ETag/Last-Modified
-// (un nuevo build cambia el contenido y el nombre de los assets).
-app.use(
-  express.static(distDir, {
-    etag: true,
-    maxAge: 0,
-    setHeaders(res) {
-      res.setHeader("Cache-Control", "no-cache, must-revalidate");
-    },
-  })
-);
-
 // SEO: se lee el HTML del build una vez y se reescribe por request
 // (title, description, canonical, og:image, JSON-LD por ruta/sucursal).
 let indexHtml = null;
@@ -2049,7 +2048,7 @@ app.get("/robots.txt", (req, res) => {
       "Disallow: /admin",
       "Disallow: /track/",
       "Disallow: /api",
-      `Sitemap: ${PUBLIC_BASE_URL}/sitemap.xml`,
+      `Sitemap: ${requestBaseUrl(req)}/sitemap.xml`,
       "",
     ].join("\n")
   );
@@ -2058,11 +2057,12 @@ app.get("/robots.txt", (req, res) => {
 app.get("/sitemap.xml", (req, res) => {
   res.type("application/xml");
   res.setHeader("Cache-Control", "no-cache, must-revalidate");
+  const baseUrl = requestBaseUrl(req);
   const urls = [
-    { loc: `${PUBLIC_BASE_URL}/`, priority: "1.0", changefreq: "weekly" },
-    { loc: `${PUBLIC_BASE_URL}/?branch=necochea`, priority: "0.9", changefreq: "weekly" },
-    { loc: `${PUBLIC_BASE_URL}/?branch=tandil`, priority: "0.9", changefreq: "weekly" },
-    { loc: `${PUBLIC_BASE_URL}/track`, priority: "0.5", changefreq: "monthly" },
+    { loc: `${baseUrl}/`, priority: "1.0", changefreq: "weekly" },
+    { loc: `${baseUrl}/?branch=necochea`, priority: "0.9", changefreq: "weekly" },
+    { loc: `${baseUrl}/?branch=tandil`, priority: "0.9", changefreq: "weekly" },
+    { loc: `${baseUrl}/track`, priority: "0.5", changefreq: "monthly" },
   ];
   const body =
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
@@ -2077,7 +2077,13 @@ app.get("/sitemap.xml", (req, res) => {
   res.send(body);
 });
 
-app.get(/^(?!\/api).*/, (req, res) => {
+// Páginas SPA → HTML con SEO por ruta. Va ANTES de express.static porque
+// el static sirve dist/index.html para "/" (y se saltaría la inyección).
+// Los archivos con extensión (js/css/img) se dejan pasar al static.
+app.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  if (req.path.startsWith("/api")) return next();
+  if (/\.[a-zA-Z0-9]{1,10}$/.test(req.path)) return next();
   const isSensitive = req.path.startsWith("/admin") || req.path.startsWith("/track/");
   if (isSensitive) res.setHeader("X-Robots-Tag", "noindex, follow");
   const canonicalPath =
@@ -2089,10 +2095,28 @@ app.get(/^(?!\/api).*/, (req, res) => {
     enhanceHtml(indexTemplate(), {
       pathname: req.path,
       query: req.query || {},
-      baseUrl: PUBLIC_BASE_URL,
+      baseUrl: requestBaseUrl(req),
       canonicalPath,
     })
   );
+});
+
+// index.html y demás estáticos sin hash: negocian con ETag/Last-Modified
+// (un nuevo build cambia el contenido y el nombre de los assets).
+app.use(
+  express.static(distDir, {
+    etag: true,
+    maxAge: 0,
+    setHeaders(res) {
+      res.setHeader("Cache-Control", "no-cache, must-revalidate");
+    },
+  })
+);
+
+// Fallback SPA de último recurso (rutas no-api que el static no sirvió)
+app.get(/^(?!\/api).*/, (req, res) => {
+  res.setHeader("Cache-Control", "no-cache, must-revalidate");
+  res.sendFile(path.join(distDir, "index.html"));
 });
 
 app.listen(PORT, () => {
