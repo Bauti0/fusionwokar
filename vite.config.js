@@ -10,6 +10,12 @@ export default defineConfig({
         target: "http://localhost:3001",
         changeOrigin: true,
       },
+      // En desarrollo, las imágenes de producto (/uploads/...) también
+      // van al backend Express (en prod las sirve el propio Express).
+      "/uploads": {
+        target: "http://localhost:3001",
+        changeOrigin: true,
+      },
     },
   },
   build: {

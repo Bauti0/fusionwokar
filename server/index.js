@@ -118,7 +118,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map((s) => s.trim())
   .filter(Boolean);
 app.use(cors({ origin: allowedOrigins.length ? allowedOrigins : false }));
-app.use(express.json());
+app.use(express.json({ limit: "6mb" }));
 
 // Compresión gzip para respuestas de texto (JSON, HTML, JS, CSS).
 // No usamos el paquete `compression` porque con Express 5 se corrompe
