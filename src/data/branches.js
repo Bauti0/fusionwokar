@@ -54,7 +54,7 @@ export const BRANCHES = {
       { days: [5, 6], from: "11:30", to: "15:30" },
       { days: [5, 6], from: "19:30", to: "23:30" },
     ],
-    deliveryInfo: "Costo de envío según tu zona · Te lo confirmamos por WhatsApp",
+    deliveryInfo: "🛵 Envío: $4.000 + $1.000 por km (hasta 40 km). Ingresá tu dirección y te mostramos el costo.",
     supportsDelivery: true,
   },
 };

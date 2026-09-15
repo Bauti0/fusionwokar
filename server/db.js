@@ -198,6 +198,10 @@ await ensureColumn("products", "image", "image TEXT NOT NULL DEFAULT ''");
 // "web" = pedido online normal. "whatsapp"/"counter" = cargado a mano
 // por el admin (pedido que llegó por WhatsApp o cliente de mostrador).
 await ensureColumn("orders", "source", "source TEXT NOT NULL DEFAULT 'web'");
+// Costo de envío calculado y kilómetros (Tandil). El total del pedido ya lo
+// incluye; el desglose se guarda para mostrarlo en el panel de admin.
+await ensureColumn("orders", "shipping", "shipping INTEGER NOT NULL DEFAULT 0");
+await ensureColumn("orders", "shipping_km", "shipping_km INTEGER NOT NULL DEFAULT 0");
 
 // Convierte una fila de products en el objeto de producto del menú
 export function toProduct(row) {
@@ -296,6 +300,8 @@ export function toPublicOrder(row) {
     total: row.total,
     discount: row.discount || 0,
     couponCode: row.coupon_code || "",
+    shippingCost: row.shipping || 0,
+    shippingKm: row.shipping_km || 0,
     scheduledFor: row.scheduled_for || "",
     notes: row.notes,
     source: row.source || "web",
@@ -321,6 +327,8 @@ export function toPublicOrderPublic(row) {
     total: row.total,
     discount: row.discount || 0,
     couponCode: row.coupon_code || "",
+    shippingCost: row.shipping || 0,
+    shippingKm: row.shipping_km || 0,
     scheduledFor: row.scheduled_for || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,

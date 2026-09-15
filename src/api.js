@@ -78,6 +78,16 @@ export function validateCoupon(code, total) {
   });
 }
 
+// ---- envío (cliente) ----
+// Calcula el costo de envío para una dirección. Solo Tandil responde con
+// costo; Necochea devuelve { supported:false }.
+export function shippingQuote(branch, address) {
+  return request("/api/shipping/quote", {
+    method: "POST",
+    body: JSON.stringify({ branch, address }),
+  });
+}
+
 // ---- admin (cookie httpOnly, sin token) ----
 export function adminLogin(username, password) {
   return request("/api/admin/login", {

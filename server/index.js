@@ -20,6 +20,7 @@ import { createPreference, getPayment, getMpPublicKey, isDemoMode, verifyWebhook
 import { MENUS } from "../src/data/menus.js";
 import { enhanceHtml } from "./seo.js";
 import { isOpenAtTime, toWallclock } from "../src/utils/schedule.js";
+import { computeShipping } from "./shipping.js";
 
 // ============================================================
 // FUSIÓN WOK — API + servidor de producción
@@ -31,6 +32,7 @@ import { isOpenAtTime, toWallclock } from "../src/utils/schedule.js";
 //   GET   /api/menu/:branchId               → menú de una sucursal (desde la BD)
 //   POST  /api/events                       → registro de eventos (analytics)
 //   POST  /api/coupons/validate             → validar cupón de descuento
+//   POST  /api/shipping/quote               → calcular costo de envío (Tandil)
 //   POST  /api/webhooks/mercadopago         → webhook de pago (verifica + actualiza)
 //   POST  /api/payments/demo/:id/:action    → simular aprobación/rechazo (solo demo)
 //   POST  /api/admin/login                  → login del panel (cookie httpOnly)
@@ -525,6 +527,16 @@ async function validateOrderBody(body) {
     discount = coupon.discount;
     appliedCoupon = coupon.code;
   }
+  // Envío (solo delivery en Tandil por ahora): se recalcula server-side para
+  // que nadie pueda trucar el costo desde el cliente.
+  let shipping = { cost: 0, km: 0, supported: branch === "tandil" };
+  if (orderMode === "delivery" && branch === "tandil") {
+    try {
+      shipping = await computeShipping(branch, address);
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
   return {
     data: {
       branch,
@@ -534,10 +546,11 @@ async function validateOrderBody(body) {
       address: address.slice(0, 200),
       items: cleanItems,
       notes: String(notes || "").slice(0, 300),
-      total: total - discount,
+      total: total - discount + shipping.cost,
       discount,
       couponCode: appliedCoupon,
       scheduledFor: scheduled,
+      shipping,
     },
   };
 }
@@ -606,7 +619,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
   try {
     const result = await validateOrderBody(req.body);
     if (result.error) return res.status(400).json({ error: result.error });
-    const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor } = result.data;
+    const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
 
     const orderNumber = await nextOrderNumber();
     const demo = isDemoMode();
@@ -652,8 +665,8 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         INSERT INTO orders
           (order_number, branch, customer_name, customer_phone, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
-           scheduled_for, notes, mp_preference_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           scheduled_for, notes, mp_preference_id, shipping, shipping_km, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
           args: [
             orderNumber,
@@ -672,6 +685,8 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
             scheduledFor,
             notes,
             mpPreferenceId,
+            shipping.cost,
+            shipping.km,
             ts,
             ts,
           ],
@@ -695,10 +710,11 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         preferenceId: mpPreferenceId || `demo-${Number(info.lastInsertRowid)}`,
         initPoint,
         status: isMp ? "pending_payment" : "received",
-        total,       // total recalculado server-side (con descuento aplicado)
+        total,       // total recalculado server-side (con descuento y envío)
         discount,
         couponCode,
         scheduledFor,
+        shipping: { cost: shipping.cost, km: shipping.km },
       });
     } catch (err) {
       // El pedido no se creó: devolvemos el uso reservado del cupón
@@ -843,6 +859,23 @@ app.post("/api/coupons/validate", rateLimit({ max: 30, name: "couponvalidate" })
   } catch (err) {
     console.error("POST /api/coupons/validate:", err.message);
     res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- envío (cliente) ----------
+// Calcula el costo de envío para una dirección. Solo Tandil por ahora:
+// Necochea responde supported:false (sin costo calculado).
+app.post("/api/shipping/quote", rateLimit({ max: 30, windowMs: 60000, name: "shipping" }), async (req, res) => {
+  try {
+    const { branch, address } = req.body || {};
+    if (typeof branch !== "string" || !branch) return res.status(400).json({ error: "Falta la sucursal" });
+    if (typeof address !== "string" || !address.trim()) return res.status(400).json({ error: "Falta la dirección" });
+    const s = await computeShipping(branch, address);
+    if (!s.supported) return res.json({ ok: true, km: 0, cost: 0, supported: false });
+    res.json({ ok: true, km: s.km, cost: s.cost, supported: true });
+  } catch (err) {
+    console.error("POST /api/shipping/quote:", err.message);
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -1434,7 +1467,7 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
     }
     const result = await validateOrderBody(req.body);
     if (result.error) return res.status(400).json({ error: result.error });
-    const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor } = result.data;
+    const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
 
     const orderNumber = await nextOrderNumber();
     const ts = now();
@@ -1445,8 +1478,8 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
           sql: `INSERT INTO orders
           (order_number, branch, customer_name, customer_phone, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
-           scheduled_for, notes, source, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           scheduled_for, notes, source, shipping, shipping_km, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           args: [
             orderNumber,
             branch,
@@ -1462,6 +1495,8 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
             scheduledFor,
             notes,
             source,
+            shipping.cost,
+            shipping.km,
             ts,
             ts,
           ],

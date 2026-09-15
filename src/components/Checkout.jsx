@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { formatPrice, lineTotal } from "../utils/format.js";
-import { validateCoupon } from "../api.js";
+import { validateCoupon, shippingQuote } from "../api.js";
 import { isValidPhone } from "../utils/validation.js";
 import { isOpenAtTime, closedLabel } from "../utils/schedule.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
@@ -35,13 +35,49 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
   const [coupon, setCoupon] = useState(null); // { code, discount, totalAfter }
   const [couponError, setCouponError] = useState("");
   const [couponBusy, setCouponBusy] = useState(false);
+  const [shipping, setShipping] = useState(null); // { km, cost }
+  const [shippingError, setShippingError] = useState("");
+  const [shippingBusy, setShippingBusy] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const { items, total, count } = cart;
   const isMp = paymentMethod === "mercadopago";
-  const finalTotal = coupon ? coupon.totalAfter : total;
+  const wantsDelivery = orderMode === "delivery";
+  const isTandil = branch.id === "tandil";
+  const shippingCost = wantsDelivery ? shipping?.cost || 0 : 0;
+  const finalTotal = (coupon ? coupon.totalAfter : total) + shippingCost;
   const discount = coupon ? coupon.discount : 0;
+
+  // Cotización de envío con debounce (no satura la API mientras se escribe)
+  useEffect(() => {
+    if (!wantsDelivery || !isTandil) {
+      setShipping(null);
+      setShippingError("");
+      setShippingBusy(false);
+      return;
+    }
+    const addr = address.trim();
+    setShippingBusy(true);
+    setShippingError("");
+    if (addr.length < 5) {
+      setShipping(null);
+      setShippingBusy(false);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const res = await shippingQuote(branch.id, addr);
+        setShipping({ km: res.km, cost: res.cost });
+      } catch (err) {
+        setShipping(null);
+        setShippingError(err.message);
+      } finally {
+        setShippingBusy(false);
+      }
+    }, 700);
+    return () => clearTimeout(t);
+  }, [wantsDelivery, isTandil, address, branch.id]);
 
   function minScheduled() {
     const d = new Date(Date.now() + 10 * 60000);
@@ -79,6 +115,16 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
       setError("Ingresá tu dirección de entrega.");
       return;
     }
+    if (orderMode === "delivery" && isTandil) {
+      if (shippingError) {
+        setError(shippingError);
+        return;
+      }
+      if (!shipping) {
+        setError("Estamos calculando el costo de envío…");
+        return;
+      }
+    }
     if (scheduleMode === "scheduled" && !scheduledAt) {
       setError("Elegí la fecha y hora para tu pedido.");
       return;
@@ -99,6 +145,9 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
         paymentMethod,
         address: orderMode === "delivery" ? address.trim() : "",
         deliveryNotes: orderMode === "delivery" ? deliveryNotes.trim() : "",
+        shipping: wantsDelivery
+          ? { cost: shipping?.cost || 0, km: shipping?.km || 0 }
+          : { cost: 0, km: 0 },
         scheduledFor: scheduleMode === "scheduled" && scheduledAt
           ? new Date(scheduledAt).toISOString()
           : "",
@@ -186,6 +235,16 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
               />
+              {isTandil && !shippingError && (
+                <p className="hint">
+                  {shippingBusy
+                    ? "Calculando costo de envío…"
+                    : shipping
+                      ? `Envío: ${formatPrice(shipping.cost)}${shipping.km ? ` (aprox. ${shipping.km} km)` : ""}`
+                      : "Ingresá la dirección para calcular el envío."}
+                </p>
+              )}
+              {isTandil && shippingError && <p className="form-error">{shippingError}</p>}
             </div>
           )}
           {orderMode === "delivery" && (
@@ -301,6 +360,12 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
             <div className="summary__row">
               <span>Descuento ({coupon?.code})</span>
               <span>−{formatPrice(discount)}</span>
+            </div>
+          )}
+          {wantsDelivery && isTandil && shippingCost > 0 && (
+            <div className="summary__row">
+              <span>Envío {shipping?.km ? `(~${shipping.km} km)` : ""}</span>
+              <span>{formatPrice(shippingCost)}</span>
             </div>
           )}
           <div className="summary__row summary__row--total">

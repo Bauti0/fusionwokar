@@ -17,7 +17,7 @@ function itemLines(item) {
 }
 
 // Arma el texto completo del pedido
-export function buildOrderMessage({ branch, order, customer, orderMode, paymentMethod, address, deliveryNotes, coupon, discount, scheduledFor }) {
+export function buildOrderMessage({ branch, order, customer, orderMode, paymentMethod, address, deliveryNotes, coupon, discount, scheduledFor, shipping }) {
   const header =
     `🍜 *NUEVO PEDIDO — Fusión Wok* 🍜\n` +
     `Sucursal: *${branch.name}*\n` +
@@ -31,13 +31,18 @@ export function buildOrderMessage({ branch, order, customer, orderMode, paymentM
     0
   );
   const total = subtotal + extrasTotal;
+  const shippingCost = Math.round(Number(shipping?.cost) || 0);
+  const shippingKm = Math.round(Number(shipping?.km) || 0);
 
   let totals =
     `\n\n*Subtotal:* ${formatPrice(subtotal)}\n`;
   if (discount > 0) {
     totals += `🏷️ *Descuento (${coupon}):* -${formatPrice(discount)}\n`;
   }
-  totals += `*Total: ${formatPrice(Math.max(total - (discount || 0), 0))}*`;
+  if (shippingCost > 0) {
+    totals += `🛵 *Envío*${shippingKm ? ` (~${shippingKm} km)` : ""}: ${formatPrice(shippingCost)}\n`;
+  }
+  totals += `*Total: ${formatPrice(Math.max(total - (discount || 0) + shippingCost, 0))}*`;
   if (scheduledFor) {
     try {
       totals += `\n🕒 *Programado para:* ${new Date(scheduledFor).toLocaleString("es-AR")}`;
@@ -59,8 +64,8 @@ export function buildOrderMessage({ branch, order, customer, orderMode, paymentM
 }
 
 // Abre WhatsApp con el mensaje prellenado hacia el número de la sucursal
-export function sendOrderByWhatsApp({ branch, order, customer, orderMode, paymentMethod, address, deliveryNotes, coupon, discount, scheduledFor }) {
-  const message = buildOrderMessage({ branch, order, customer, orderMode, paymentMethod, address, deliveryNotes, coupon, discount, scheduledFor });
+export function sendOrderByWhatsApp({ branch, order, customer, orderMode, paymentMethod, address, deliveryNotes, coupon, discount, scheduledFor, shipping }) {
+  const message = buildOrderMessage({ branch, order, customer, orderMode, paymentMethod, address, deliveryNotes, coupon, discount, scheduledFor, shipping });
   const url = `https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(message)}`;
   window.open(url, "_blank");
 }

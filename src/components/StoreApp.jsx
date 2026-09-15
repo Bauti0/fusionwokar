@@ -128,7 +128,7 @@ export default function StoreApp() {
   // - Efectivo/Transferencia → se crea el pedido (confirmado) y se abre
   //   WhatsApp con el detalle, como antes.
   const handleConfirmCheckout = useCallback(
-    async ({ customer: cust, orderMode: mode, paymentMethod, address, deliveryNotes, scheduledFor, couponCode }) => {
+    async ({ customer: cust, orderMode: mode, paymentMethod, address, deliveryNotes, scheduledFor, couponCode, shipping }) => {
       // Guardamos los datos del cliente; si es delivery conservamos también
       // la dirección y las observaciones para autocompletar el próximo pedido
       setCustomer((prev) =>
@@ -156,6 +156,10 @@ export default function StoreApp() {
         notes: mode === "delivery" ? deliveryNotes || "" : "",
         scheduledFor: scheduledFor || "",
         couponCode: couponCode || "",
+        shipping: {
+          cost: Math.round(Number(shipping?.cost) || 0),
+          km: Math.round(Number(shipping?.km) || 0),
+        },
       };
 
       if (paymentMethod === "mercadopago") {
@@ -203,6 +207,7 @@ export default function StoreApp() {
         coupon: serverCoupon,
         discount: serverDiscount,
         scheduledFor: serverScheduled,
+        shipping,
       });
       cart.clearCart();
       setLastOrder({ orderNumber, paymentStatus: "approved", status: "received" });
