@@ -1,12 +1,14 @@
 // ============================================================
 // FUSIÓN WOK — Cálculo de envío (Tandil, por ahora)
-// Costo = $4.000 base + $1.000 por km (redondeado al km entero).
+// Costo = $4.000 base + $1.000 por km (km redondeado; 0 km = solo base,
+// p. ej. la dirección del propio local).
 //   - Origen: Chacabuco 660, Tandil, Buenos Aires.
 //   - Servicios 100% gratis, con respaldos para que una limitación
 //     de tráfico (429) o una caída no dejen sin envío:
 //       1) Geocoding: Nominatim (OSM) → si falla, Photon (Komoot).
-//       2) Ruta por calles: OSRM → si falla, distancia en línea recta
-//          con factor de calles (~1.25x). Siempre queda una cotización.
+//       2) Ruta por calles: OpenRouteService si ORS_API_KEY está seteada
+//          (clave gratuita en openrouteservice.org) → si no, OSRM → si
+//          falla, distancia en línea recta (factor ~1.25x).
 //   - MAX_KM evita que direcciones absurdas disparen el costo.
 // Necochea aún NO implementado: devuelve costo 0.
 // ============================================================
@@ -14,6 +16,7 @@
 const SHIPPING_BASE_COST = Number(process.env.SHIPPING_BASE_COST || 4000);
 const SHIPPING_PER_KM = Number(process.env.SHIPPING_PER_KM || 1000);
 const MAX_DELIVERY_KM = Number(process.env.SHIPPING_MAX_KM || 40);
+const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
 // Multiplicador línea recta → calles (distancia de ruta aproximada)
 const ROAD_FACTOR = 1.25;
 // El local es fijo: cacheamos ~1 h
@@ -140,9 +143,26 @@ async function geocode(query) {
   );
 }
 
-// Distancia por calles (OSRM). Si falla o no hay ruta, estimamos con la
-// línea recta para no dejar al cliente sin cotización.
+// Distancia por calles. Orden: OpenRouteService (si hay key) → OSRM → línea
+// recta como red de seguridad para que siempre quede una cotización.
 async function roadDistanceKm(from, to) {
+  if (ORS_KEY) {
+    try {
+      return await withRetry(() =>
+        throttled(async () => {
+          const url =
+            `https://api.openrouteservice.org/v2/directions/driving-car?api_key=` +
+            `${encodeURIComponent(ORS_KEY)}&start=${from.lng},${from.lat}&end=${to.lng},${to.lat}`;
+          const j = await fetchJson(url);
+          const d = j?.routes?.[0]?.summary?.distance;
+          if (typeof d !== "number" || d <= 0) throw new Error("ORS sin ruta");
+          return d / 1000;
+        })
+      );
+    } catch {
+      /* si ORS falla, seguimos con OSRM */
+    }
+  }
   try {
     return await withRetry(() =>
       throttled(async () => {
@@ -201,7 +221,9 @@ export async function computeShipping(branch, address) {
   }
   const km = await roadDistanceKm(await getOrigin(), dest);
 
-  const roundedKm = Math.max(1, Math.ceil(km));
+  // Redondeo al km entero (permite 0 km: la dirección del local se cobra
+  // solo la base). Sin mínimo forzado de 1 km.
+  const roundedKm = Math.round(km);
   if (roundedKm > MAX_DELIVERY_KM) {
     failCache.set(key, { at: Date.now() });
     throw new ShippingError(
