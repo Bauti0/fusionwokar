@@ -529,7 +529,7 @@ async function validateOrderBody(body) {
   }
   // Envío (solo delivery en Tandil por ahora): se recalcula server-side para
   // que nadie pueda trucar el costo desde el cliente.
-  let shipping = { cost: 0, km: 0, supported: branch === "tandil" };
+  let shipping = { cost: 0, blocks: 0, supported: branch === "tandil" };
   if (orderMode === "delivery" && branch === "tandil") {
     try {
       shipping = await computeShipping(branch, address);
