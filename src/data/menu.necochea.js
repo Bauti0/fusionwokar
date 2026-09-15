@@ -64,6 +64,7 @@ export default {
           products: [
             {
               id: "chow-mein-carne",
+              image: "/uploads/products/chow-mein-carne.jpg",
               name: "Chow mein de carne",
               price: 18900,
               description:
@@ -73,6 +74,7 @@ export default {
             },
             {
               id: "chow-mein-cerdo",
+              image: "/uploads/products/chow-mein-cerdo.jpg",
               name: "Chow mein de cerdo",
               price: 18900,
               description:
@@ -82,6 +84,7 @@ export default {
             },
             {
               id: "chow-mein-pollo",
+              image: "/uploads/products/chow-mein-pollo.jpg",
               name: "Chow mein de pollo",
               price: 18900,
               description:
@@ -91,6 +94,7 @@ export default {
             },
             {
               id: "chow-mein-veggie",
+              image: "/uploads/products/chow-mein-veggie.jpg",
               name: "Chow mein Veggie",
               price: 18900,
               description:
@@ -103,21 +107,21 @@ export default {
         {
           name: "Chow Fan (Arroz)",
           products: [
-            { id: "chow-fan-carne", name: "Chow fan de carne", price: 18900, extras: woksExtras(), available: true },
-            { id: "chow-fan-mixto", name: "Chow Fan Mixto", price: 18900, extras: woksExtras(), available: true },
-            { id: "chow-fan-cerdo", name: "Chow fan de cerdo", price: 18900, extras: woksExtras(), available: true },
-            { id: "chow-fan-pollo", name: "Chow fan de pollo", price: 18900, extras: woksExtras(), available: true },
-            { id: "chow-fan-veggie", name: "Chow fan Veggie", price: 18900, extras: woksExtras(), available: true },
+            { id: "chow-fan-carne", name: "Chow fan de carne", price: 18900, image: "/uploads/products/chow-fan-carne.jpg", extras: woksExtras(), available: true },
+            { id: "chow-fan-mixto", name: "Chow Fan Mixto", price: 18900, image: "/uploads/products/chow-fan-mixto.jpg", extras: woksExtras(), available: true },
+            { id: "chow-fan-cerdo", name: "Chow fan de cerdo", price: 18900, image: "/uploads/products/chow-fan-cerdo.jpg", extras: woksExtras(), available: true },
+            { id: "chow-fan-pollo", name: "Chow fan de pollo", price: 18900, image: "/uploads/products/chow-fan-pollo.jpg", extras: woksExtras(), available: true },
+            { id: "chow-fan-veggie", name: "Chow fan Veggie", price: 18900, image: "/uploads/products/chow-fan-veggie.jpg", extras: woksExtras(), available: true },
           ],
         },
         {
           name: "Chow Mi Fen (Fideos de arroz)",
           products: [
-            { id: "chow-mi-fen-carne", name: "Chow mi fen de carne", price: 19900, extras: woksExtras(), available: true },
-            { id: "chow-mi-fen-mixto", name: "Chow Mi Fen Mixto", price: 19900, extras: woksExtras(), available: true },
-            { id: "chow-mi-fen-cerdo", name: "Chow mi fen de cerdo", price: 19900, extras: woksExtras(), available: true },
-            { id: "chow-mi-fen-pollo", name: "Chow mi fen de pollo", price: 19900, extras: woksExtras(), available: true },
-            { id: "chow-mi-fen-veggie", name: "Chow mi fen Veggie", price: 19900, extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-carne", name: "Chow mi fen de carne", price: 19900, image: "/uploads/products/chow-mi-fen-carne.jpg", extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-mixto", name: "Chow Mi Fen Mixto", price: 19900, image: "/uploads/products/chow-mi-fen-mixto.jpg", extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-cerdo", name: "Chow mi fen de cerdo", price: 19900, image: "/uploads/products/chow-mi-fen-cerdo.jpg", extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-pollo", name: "Chow mi fen de pollo", price: 19900, image: "/uploads/products/chow-mi-fen-pollo.jpg", extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-veggie", name: "Chow mi fen Veggie", price: 19900, image: "/uploads/products/chow-mi-fen-veggie.jpg", extras: woksExtras(), available: true },
           ],
         },
       ],
@@ -165,11 +169,11 @@ export default {
           name: "Woks",
           products: [
             { id: "mi-fen-apto-veggie", name: "Mi Fen Apto Veggie", price: 19900, extras: woksExtras(), available: true },
-            { id: "mi-fen-apto-pollo", name: "Mi Fen Apto Pollo", price: 19900, extras: woksExtras(), available: true },
+            { id: "mi-fen-apto-pollo", name: "Mi Fen Apto Pollo", price: 19900, image: "/uploads/products/mi-fen-apto-pollo.jpg", extras: woksExtras(), available: true },
             { id: "mi-fen-apto-carne", name: "Mi Fen Apto Carne", price: 19900, extras: woksExtras(), available: true },
             { id: "mi-fen-apto-mixto", name: "Mi Fen Apto Mixto", price: 19900, extras: woksExtras(), available: true },
             { id: "fan-apto-veggie", name: "Fan Apto Veggie", price: 18900, extras: woksExtras(), available: true },
-            { id: "fan-apto-pollo", name: "Fan Apto Pollo", price: 18900, extras: woksExtras(), available: true },
+            { id: "fan-apto-pollo", name: "Fan Apto Pollo", price: 18900, image: "/uploads/products/fan-apto-pollo.jpg", extras: woksExtras(), available: true },
             { id: "fan-apto-mixto", name: "Fan Apto Mixto", price: 18900, extras: woksExtras(), available: true },
             { id: "fan-apto-carne", name: "Fan Apto Carne", price: 18900, extras: woksExtras(), available: true },
           ],

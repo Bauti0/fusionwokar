@@ -102,6 +102,7 @@ export default {
             },
             {
               id: "combo-kung-fu",
+              image: "/uploads/products/combo-kung-fu.jpg",
               name: "Combo Kung Fu (1 Persona)",
               price: 22900,
               description: "1 mein de pollo + 1 bao de bondiola braseada",
@@ -162,13 +163,13 @@ export default {
           name: "Woks",
           products: [
             { id: "mi-fen-apto-veggie", name: "Mi Fen Apto Veggie", price: 16900, extras: woksExtras(), available: true },
-            { id: "mi-fen-apto-pollo", name: "Mi Fen Apto Pollo", price: 16900, extras: woksExtras(), available: true },
+            { id: "mi-fen-apto-pollo", name: "Mi Fen Apto Pollo", price: 16900, image: "/uploads/products/mi-fen-apto-pollo.jpg", extras: woksExtras(), available: true },
             { id: "mi-fen-apto-cerdo", name: "Mi Fen Apto Cerdo", price: 16900, extras: woksExtras(), available: true },
             { id: "mi-fen-apto-carne", name: "Mi Fen Apto Carne", price: 17900, extras: woksExtras(), available: true },
             { id: "mi-fen-apto-mixto", name: "Mi Fen Apto Mixto", price: 17900, extras: woksExtras(), available: true },
             { id: "fan-apto-langostinos", name: "Fan Apto Langostinos", price: 22900, extras: woksExtras(), available: true },
             { id: "fan-apto-veggie", name: "Fan Apto Veggie", price: 16900, extras: woksExtras(), available: true },
-            { id: "fan-apto-pollo", name: "Fan Apto Pollo", price: 16900, extras: woksExtras(), available: true },
+            { id: "fan-apto-pollo", name: "Fan Apto Pollo", price: 16900, image: "/uploads/products/fan-apto-pollo.jpg", extras: woksExtras(), available: true },
             { id: "fan-apto-cerdo", name: "Fan Apto Cerdo", price: 16900, extras: woksExtras(), available: true },
             { id: "fan-apto-mixto", name: "Fan Apto Mixto", price: 16900, extras: woksExtras(), available: true },
             { id: "fan-apto-carne", name: "Fan Apto Carne", price: 16900, extras: woksExtras(), available: true },
@@ -185,6 +186,7 @@ export default {
           products: [
             {
               id: "chow-mein-langostinos",
+              image: "/uploads/products/chow-mein-langostinos.jpg",
               name: "Chow mein de langostinos",
               price: 23900,
               description:
@@ -194,6 +196,7 @@ export default {
             },
             {
               id: "chow-mein-carne",
+              image: "/uploads/products/chow-mein-carne.jpg",
               name: "Chow mein de carne",
               price: 18900,
               description:
@@ -203,6 +206,7 @@ export default {
             },
             {
               id: "chow-mein-mixto",
+              image: "/uploads/products/chow-mein-mixto.jpg",
               name: "Chow mein mixto",
               price: 18900,
               description:
@@ -212,6 +216,7 @@ export default {
             },
             {
               id: "chow-mein-cerdo",
+              image: "/uploads/products/chow-mein-cerdo.jpg",
               name: "Chow mein de cerdo",
               price: 17900,
               description:
@@ -221,6 +226,7 @@ export default {
             },
             {
               id: "chow-mein-pollo",
+              image: "/uploads/products/chow-mein-pollo.jpg",
               name: "Chow mein de pollo",
               price: 17900,
               description:
@@ -230,6 +236,7 @@ export default {
             },
             {
               id: "chow-mein-veggie",
+              image: "/uploads/products/chow-mein-veggie.jpg",
               name: "Chow mein veggie",
               price: 17900,
               description:
@@ -242,23 +249,23 @@ export default {
         {
           name: "Chow Fan (Arroz)",
           products: [
-            { id: "chow-fan-langostinos", name: "Chow fan de langostinos", price: 23900, extras: woksExtras(), available: true },
-            { id: "chow-fan-carne", name: "Chow fan de carne", price: 18900, extras: woksExtras(), available: true },
-            { id: "chow-fan-mixto", name: "Chow fan mixto", price: 18900, extras: woksExtras(), available: true },
-            { id: "chow-fan-cerdo", name: "Chow fan de cerdo", price: 17900, extras: woksExtras(), available: true },
-            { id: "chow-fan-pollo", name: "Chow fan de pollo", price: 17900, extras: woksExtras(), available: true },
-            { id: "chow-fan-veggie", name: "Chow fan veggie", price: 17900, extras: woksExtras(), available: true },
+            { id: "chow-fan-langostinos", name: "Chow fan de langostinos", price: 23900, image: "/uploads/products/chow-fan-langostinos.jpg", extras: woksExtras(), available: true },
+            { id: "chow-fan-carne", name: "Chow fan de carne", price: 18900, image: "/uploads/products/chow-fan-carne.jpg", extras: woksExtras(), available: true },
+            { id: "chow-fan-mixto", name: "Chow fan mixto", price: 18900, image: "/uploads/products/chow-fan-mixto.jpg", extras: woksExtras(), available: true },
+            { id: "chow-fan-cerdo", name: "Chow fan de cerdo", price: 17900, image: "/uploads/products/chow-fan-cerdo.jpg", extras: woksExtras(), available: true },
+            { id: "chow-fan-pollo", name: "Chow fan de pollo", price: 17900, image: "/uploads/products/chow-fan-pollo.jpg", extras: woksExtras(), available: true },
+            { id: "chow-fan-veggie", name: "Chow fan veggie", price: 17900, image: "/uploads/products/chow-fan-veggie.jpg", extras: woksExtras(), available: true },
           ],
         },
         {
           name: "Chow Mi Fen (Fideos de arroz)",
           products: [
-            { id: "chow-mi-fen-langostinos", name: "Chow mi fen de langostinos", price: 24900, extras: woksExtras(), available: true },
-            { id: "chow-mi-fen-carne", name: "Chow mi fen de carne", price: 19900, extras: woksExtras(), available: true },
-            { id: "chow-mi-fen-mixto", name: "Chow mi fen mixto", price: 19900, extras: woksExtras(), available: true },
-            { id: "chow-mi-fen-cerdo", name: "Chow mi fen de cerdo", price: 18900, extras: woksExtras(), available: true },
-            { id: "chow-mi-fen-pollo", name: "Chow mi fen de pollo", price: 18900, extras: woksExtras(), available: true },
-            { id: "chow-mi-fen-veggie", name: "Chow mi fen veggie", price: 18900, extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-langostinos", name: "Chow mi fen de langostinos", price: 24900, image: "/uploads/products/chow-mi-fen-langostinos.jpg", extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-carne", name: "Chow mi fen de carne", price: 19900, image: "/uploads/products/chow-mi-fen-carne.jpg", extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-mixto", name: "Chow mi fen mixto", price: 19900, image: "/uploads/products/chow-mi-fen-mixto.jpg", extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-cerdo", name: "Chow mi fen de cerdo", price: 18900, image: "/uploads/products/chow-mi-fen-cerdo.jpg", extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-pollo", name: "Chow mi fen de pollo", price: 18900, image: "/uploads/products/chow-mi-fen-pollo.jpg", extras: woksExtras(), available: true },
+            { id: "chow-mi-fen-veggie", name: "Chow mi fen veggie", price: 18900, image: "/uploads/products/chow-mi-fen-veggie.jpg", extras: woksExtras(), available: true },
           ],
         },
       ],
@@ -289,8 +296,8 @@ export default {
         {
           name: null,
           products: [
-            { id: "galleta-fortuna-1", name: "Galleta Fortuna (1 unidad)", price: 1500, available: true },
-            { id: "galleta-fortuna-2", name: "Galleta de la Fortuna x2", price: 2000, available: true },
+            { id: "galleta-fortuna-1", name: "Galleta Fortuna (1 unidad)", price: 1500, image: "/uploads/products/galleta-fortuna-1.jpg", available: true },
+            { id: "galleta-fortuna-2", name: "Galleta de la Fortuna x2", price: 2000, image: "/uploads/products/galleta-fortuna-2.jpg", available: true },
           ],
         },
       ],
@@ -323,6 +330,7 @@ export default {
           products: [
             {
               id: "dumpling-cerdo-x6",
+              image: "/uploads/products/dumpling-cerdo-x6.jpg",
               name: "Dumpling de Cerdo x6",
               price: 12500,
               description:
@@ -342,6 +350,7 @@ export default {
           products: [
             {
               id: "bao-bondiola-braseada",
+              image: "/uploads/products/bao-bondiola-braseada.jpg",
               name: "Bao Bondiola Braseada (x2 con salsa)",
               price: 12500,
               description: "Pan chino esponjoso al vapor, relleno de bondiola braseada y verduras",
