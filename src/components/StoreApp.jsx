@@ -158,7 +158,7 @@ export default function StoreApp() {
         couponCode: couponCode || "",
         shipping: {
           cost: Math.round(Number(shipping?.cost) || 0),
-          km: Math.round(Number(shipping?.km) || 0),
+          blocks: Math.round(Number(shipping?.blocks) || 0),
         },
       };
 

@@ -32,7 +32,7 @@ export function buildOrderMessage({ branch, order, customer, orderMode, paymentM
   );
   const total = subtotal + extrasTotal;
   const shippingCost = Math.round(Number(shipping?.cost) || 0);
-  const shippingKm = Math.round(Number(shipping?.km) || 0);
+  const shippingBlocks = Math.round(Number(shipping?.blocks) || 0);
 
   let totals =
     `\n\n*Subtotal:* ${formatPrice(subtotal)}\n`;
@@ -40,7 +40,7 @@ export function buildOrderMessage({ branch, order, customer, orderMode, paymentM
     totals += `🏷️ *Descuento (${coupon}):* -${formatPrice(discount)}\n`;
   }
   if (shippingCost > 0) {
-    totals += `🛵 *Envío*${shippingKm ? ` (~${shippingKm} km)` : ""}: ${formatPrice(shippingCost)}\n`;
+    totals += `🛵 *Envío*${shippingBlocks ? ` (~${shippingBlocks} cuadras)` : ""}: ${formatPrice(shippingCost)}\n`;
   }
   totals += `*Total: ${formatPrice(Math.max(total - (discount || 0) + shippingCost, 0))}*`;
   if (scheduledFor) {

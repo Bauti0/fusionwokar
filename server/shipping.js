@@ -1,7 +1,7 @@
 // ============================================================
 // FUSIÓN WOK — Cálculo de envío (Tandil, por ahora)
-// Costo = $4.000 base + $1.000 por km (km redondeado; 0 km = solo base,
-// p. ej. la dirección del propio local).
+// Costo = $4.000 base + $100 por cuadra (una cuadra = 100 m).
+// 0 cuadras = solo base (p. ej. la dirección del propio local).
 //   - Origen: Chacabuco 660, Tandil, Buenos Aires.
 //   - Servicios 100% gratis, con respaldos para que una limitación
 //     de tráfico (429) o una caída no dejen sin envío:
@@ -14,24 +14,28 @@
 // ============================================================
 
 const SHIPPING_BASE_COST = Number(process.env.SHIPPING_BASE_COST || 4000);
-const SHIPPING_PER_KM = Number(process.env.SHIPPING_PER_KM || 1000);
+const SHIPPING_PER_BLOCK = Number(process.env.SHIPPING_PER_BLOCK || 100);
 const MAX_DELIVERY_KM = Number(process.env.SHIPPING_MAX_KM || 40);
 const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
+// Una cuadra ≈ 100 m (los geocoders devuelven metros)
+const BLOCK_METERS = 100;
 // Multiplicador línea recta → calles (distancia de ruta aproximada)
 const ROAD_FACTOR = 1.25;
 // El local es fijo: cacheamos ~1 h
 const ORIGIN_TTL = 60 * 60 * 1000;
-// Dirección → km: cacheamos 30 min
+// Dirección → cuadras: cacheamos 30 min
 const KM_TTL = 30 * 60 * 1000;
 // Ante un fallo transitorio (429/caída) no volvemos a golpear el servicio
 // por 90 s, así el cliente puede reintentar sin saturar nada.
 const FAIL_TTL = 90 * 1000;
+// Tope de reparto en cuadras (= MAX_DELIVERY_KM * 10)
+const MAX_BLOCKS = MAX_DELIVERY_KM * (1000 / BLOCK_METERS);
 
 const ORIGIN_QUERY = "Chacabuco 660, Tandil, Buenos Aires, Argentina";
 const GEO_TIMEOUT_MS = 9000;
 const USER_AGENT = "FusionWok-app/1.0 (contacto: instagram.com/fusionwoktandil)";
 
-const kmCache = new Map(); // dirección → { km, at }
+const blockCache = new Map(); // dirección → { blocks, at }
 const failCache = new Map(); // dirección → { at } (fallos transitorios)
 let originCoords = null;
 let originAt = 0;
@@ -195,19 +199,19 @@ async function getOrigin() {
   return o;
 }
 
-// Devuelve { cost, km, supported } para un envío en Tandil.
+// Devuelve { cost, blocks, supported } para un envío en Tandil.
 // Reintentar es seguro: los fallos transitorios se cachean brevemente y los
 // resultados por dirección se guardan para no repetir consultas.
 export async function computeShipping(branch, address) {
   const a = String(address || "").trim();
   if (branch !== "tandil" || !a) {
-    return { cost: 0, km: 0, supported: branch === "tandil" };
+    return { cost: 0, blocks: 0, supported: branch === "tandil" };
   }
   const key = a.toLowerCase();
 
-  const cached = kmCache.get(key);
+  const cached = blockCache.get(key);
   if (cached && Date.now() - cached.at < KM_TTL) {
-    return { cost: SHIPPING_BASE_COST + cached.km * SHIPPING_PER_KM, km: cached.km, supported: true };
+    return { cost: SHIPPING_BASE_COST + cached.blocks * SHIPPING_PER_BLOCK, blocks: cached.blocks, supported: true };
   }
   const failed = failCache.get(key);
   if (failed && Date.now() - failed.at < FAIL_TTL) {
@@ -221,16 +225,15 @@ export async function computeShipping(branch, address) {
   }
   const km = await roadDistanceKm(await getOrigin(), dest);
 
-  // Redondeo al km entero (permite 0 km: la dirección del local se cobra
-  // solo la base). Sin mínimo forzado de 1 km.
-  const roundedKm = Math.round(km);
-  if (roundedKm > MAX_DELIVERY_KM) {
+  // Cuadras = metros / 100, redondeado (0 cuadras = solo la base)
+  const blocks = Math.round((km * 1000) / BLOCK_METERS);
+  if (blocks > MAX_BLOCKS) {
     failCache.set(key, { at: Date.now() });
     throw new ShippingError(
       "zone",
-      `Esa dirección queda a ${roundedKm} km. Nuestro reparto cubre hasta ${MAX_DELIVERY_KM} km.`
+      `Esa dirección queda a ${blocks} cuadras. Nuestro reparto cubre hasta ${MAX_BLOCKS} cuadras (~${MAX_DELIVERY_KM} km).`
     );
   }
-  kmCache.set(key, { km: roundedKm, at: Date.now() });
-  return { cost: SHIPPING_BASE_COST + roundedKm * SHIPPING_PER_KM, km: roundedKm, supported: true };
+  blockCache.set(key, { blocks, at: Date.now() });
+  return { cost: SHIPPING_BASE_COST + blocks * SHIPPING_PER_BLOCK, blocks, supported: true };
 }

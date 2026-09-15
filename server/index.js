@@ -686,7 +686,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
             notes,
             mpPreferenceId,
             shipping.cost,
-            shipping.km,
+            shipping.blocks,
             ts,
             ts,
           ],
@@ -714,7 +714,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         discount,
         couponCode,
         scheduledFor,
-        shipping: { cost: shipping.cost, km: shipping.km },
+        shipping: { cost: shipping.cost, blocks: shipping.blocks },
       });
     } catch (err) {
       // El pedido no se creó: devolvemos el uso reservado del cupón
@@ -871,8 +871,8 @@ app.post("/api/shipping/quote", rateLimit({ max: 30, windowMs: 60000, name: "shi
     if (typeof branch !== "string" || !branch) return res.status(400).json({ error: "Falta la sucursal" });
     if (typeof address !== "string" || !address.trim()) return res.status(400).json({ error: "Falta la dirección" });
     const s = await computeShipping(branch, address);
-    if (!s.supported) return res.json({ ok: true, km: 0, cost: 0, supported: false });
-    res.json({ ok: true, km: s.km, cost: s.cost, supported: true });
+    if (!s.supported) return res.json({ ok: true, blocks: 0, cost: 0, supported: false });
+    res.json({ ok: true, blocks: s.blocks, cost: s.cost, supported: true });
   } catch (err) {
     console.error("POST /api/shipping/quote:", err.message);
     // transitorio (429 / servicio caído) → 503 para que el cliente reintente
@@ -1497,7 +1497,7 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
             notes,
             source,
             shipping.cost,
-            shipping.km,
+            shipping.blocks,
             ts,
             ts,
           ],

@@ -74,7 +74,7 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
       shippingBusyRef.current = true;
       try {
         const res = await shippingQuote(branch.id, addr);
-        setShipping({ km: res.km, cost: res.cost });
+        setShipping({ blocks: res.blocks, cost: res.cost });
         setShippingError("");
       } catch (err) {
         setShippingError(err.message);
@@ -153,8 +153,8 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
         address: orderMode === "delivery" ? address.trim() : "",
         deliveryNotes: orderMode === "delivery" ? deliveryNotes.trim() : "",
         shipping: wantsDelivery
-          ? { cost: shipping?.cost || 0, km: shipping?.km || 0 }
-          : { cost: 0, km: 0 },
+          ? { cost: shipping?.cost || 0, blocks: shipping?.blocks || 0 }
+          : { cost: 0, blocks: 0 },
         scheduledFor: scheduleMode === "scheduled" && scheduledAt
           ? new Date(scheduledAt).toISOString()
           : "",
@@ -247,7 +247,7 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
                   {shippingBusy
                     ? "Calculando costo de envío…"
                     : shipping
-                      ? `Envío: ${formatPrice(shipping.cost)}${shipping.km ? ` (aprox. ${shipping.km} km)` : ""}`
+                      ? `Envío: ${formatPrice(shipping.cost)}${shipping.blocks ? ` (aprox. ${shipping.blocks} cuadras)` : ""}`
                       : "Ingresá la dirección para calcular el envío."}
                 </p>
               )}
@@ -371,7 +371,7 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
           )}
           {wantsDelivery && isTandil && shippingCost > 0 && (
             <div className="summary__row">
-              <span>Envío {shipping?.km ? `(~${shipping.km} km)` : ""}</span>
+              <span>Envío {shipping?.blocks ? `(~${shipping.blocks} cuadras)` : ""}</span>
               <span>{formatPrice(shippingCost)}</span>
             </div>
           )}
