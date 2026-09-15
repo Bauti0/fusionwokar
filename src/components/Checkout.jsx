@@ -221,11 +221,6 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
           {closedLabel(branch.id) && (
             <p className="hours-note hours-note--warn">{closedLabel(branch.id)}.</p>
           )}
-          {orderMode === "delivery" && branch.deliveryInfo && (
-            <p className="hours-note">
-              🛵 {branch.deliveryInfo}
-            </p>
-          )}
         </div>
 
         <div className="checkout-section">
@@ -263,16 +258,6 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
               />
-              {isTandil && !shippingError && (
-                <p className="hint">
-                  {shippingBusy
-                    ? "Calculando costo de envío…"
-                    : shipping
-                      ? `Envío: ${formatPrice(shipping.cost)}${shipping.blocks ? ` (aprox. ${shipping.blocks} cuadras)` : ""}`
-                      : "Ingresá la dirección para calcular el envío."}
-                </p>
-              )}
-              {isTandil && shippingError && <p className="form-error">{shippingError}</p>}
             </div>
           )}
           {orderMode === "delivery" && (
@@ -388,12 +373,6 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
             <div className="summary__row">
               <span>Descuento ({coupon?.code})</span>
               <span>−{formatPrice(discount)}</span>
-            </div>
-          )}
-          {wantsDelivery && isTandil && shippingCost > 0 && (
-            <div className="summary__row">
-              <span>Envío {shipping?.blocks ? `(~${shipping.blocks} cuadras)` : ""}</span>
-              <span>{formatPrice(shippingCost)}</span>
             </div>
           )}
           <div className="summary__row summary__row--total">
