@@ -11,6 +11,11 @@ const PAYMENT_METHODS = [
   { id: "mercadopago", label: "Mercado Pago" },
 ];
 
+// Caché cliente de cotizaciones: la misma dirección no se vuelve a consultar
+// (el servicio de mapas tiene cuota diaria).
+const QUOTE_CACHE_TTL = 10 * 60 * 1000;
+const quoteCache = new Map(); // dirección (minúsc.) → { res | err, at }
+
 // ============================================================
 // Checkout
 // 1) Delivery / Retiro (cambia horarios mostrados y pide
@@ -72,17 +77,33 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
     setShippingError("");
     const t = setTimeout(async () => {
       shippingBusyRef.current = true;
+      const key = addr.toLowerCase();
+      const hit = quoteCache.get(key);
+      if (hit && Date.now() - hit.at < QUOTE_CACHE_TTL) {
+        if (hit.err) {
+          setShippingError(hit.err);
+        } else {
+          setShipping(hit.res);
+          setShippingError("");
+        }
+        shippingBusyRef.current = false;
+        setShippingBusy(false);
+        return;
+      }
       try {
         const res = await shippingQuote(branch.id, addr);
-        setShipping({ blocks: res.blocks, cost: res.cost });
+        const data = { blocks: res.blocks, cost: res.cost };
+        quoteCache.set(key, { res: data, at: Date.now() });
+        setShipping(data);
         setShippingError("");
       } catch (err) {
+        quoteCache.set(key, { err: err.message, at: Date.now() });
         setShippingError(err.message);
       } finally {
         shippingBusyRef.current = false;
         setShippingBusy(false);
       }
-    }, 1200);
+    }, 1500);
     return () => clearTimeout(t);
   }, [wantsDelivery, isTandil, address, branch.id]);
 

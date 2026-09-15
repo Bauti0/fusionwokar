@@ -29,10 +29,11 @@ const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
 const BLOCK_METERS = Number(process.env.SHIPPING_BLOCK_METERS || 130);
 // Multiplicador línea recta → calles (distancia de ruta aproximada)
 const ROAD_FACTOR = 1.25;
-// El local es fijo: cacheamos ~1 h
-const ORIGIN_TTL = 60 * 60 * 1000;
-// Dirección → cuadras: cacheamos 30 min
-const KM_TTL = 30 * 60 * 1000;
+// El local es fijo: cacheamos 24 h
+const ORIGIN_TTL = 24 * 60 * 60 * 1000;
+// Dirección → costo/cuadras: cacheamos 7 días (se repiten muchísimo y así no
+// se vuelven a consultar los geocoders por la misma dirección).
+const KM_TTL = 7 * 24 * 60 * 60 * 1000;
 // Ante un fallo transitorio (429/caída) no volvemos a golpear el servicio
 // por 90 s, así el cliente puede reintentar sin saturar nada.
 const FAIL_TTL = 90 * 1000;
@@ -60,13 +61,13 @@ const unknown = (m) => new ShippingError("unknown", m);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Espaciado mínimo entre llamadas externas (~1/s) para ser amables con los
+// Espaciado mínimo entre llamadas externas (~1.2 s) para ser amables con los
 // servicios gratuitos. Global: una petición externa por vez a lo sumo.
 let lastExternalCall = 0;
 let externalQueue = Promise.resolve();
 function throttled(fn) {
   const run = externalQueue.then(async () => {
-    const wait = Math.max(0, 1100 - (Date.now() - lastExternalCall));
+    const wait = Math.max(0, 1200 - (Date.now() - lastExternalCall));
     if (wait) await sleep(wait);
     lastExternalCall = Date.now();
     return fn();
@@ -90,8 +91,9 @@ const fetchJson = async (url) => {
   }
 };
 
-// Intenta de nuevo 2 veces (el 429 puede ser momentáneo)
-const withRetry = async (fn, times = 2) => {
+// Un solo reintento (limita las llamadas al plan externo; el respaldo entre
+// proveedores ya cubre la caída de uno)
+const withRetry = async (fn, times = 1) => {
   let lastErr;
   for (let i = 0; i <= times; i++) {
     try {
