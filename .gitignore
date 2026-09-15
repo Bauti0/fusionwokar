@@ -3,7 +3,9 @@ node_modules/
 
 dist/
 
-data/
+# data/ raíz (db sqlite local legacy). Anclado: si fuera "data/" a secas
+# también ignoraría src/data/ (menú y sucursales), que SÍ va versionado.
+/data/
 *.db
 *.sqlite
 *.sqlite3
