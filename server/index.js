@@ -808,6 +808,13 @@ app.post("/api/events", rateLimit({ max: 60, name: "events" }), async (req, res)
 });
 
 // ---------- menú público (fuente: BD) ----------
+// Health check liviano (para keep-alive externo y para el health check de
+// Render). No toca la DB ni dispara analytics.
+app.get("/api/health", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, demo: isDemoMode(), time: now() });
+});
+
 app.get("/api/menu/:branchId", async (req, res) => {
   try {
     const branchId = String(req.params.branchId || "").trim();
