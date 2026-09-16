@@ -16,6 +16,20 @@ export default function CustomizeModal({ product, onClose, onConfirm }) {
   const [qty, setQty] = useState(1);
   const [notes, setNotes] = useState("");
 
+  // Agrupa los extras por categoría (subgroup) para mostrar subtítulos
+  // tipo "SALSAS ADICIONALES" / "PALITOS DESCARTABLES" / "GALLETAS".
+  const groups = useMemo(() => {
+    const map = new Map();
+    for (const extra of product.extras) {
+      const key = extra.subgroup || "__";
+      if (!map.has(key)) {
+        map.set(key, { label: extra.subgroupLabel || "", items: [] });
+      }
+      map.get(key).items.push(extra);
+    }
+    return [...map.values()];
+  }, [product]);
+
   const total = useMemo(() => {
     const extrasPrice = product.extras
       .filter((e) => selected.has(e.id))
@@ -70,27 +84,23 @@ export default function CustomizeModal({ product, onClose, onConfirm }) {
             Personalizá tu pedido
             <span className="required">opcional</span>
           </div>
-          {(() => {
-            let lastGroup = null;
-            return product.extras.map((extra) => {
-              const groupStart = extra.group && extra.group !== lastGroup;
-              lastGroup = extra.group || null;
-              return (
-                <div key={extra.id}>
-                  {groupStart && <div className="option-group__sub">{extra.groupLabel || ""}</div>}
-                  <button
-                    type="button"
-                    className={`option ${selected.has(extra.id) ? "is-selected" : ""}`}
-                    onClick={() => toggleExtra(extra.id)}
-                  >
-                    <span className="box">{selected.has(extra.id) ? "✓" : ""}</span>
-                    <span className="opt-label">{extra.label}</span>
-                    {extra.price > 0 && <span className="opt-price">+{formatPrice(extra.price)}</span>}
-                  </button>
-                </div>
-              );
-            });
-          })()}
+          {groups.map((group) => (
+            <div key={group.items[0].id}>
+              {group.label && <div className="option-group__sub">{group.label}</div>}
+              {group.items.map((extra) => (
+                <button
+                  type="button"
+                  key={extra.id}
+                  className={`option ${selected.has(extra.id) ? "is-selected" : ""}`}
+                  onClick={() => toggleExtra(extra.id)}
+                >
+                  <span className="box">{selected.has(extra.id) ? "✓" : ""}</span>
+                  <span className="opt-label">{extra.label}</span>
+                  {extra.price > 0 && <span className="opt-price">+{formatPrice(extra.price)}</span>}
+                </button>
+              ))}
+            </div>
+          ))}
         </div>
 
         <div className="field">

@@ -208,6 +208,52 @@ await ensureColumn("orders", "shipping_km", "shipping_km INTEGER NOT NULL DEFAUL
 await ensureColumn("events", "visitor_id", "visitor_id TEXT");
 await db.exec("CREATE INDEX IF NOT EXISTS idx_events_visitor ON events(visitor_id)");
 
+// Migración de datos: los extras de woks (salsas, palitos chinos, galletas)
+// se agrupan por categoría (subgroup) en el modal de personalización, con
+// subtítulos "SALSAS ADICIONALES" / "PALITOS DESCARTABLES" / "GALLETAS".
+// Idempotente: solo reescribe productos que aún no tienen "subgroup".
+function modernizeExtras(extras) {
+  return extras.map((e) => {
+    if (typeof e.id === "string" && e.id.startsWith("salsa-")) {
+      return { ...e, subgroup: "salsas", subgroupLabel: "SALSAS ADICIONALES" };
+    }
+    if (e.id === "palitos-chinos") {
+      return { ...e, subgroup: "palitos", subgroupLabel: "PALITOS DESCARTABLES" };
+    }
+    if (typeof e.id === "string" && e.id.startsWith("galleta-fortuna-")) {
+      return {
+        ...e,
+        group: e.group || "galleta",
+        subgroup: "galleta",
+        subgroupLabel: e.id.endsWith("-1") ? "GALLETAS" : e.subgroupLabel || "",
+      };
+    }
+    return e;
+  });
+}
+
+const wokExtraRows = await db.prepare("SELECT id, extras_json FROM products").all();
+for (const row of wokExtraRows) {
+  let extras;
+  try {
+    extras = JSON.parse(row.extras_json || "[]");
+  } catch {
+    continue;
+  }
+  const hasWokSignature =
+    extras.some((e) => typeof e.id === "string" && e.id.startsWith("salsa-")) &&
+    extras.some((e) => e.id === "palitos-chinos") &&
+    extras.some((e) => typeof e.id === "string" && e.id.startsWith("galleta-fortuna-"));
+  if (!hasWokSignature) continue;
+  if (extras.some((e) => e.subgroup)) continue; // ya migrado
+  const next = modernizeExtras(extras);
+  await db.prepare("UPDATE products SET extras_json = ?, updated_at = ? WHERE id = ?").run(
+    JSON.stringify(next),
+    now(),
+    row.id
+  );
+};
+
 // Convierte una fila de products en el objeto de producto del menú
 export function toProduct(row) {
   if (!row) return null;

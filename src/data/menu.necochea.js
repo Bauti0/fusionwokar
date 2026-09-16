@@ -21,17 +21,25 @@ const SALSAS = [
   { id: "salsa-sweet-chilly", label: "Sweet Chilly", price: 1900, description: "agridulce con un toque picante" },
 ];
 
-const salsaExtras = () => SALSAS.map(({ id, label, price }) => ({ id, label, price }));
+const salsaExtras = () =>
+  SALSAS.map(({ id, label, price }) => ({
+    id,
+    label,
+    price,
+    subgroup: "salsas",
+    subgroupLabel: "SALSAS ADICIONALES",
+  }));
 
 // Opcionales que se ofrecen junto con la salsa al pedir un wok
 // (o chow fan / mi fen / apto, que comparten la misma familia):
-// palitos chinos gratis, y galleta de la fortuna con descuento por
-// cantidad (no son excluyentes entre sí, pero 1 y 2 galletas sí lo son).
+// palitos chinos gratis (categoría "PALITOS DESCARTABLES"), y galleta
+// de la fortuna con descuento por cantidad (no son excluyentes entre
+// sí, pero 1 y 2 galletas sí lo son).
 const woksExtras = () => [
   ...salsaExtras(),
-  { id: "palitos-chinos", label: "Palitos chinos", price: 0 },
-  { id: "galleta-fortuna-1", label: "Galleta de la fortuna (1 unidad)", price: 1500, group: "galleta", groupLabel: "Galleta de la fortuna" },
-  { id: "galleta-fortuna-2", label: "Galleta de la fortuna x2", price: 2000, group: "galleta" },
+  { id: "palitos-chinos", label: "Palitos chinos", price: 0, subgroup: "palitos", subgroupLabel: "PALITOS DESCARTABLES" },
+  { id: "galleta-fortuna-1", label: "Galleta de la fortuna (1 unidad)", price: 1500, group: "galleta", subgroup: "galleta", subgroupLabel: "GALLETAS" },
+  { id: "galleta-fortuna-2", label: "Galleta de la fortuna x2", price: 2000, group: "galleta", subgroup: "galleta" },
 ];
 
 export default {
