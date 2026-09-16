@@ -12,8 +12,8 @@ const PAYMENT_OPTIONS = [
 ];
 
 // ============================================================
-// AdminNewOrder — carga manual de un pedido que llegó por
-// WhatsApp/teléfono o de un cliente de mostrador (no por la web).
+// AdminNewOrder — carga manual de un pedido de mostrador o de un
+// delivery (telefónico): Mostrador = retiro en el local, Delivery = envío.
 // Reusa el mismo menú/precios/validación que el checkout online,
 // así los pedidos cargados acá también entran en las estadísticas.
 // ============================================================
@@ -24,7 +24,6 @@ export default function AdminNewOrder({ onBack, onCreated }) {
   const [cart, setCart] = useState([]);
   const [customizing, setCustomizing] = useState(null);
 
-  const [source, setSource] = useState("whatsapp"); // "whatsapp" | "counter"
   const [orderMode, setOrderMode] = useState("pickup"); // "pickup" (mostrador) | "delivery"
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -97,7 +96,7 @@ export default function AdminNewOrder({ onBack, onCreated }) {
     setBusy(true);
     try {
       const res = await adminCreateManualOrder({
-        source,
+        source: "counter",
         branch: branchId,
         customer: { name: name.trim(), phone: phone.trim() },
         orderMode,
@@ -192,17 +191,8 @@ export default function AdminNewOrder({ onBack, onCreated }) {
           )}
 
           <div className="segment">
-            <button type="button" className={source === "whatsapp" ? "is-active" : ""} onClick={() => setSource("whatsapp")}>
-              💬 WhatsApp
-            </button>
-            <button type="button" className={source === "counter" ? "is-active" : ""} onClick={() => setSource("counter")}>
-              🧍 Mostrador
-            </button>
-          </div>
-
-          <div className="segment">
             <button type="button" className={orderMode === "pickup" ? "is-active" : ""} onClick={() => setOrderMode("pickup")}>
-              🥡 Retiro / Mostrador
+              🧍 Mostrador
             </button>
             <button type="button" className={orderMode === "delivery" ? "is-active" : ""} onClick={() => setOrderMode("delivery")}>
               🛵 Delivery

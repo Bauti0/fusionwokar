@@ -371,7 +371,12 @@ export default function AdminPanel({ onLogout }) {
                       <span className="badge badge--branch">{b?.name}</span>
                       <span className="admin-order__name">{o.customer.name}</span>
                       {o.source === "whatsapp" && <span className="badge badge--source">💬 WhatsApp</span>}
-                      {o.source === "counter" && <span className="badge badge--source">🧍 Mostrador</span>}
+                      {o.source === "counter" && o.orderMode === "delivery" && (
+                        <span className="badge badge--source">🛵 Delivery</span>
+                      )}
+                      {o.source === "counter" && o.orderMode !== "delivery" && (
+                        <span className="badge badge--source">🧍 Mostrador</span>
+                      )}
                       {o.scheduledFor && <span className="badge" title={`Programado: ${new Date(o.scheduledFor).toLocaleString("es-AR")}`}>🕒</span>}
                     </div>
                     <div className="admin-order__bottom">
