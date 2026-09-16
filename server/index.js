@@ -5,12 +5,15 @@ import { gzipSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import {
   db,
   toPublicOrder,
   toPublicOrderPublic,
-  nextOrderNumber,
+  formatOrderNumber,
+  saveProductImage,
+  getProductImage,
+  deleteProductImage,
   toProduct,
   toCategory,
   seedProducts,
@@ -669,7 +672,6 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     }
     const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
 
-    const orderNumber = await nextOrderNumber();
     const demo = isDemoMode();
     const isMp = paymentMethod === "mercadopago";
 
@@ -683,41 +685,33 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
       couponReserved = true;
     }
 
-    try {
-      // Para Mercado Pago se crea la preferencia ANTES de guardar el pedido
-      let mpPreferenceId = null;
-      let initPoint = null;
-      if (isMp && !demo) {
-        const pref = await createPreference({
-          orderNumber,
-          total,
-          title: `Pedido Fusión Wok ${orderNumber}`,
-          description: `${items.length} items · ${branch}`,
-          backUrls: {
-            success: `${requestBaseUrl(req)}/?pago=aprobado&pedido=${orderNumber}`,
-            pending: `${requestBaseUrl(req)}/?pago=pendiente&pedido=${orderNumber}`,
-            failure: `${requestBaseUrl(req)}/?pago=rechazado&pedido=${orderNumber}`,
-          },
-          notificationUrl: `${requestBaseUrl(req)}/api/webhooks/mercadopago`,
-        });
-        mpPreferenceId = pref.id;
-        initPoint = pref.init_point || pref.sandbox_init_point || null;
-      }
+    const ts = now();
 
-      const ts = now();
-      // INSERT del pedido (+ evento "order_created" para efectivo/transferencia)
-      // en UN solo batch: 1 round-trip y atómico.
+    // El número de pedido se deriva del id real que asigna la DB (AUTOINCREMENT)
+    // y se asigna en el MISMO batch que el INSERT: atómico y sin carrera (antes
+    // se hacía MAX(id)+1, que chocaba con dos pedidos simultáneos). Para MP esto
+    // invierte el orden viejo (preferencia antes que pedido): la fila se inserta
+    // primero con un order_number temporal único y la preferencia se crea recién
+    // después, con el número real como external_reference. Si la preferencia
+    // falla, el pedido ya existe y se puede reintentar el link — nunca queda una
+    // preferencia de pago huérfana sin pedido.
+    let orderId;
+    let orderNumber;
+    let mpPreferenceId = null;
+    let initPoint = null;
+    try {
+      const tmpNumber = `tmp-${randomBytes(8).toString("hex")}`;
       const stmts = [
         {
           sql: `
         INSERT INTO orders
           (order_number, branch, customer_name, customer_phone, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
-           scheduled_for, notes, mp_preference_id, shipping, shipping_km, shipping_pending, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           scheduled_for, notes, shipping, shipping_km, shipping_pending, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
           args: [
-            orderNumber,
+            tmpNumber,
             branch,
             customer.name,
             customer.phone,
@@ -732,13 +726,17 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
             couponCode,
             scheduledFor,
             notes,
-            mpPreferenceId,
             shipping.cost,
             shipping.blocks,
             shipping.pending ? 1 : 0,
             ts,
             ts,
           ],
+        },
+        {
+          // Número definitivo, derivado del id de la fila recién insertada
+          sql: "UPDATE orders SET order_number = ? || printf('%05d', id), updated_at = ? WHERE id = last_insert_rowid()",
+          args: ["FW-", ts],
         },
       ];
       if (!isMp) {
@@ -749,27 +747,65 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
       }
       const results = await db.batch(stmts, "write");
       const info = results[0];
-
-      res.json({
-        ok: true,
-        orderId: Number(info.lastInsertRowid),
-        orderNumber,
-        demo,
-        publicKey: isMp ? getMpPublicKey() : "",
-        preferenceId: mpPreferenceId || `demo-${Number(info.lastInsertRowid)}`,
-        initPoint,
-        status: isMp ? "pending_payment" : "received",
-        total,       // total recalculado server-side (con descuento y envío)
-        discount,
-        couponCode,
-        scheduledFor,
-        shipping: { cost: shipping.cost, blocks: shipping.blocks, pending: !!shipping.pending },
-      });
+      orderId = Number(info.lastInsertRowid);
+      orderNumber = formatOrderNumber(orderId);
     } catch (err) {
-      // El pedido no se creó: devolvemos el uso reservado del cupón
+      // El pedido no se llegó a crear: devolvemos el uso reservado del cupón
       if (couponReserved) await releaseCoupon(couponCode);
       throw err;
     }
+
+    // Mercado Pago: recién acá se crea la preferencia, con el pedido ya guardado
+    // y su número real como external_reference.
+    if (isMp && !demo) {
+      try {
+        const pref = await createPreference({
+          orderNumber,
+          total,
+          title: `Pedido Fusión Wok ${orderNumber}`,
+          description: `${items.length} items · ${branch}`,
+          backUrls: {
+            success: `${requestBaseUrl(req)}/?pago=aprobado&pedido=${orderNumber}`,
+            pending: `${requestBaseUrl(req)}/?pago=pendiente&pedido=${orderNumber}`,
+            failure: `${requestBaseUrl(req)}/?pago=rechazado&pedido=${orderNumber}`,
+          },
+          notificationUrl: `${requestBaseUrl(req)}/api/webhooks/mercadopago`,
+        });
+        mpPreferenceId = pref.id;
+        initPoint = pref.init_point || pref.sandbox_init_point || null;
+      } catch (err) {
+        // El pedido quedó guardado (no se libera el cupón: existe). Respondemos
+        // con el error + datos del pedido para que el cliente se contacte y se
+        // pueda reintentar el link sin crear un pedido duplicado.
+        console.error("MP preference falló después de guardar el pedido:", err.message);
+        return res.status(502).json({
+          error:
+            "Tu pedido quedó registrado pero no se pudo generar el link de pago. Escribinos por WhatsApp con tu número de pedido y lo resolvemos enseguida.",
+          orderId,
+          orderNumber,
+          contactWhatsApp: true,
+        });
+      }
+      await db
+        .prepare("UPDATE orders SET mp_preference_id = ?, updated_at = ? WHERE id = ?")
+        .run(mpPreferenceId, now(), orderId);
+    }
+
+    res.json({
+      ok: true,
+      orderId,
+      orderNumber,
+      demo,
+      publicKey: isMp ? getMpPublicKey() : "",
+      preferenceId: mpPreferenceId || `demo-${orderId}`,
+      initPoint,
+      status: isMp ? "pending_payment" : "received",
+      total,       // total recalculado server-side (con descuento y envío)
+      discount,
+      couponCode,
+      scheduledFor,
+      shipping: { cost: shipping.cost, blocks: shipping.blocks, pending: !!shipping.pending },
+    });
   } catch (err) {
     console.error("POST /api/orders:", err.message);
     res.status(500).json({ error: "No se pudo crear el pedido" });
@@ -1532,9 +1568,10 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
     if (result.error) return res.status(400).json({ error: result.error });
     const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
 
-    const orderNumber = await nextOrderNumber();
     const ts = now();
-    // INSERT del pedido + evento "order_created" en un solo batch atómico
+    // INSERT del pedido + número definitivo (derivado del id real) + evento
+    // "order_created" en UN solo batch atómico (sin carrera de MAX(id)+1).
+    const tmpNumber = `tmp-${randomBytes(8).toString("hex")}`;
     const results = await db.batch(
       [
         {
@@ -1544,7 +1581,7 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
            scheduled_for, notes, source, shipping, shipping_km, shipping_pending, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           args: [
-            orderNumber,
+            tmpNumber,
             branch,
             customer.name,
             customer.phone,
@@ -1566,6 +1603,11 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
           ],
         },
         {
+          // Número definitivo, derivado del id de la fila recién insertada
+          sql: "UPDATE orders SET order_number = ? || printf('%05d', id), updated_at = ? WHERE id = last_insert_rowid()",
+          args: ["FW-", ts],
+        },
+        {
           sql: "INSERT INTO events (type, branch, created_at) VALUES (?, ?, ?)",
           args: ["order_created", branch, ts],
         },
@@ -1573,7 +1615,9 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
       "write"
     );
     const info = results[0];
-    res.json({ ok: true, orderId: Number(info.lastInsertRowid), orderNumber });
+    const orderId = Number(info.lastInsertRowid);
+    const orderNumber = formatOrderNumber(orderId);
+    res.json({ ok: true, orderId, orderNumber });
   } catch (err) {
     console.error("POST /api/admin/orders/manual:", err.message);
     res.status(500).json({ error: "No se pudo crear el pedido" });
@@ -1657,7 +1701,12 @@ function validateProductBody(body, partial = false) {
   }
   if (image !== undefined) {
     if (typeof image !== "string" || image.length > 200) return { error: "Imagen inválida" };
-    if (image && !/^\/uploads\/products\/[\w.-]+\.(png|jpe?g|webp|gif)$/i.test(image)) {
+    // Imágenes versionadas del menú (/uploads/products/...) o subidas como
+    // BLOB a Turso (/api/images/products/N?v=ts)
+    if (
+      image &&
+      !/^(\/uploads\/products\/[\w.-]+\.(png|jpe?g|webp|gif)|\/api\/images\/products\/\d+\?v=\d+)$/i.test(image)
+    ) {
       return { error: "Imagen inválida" };
     }
     out.image = image;
@@ -1783,6 +1832,18 @@ app.put("/api/admin/products/:id", requireAdmin, async (req, res) => {
     CATALOG = await buildCatalog();
     invalidateMenuCache();
     const updated = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
+    // Limpieza: si el producto tenía una imagen subida (BLOB en Turso) y ahora
+    // tiene otra (o ninguna), se borra la fila vieja para no acumular basura
+    // que consume el mismo plan free.
+    const oldImageId = imageIdFromProductImageUrl(row.image);
+    const newImageId = imageIdFromProductImageUrl(data.image === undefined ? row.image : data.image);
+    if (oldImageId && oldImageId !== newImageId) {
+      try {
+        await deleteProductImage(oldImageId);
+      } catch (delErr) {
+        console.error("PUT /api/admin/products/:id (limpieza imagen):", delErr.message);
+      }
+    }
     res.json({ ok: true, product: productRowToAdmin(updated) });
   } catch (err) {
     console.error("PUT /api/admin/products/:id:", err.message);
@@ -1815,7 +1876,17 @@ app.delete("/api/admin/products/:id", requireAdmin, async (req, res) => {
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
+    // Limpieza: si el producto usa una imagen subida (BLOB en Turso), se borra
+    // junto con el producto para no dejar basura en el plan free.
+    const deleteImageId = imageIdFromProductImageUrl(row.image);
     await db.prepare("DELETE FROM products WHERE id = ?").run(id);
+    if (deleteImageId) {
+      try {
+        await deleteProductImage(deleteImageId);
+      } catch (delErr) {
+        console.error("DELETE /api/admin/products/:id (limpieza imagen):", delErr.message);
+      }
+    }
     CATALOG = await buildCatalog();
     invalidateMenuCache();
     res.json({ ok: true });
@@ -2103,25 +2174,85 @@ app.delete("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
 });
 
 // ---------- imágenes de producto (upload) ----------
-// Recibe un dataURL base64, valida formato y tamaño, y lo guarda en
-// public/uploads/products/ (servido como /uploads/products/...).
+// Recibe un dataURL base64, valida formato y tamaño, y guarda el BLOB en la
+// base (Tabla product_images de Turso). El filesystem de Render free se borra
+// en cada redeploy, así que aquí NUNCA se escribe a disco: las imágenes se
+// sirven por /api/images/products/:id (ruta debajo), con ?v= para cachear.
+// Extrae el id de una URL de imagen subida a la base (/api/images/products/N?v=ts)
+function imageIdFromProductImageUrl(url) {
+  if (typeof url !== "string") return 0;
+  const m = String(url).match(/^\/api\/images\/products\/(\d+)(?:\?|$)/);
+  return m ? Number(m[1]) : 0;
+}
+
 app.post(
   "/api/admin/upload",
   requireAdmin,
   rateLimit({ max: 60, windowMs: 60000, name: "upload" }),
-  (req, res) => {
-    const { dataUrl } = req.body || {};
-    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
-      return res.status(400).json({ error: "Imagen inválida" });
+  async (req, res) => {
+    try {
+      const { dataUrl } = req.body || {};
+      if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
+        return res.status(400).json({ error: "Imagen inválida" });
+      }
+      const m = dataUrl.match(/^data:image\/(png|jpeg|webp|gif);base64,(.+)$/);
+      if (!m) return res.status(400).json({ error: "Formato de imagen no soportado" });
+      const buf = Buffer.from(m[2], "base64");
+      if (buf.length > 1.5 * 1024 * 1024) return res.status(400).json({ error: "La imagen supera 1.5 MB" });
+      const saved = await saveProductImage({ mime: `image/${m[1]}`, data: buf });
+      const v = Math.floor(Date.now() / 1000);
+      // Sweep de huérfanas: borra BLOBs sin ninguna referencia en products
+      // (upload subido y cancelado sin guardar el producto), con un margen de
+      // 10 min para no romper un upload recién hecho que el front todavía está
+      // por asociar. La fila recién creada se excluye siempre.
+      try {
+        const refs = await db.prepare("SELECT image FROM products").all();
+        const referenced = new Set();
+        for (const r of refs) {
+          const rid = imageIdFromProductImageUrl(r.image);
+          if (rid) referenced.add(rid);
+        }
+        const cutoff = new Date(Date.now() - 10 * 60000).toISOString();
+        let sql = "DELETE FROM product_images WHERE id != ? AND created_at <= ?";
+        const args = [saved.id, cutoff];
+        if (referenced.size) {
+          const placeholders = [...referenced].map(() => "?").join(",");
+          sql += ` AND id NOT IN (${placeholders})`;
+          args.push(...referenced);
+        }
+        await db.prepare(sql).run(...args);
+      } catch (sweepErr) {
+        console.error("sweep imagenes huérfanas:", sweepErr.message);
+      }
+      res.json({ ok: true, url: `/api/images/products/${saved.id}?v=${v}` });
+    } catch (err) {
+      console.error("POST /api/admin/upload:", err.message);
+      res.status(500).json({ error: "No se pudo guardar la imagen" });
     }
-    const m = dataUrl.match(/^data:image\/(png|jpeg|webp|gif);base64,(.+)$/);
-    if (!m) return res.status(400).json({ error: "Formato de imagen no soportado" });
-    const buf = Buffer.from(m[2], "base64");
-    if (buf.length > 1.5 * 1024 * 1024) return res.status(400).json({ error: "La imagen supera 1.5 MB" });
-    const ext = m[1] === "jpeg" ? "jpg" : m[1];
-    const filename = `${Date.now()}-${randomBytes(4).toString("hex")}.${ext}`;
-    writeFileSync(path.join(uploadsDir, filename), buf);
-    res.json({ ok: true, url: `/uploads/products/${filename}` });
+  }
+);
+
+// Sirve las imágenes guardadas como BLOB en Turso. La URL lleva ?v=<updatedAt>
+// (constante por versión) → Cache-Control inmutable; el front ya cambia el query
+// al regenerar la imagen. Nunca se consulta por un id viejo tras un redeploy.
+app.get(
+  "/api/images/products/:id",
+  rateLimit({ max: 300, windowMs: 60000, name: "images" }),
+  async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+      const row = await getProductImage(id);
+      if (!row) return res.status(404).json({ error: "Imagen no encontrada" });
+      const buf = Buffer.from(row.data);
+      res.setHeader("Content-Type", row.mime);
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      res.setHeader("Content-Length", buf.length);
+      res.end(buf);
+    } catch (err) {
+      console.error("GET /api/images/products/:id:", err.message);
+      if (!res.headersSent) res.status(500).json({ error: "Error interno" });
+    }
   }
 );
 

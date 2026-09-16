@@ -3,7 +3,7 @@ import { createClient } from "@libsql/client";
 // ============================================================
 // FUSIÓN WOK — Base de datos Turso (libSQL en la nube)
 // Tablas: orders, admin_tokens, events, products, categories,
-// coupons
+// coupons, cash_registers, product_images
 //
 // Se conecta a Turso con TURSO_DATABASE_URL + TURSO_AUTH_TOKEN
 // (.env). La DB es remota y persistente; no hay archivo local.
@@ -170,6 +170,14 @@ await db.exec(`
     updated_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_cash_registers_branch ON cash_registers(branch);
+
+  CREATE TABLE IF NOT EXISTS product_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mime TEXT NOT NULL,
+    data BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
 
   CREATE INDEX IF NOT EXISTS idx_orders_number ON orders(order_number);
   CREATE INDEX IF NOT EXISTS idx_orders_branch ON orders(branch);
@@ -399,8 +407,29 @@ export function toPublicOrderPublic(row) {
   };
 }
 
-// Genera el próximo número de pedido (FW-00001, FW-00002…)
-export async function nextOrderNumber() {
-  const row = await db.prepare("SELECT COALESCE(MAX(id), 0) + 1 AS n FROM orders").get();
-  return `FW-${String(row.n).padStart(5, "0")}`;
+// Formatea el número de pedido a partir del id real que asigna la DB
+// (id AUTOINCREMENT → único por construcción, sin carrera de MAX+1).
+export function formatOrderNumber(id) {
+  return `FW-${String(id).padStart(5, "0")}`;
+}
+
+// Guarda una imagen de producto como BLOB en la base (Turso es persistente,
+// a diferencia del filesystem efímero de Render free). Devuelve { id, updatedAt }
+// para armar la URL /api/images/products/<id>?v=<ts>.
+export async function saveProductImage({ mime, data }) {
+  const ts = now();
+  const res = await db
+    .prepare("INSERT INTO product_images (mime, data, created_at, updated_at) VALUES (?, ?, ?, ?)")
+    .run(mime, data, ts, ts);
+  return { id: Number(res.lastInsertRowid), updatedAt: ts };
+}
+
+export async function getProductImage(id) {
+  return db.prepare("SELECT id, mime, data, updated_at FROM product_images WHERE id = ?").get(id);
+}
+
+// Borra una imagen de producto (usado al reemplazar la foto o borrar el
+// producto: evita acumular BLOBs huérfanos que consumen el plan free).
+export async function deleteProductImage(id) {
+  await db.prepare("DELETE FROM product_images WHERE id = ?").run(id);
 }
