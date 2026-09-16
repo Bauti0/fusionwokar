@@ -203,6 +203,11 @@ await ensureColumn("orders", "source", "source TEXT NOT NULL DEFAULT 'web'");
 await ensureColumn("orders", "shipping", "shipping INTEGER NOT NULL DEFAULT 0");
 await ensureColumn("orders", "shipping_km", "shipping_km INTEGER NOT NULL DEFAULT 0");
 
+// Visitante anónimo por evento (para contar personas, no vistas netas).
+// El índice se crea DESPUÉS de agregar la columna (sino falla en DBs viejas).
+await ensureColumn("events", "visitor_id", "visitor_id TEXT");
+await db.exec("CREATE INDEX IF NOT EXISTS idx_events_visitor ON events(visitor_id)");
+
 // Convierte una fila de products en el objeto de producto del menú
 export function toProduct(row) {
   if (!row) return null;

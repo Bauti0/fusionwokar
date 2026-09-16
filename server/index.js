@@ -806,15 +806,21 @@ const EVENT_TYPES = [
 
 app.post("/api/events", rateLimit({ max: 60, name: "events" }), async (req, res) => {
   try {
-    const { type, branch } = req.body || {};
+    const { type, branch, visitor_id } = req.body || {};
     if (!EVENT_TYPES.includes(type)) {
       return res.status(400).json({ error: "Tipo de evento inválido" });
     }
     const cleanBranch = typeof branch === "string" && CATALOG[branch] ? branch : "";
-    await db.prepare("INSERT INTO events (type, branch, created_at) VALUES (?, ?, ?)").run(
+    // ID anónimo de visitante (uuid/dash/underscore) para contar personas
+    const cleanVisitor =
+      typeof visitor_id === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(visitor_id)
+        ? visitor_id
+        : null;
+    await db.prepare("INSERT INTO events (type, branch, created_at, visitor_id) VALUES (?, ?, ?, ?)").run(
       type,
       cleanBranch,
-      now()
+      now(),
+      cleanVisitor
     );
     res.json({ ok: true });
   } catch (err) {
@@ -1168,6 +1174,10 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
           args: [fromIso, toIso],
         },
         {
+          sql: "SELECT COUNT(DISTINCT visitor_id) AS n FROM events WHERE type = 'page_view' AND visitor_id IS NOT NULL AND created_at >= ? AND created_at <= ?",
+          args: [fromIso, toIso],
+        },
+        {
           sql: `SELECT items FROM orders
          WHERE payment_status = 'approved' AND status != 'cancelled'
            AND created_at >= ? AND created_at <= ?`,
@@ -1178,7 +1188,8 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
     );
     const confirmed = results[0].rows;
     const eventRows = results[1].rows;
-    const confirmedItems = results[2].rows;
+    const visitantes = Number((results[2].rows[0] || {}).n || 0);
+    const confirmedItems = results[3].rows;
 
     let ventaNeta = 0;
     let ventaNecochea = 0;
@@ -1197,9 +1208,10 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
       if (row.type in counts) counts[row.type] = row.n;
     }
 
-    const visitas = counts.page_view;
-    const productosVistos = counts.product_view;
-    const checkouts = counts.checkout_started;
+    const visitas = visitantes;
+    const pageViews = counts.page_view || 0;
+    const productosVistos = counts.product_view || 0;
+    const checkouts = counts.checkout_started || 0;
     const conversion = visitas > 0 ? Math.round((pedidos / visitas) * 1000) / 10 : 0;
 
     // Productos más vendidos (por cantidad) y que más facturan (netos, en $),
@@ -1232,6 +1244,7 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
       checkouts,
       productosVistos,
       visitas,
+      pageViews,
       conversion,
       topSelling,
       topRevenue,

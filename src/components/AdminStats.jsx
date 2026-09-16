@@ -121,6 +121,10 @@ export default function AdminStats() {
               <span className="stat-card__label">Pedidos</span>
               <strong className="stat-card__value">{stats.pedidos}</strong>
             </div>
+            <div className="stat-card">
+              <span className="stat-card__label">Visitantes (personas)</span>
+              <strong className="stat-card__value">{stats.visitas}</strong>
+            </div>
           </div>
 
           <div className="top-products">
