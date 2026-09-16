@@ -11,7 +11,7 @@ import { IconSparkle } from "./ui/icons.jsx";
 // memo: al tipear en la búsqueda o cambiar de categoría solo se
 // re-renderizan las tarjetas afectadas, no las 40+ del menú.
 // ============================================================
-const ProductCard = memo(function ProductCard({ product, categoryName, onAdd, onCustomize }) {
+const ProductCard = memo(function ProductCard({ product, categoryName, isTop, onAdd, onCustomize }) {
   const hasExtras = product.extras && product.extras.length > 0;
   const unavailable = product.available === false;
   const [added, setAdded] = useState(false);
@@ -44,6 +44,7 @@ const ProductCard = memo(function ProductCard({ product, categoryName, onAdd, on
       )}
       <div className="product__info">
         {categoryName && <span className="product__cat">{categoryName}</span>}
+        {isTop && <span className="product__top">🔥 Más pedido</span>}
         <h4 className="product__name">{product.name}</h4>
         {product.description && <p className="product__desc">{product.description}</p>}
         <div className="product__foot">

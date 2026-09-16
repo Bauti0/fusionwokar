@@ -5,6 +5,7 @@ import {
   adminSetStatus,
   adminLogout,
   adminOrder,
+  adminStats,
 } from "../api.js";
 import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
 import {
@@ -17,6 +18,7 @@ import {
 import { formatPrice } from "../utils/format.js";
 import { playNewOrderChime } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
+import { IconEmptySearch } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
 import TicketPrint from "./TicketPrint.jsx";
@@ -89,7 +91,17 @@ export default function AdminPanel({ onLogout }) {
   const pageRef = useRef(1);
   const seenRef = useRef(loadSeen());
   const [unseenIds, setUnseenIds] = useState(() => new Set());
+  const [today, setToday] = useState(null);
   const dialogRef = useDialogA11y({ onClose: () => setSelected(null), isActive: !!selected });
+
+  // Mini resumen del día ("Hoy: $X · N pedidos") para la pestaña de pedidos
+  useEffect(() => {
+    const from = new Date();
+    from.setHours(0, 0, 0, 0);
+    adminStats({ from: from.toISOString() })
+      .then(setToday)
+      .catch(() => {});
+  }, []);
 
   const searchTimer = useRef(null);
 
@@ -282,14 +294,24 @@ export default function AdminPanel({ onLogout }) {
 
         {section === "orders" && (
         <>
-        <div className="admin-orders-toolbar">
-          <button
-            type="button"
-            className="btn btn--primary btn--sm"
-            onClick={() => setSection("new-order")}
-          >
-            ➕ Nuevo pedido
-          </button>
+        <div className="admin-orders-head">
+          {today && (
+            <div className="admin-day">
+              <span className="admin-day__label">Hoy</span>
+              <strong className="admin-day__total">{formatPrice(today.ventaNeta)}</strong>
+              <span className="admin-day__sep">·</span>
+              <span>{today.pedidos} {today.pedidos === 1 ? "pedido" : "pedidos"}</span>
+            </div>
+          )}
+          <div className="admin-orders-toolbar">
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={() => setSection("new-order")}
+            >
+              ➕ Nuevo pedido
+            </button>
+          </div>
         </div>
         <div className="admin-filters">
           <input
@@ -342,8 +364,10 @@ export default function AdminPanel({ onLogout }) {
         {loading && orders.length === 0 ? (
           <p className="hint">Cargando pedidos…</p>
         ) : orders.length === 0 ? (
-          <div className="admin-empty">
-            No hay pedidos con estos filtros.
+          <div className="admin-empty admin-empty--icon">
+            <IconEmptySearch className="empty-state__icon" />
+            <strong>No hay pedidos con estos filtros.</strong>
+            <span>Probá con otra búsqueda o ajustá los filtros.</span>
           </div>
         ) : (
           <div className="admin-orders-wrap">

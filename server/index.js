@@ -376,9 +376,44 @@ async function getMenuFromDb(branchId) {
     }
     group.products.push(p);
   }
-  const menu = { branchId, categories };
+  const menu = { branchId, categories, topProductIds: await getTopProductIds(branchId) };
   menuCache.set(branchId, { at: Date.now(), menu });
   return menu;
+}
+
+// Productos más pedidos de una sucursal: cantidad de pedidos confirmados
+// (no cancelados) en los últimos 30 días que incluyen cada producto.
+// Se muestra en la tienda con un badge "🔥 Más pedido" (mínimo 5 pedidos).
+async function getTopProductIds(branchId) {
+  try {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    const rows = await db
+      .prepare(
+        `SELECT id, items FROM orders
+         WHERE branch = ? AND payment_status = 'approved' AND status != 'cancelled'
+           AND created_at >= ?`
+      )
+      .all(branchId, since);
+    const byProduct = new Map(); // productId -> Set(orderId)
+    for (const row of rows) {
+      let items;
+      try { items = JSON.parse(row.items); } catch { continue; }
+      for (const it of items) {
+        const id = typeof it.productId === "string" ? it.productId : "";
+        if (!id) continue;
+        if (!byProduct.has(id)) byProduct.set(id, new Set());
+        byProduct.get(id).add(row.id);
+      }
+    }
+    return Array.from(byProduct.entries())
+      .filter(([, ordersWith]) => ordersWith.size >= 5)
+      .sort((a, b) => b[1].size - a[1].size)
+      .slice(0, 3)
+      .map(([id]) => id);
+  } catch (err) {
+    console.error("getTopProductIds:", err.message);
+    return [];
+  }
 }
 
 // Slugs únicos por sucursal (para nuevos productos)

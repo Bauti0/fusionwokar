@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import ProductCard from "./ProductCard.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
 import { closedLabel } from "../utils/schedule.js";
@@ -16,6 +16,24 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
   const [query, setQuery] = useState("");
   const [customizing, setCustomizing] = useState(null);
   const [activeCat, setActiveCat] = useState(() => menu.categories[0]?.id);
+  const catsRef = useRef(null);
+  const [catsHint, setCatsHint] = useState(false);
+
+  useEffect(() => {
+    const el = catsRef.current;
+    if (!el) return;
+    const update = () => setCatsHint(el.scrollWidth > el.clientWidth + 4 && el.scrollLeft < el.scrollWidth - el.clientWidth - 4);
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+      ro.disconnect();
+    };
+  }, [activeCat]);
 
   const search = query.trim().toLowerCase();
   const hasSearch = search.length > 0;
@@ -27,6 +45,8 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
   const handleAdd = useCallback((product, opts) => {
     onAdd(product, opts);
   }, [onAdd]);
+
+  const topIds = menu.topProductIds || [];
 
   return (
     <div className="menu">
@@ -87,19 +107,21 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
           </div>
         </div>
         {!hasSearch && (
-          <nav className="menu__cats" aria-label="Categorías del menú">
-            {menu.categories.map((cat) => (
-              <button
-                key={cat.id}
-                className={`cat-chip ${activeCat === cat.id ? "is-active" : ""}`}
-                aria-pressed={activeCat === cat.id}
-                onClick={() => setActiveCat(cat.id)}
-              >
-                {cat.name}
-                <span className="cat-chip__count">{countProducts(cat)}</span>
-              </button>
-            ))}
-          </nav>
+          <div className={`menu__cats-wrap ${catsHint ? "is-clipped-right" : ""}`}>
+            <nav className="menu__cats" ref={catsRef} aria-label="Categorías del menú">
+              {menu.categories.map((cat) => (
+                <button
+                  key={cat.id}
+                  className={`cat-chip ${activeCat === cat.id ? "is-active" : ""}`}
+                  aria-pressed={activeCat === cat.id}
+                  onClick={() => setActiveCat(cat.id)}
+                >
+                  {cat.name}
+                  <span className="cat-chip__count">{countProducts(cat)}</span>
+                </button>
+              ))}
+            </nav>
+          </div>
         )}
       </div>
 
@@ -129,6 +151,7 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
                           <ProductCard
                             key={product.id}
                             product={product}
+                            isTop={topIds.includes(product.id)}
                             onAdd={handleAdd}
                             onCustomize={setCustomizing}
                           />
@@ -191,6 +214,7 @@ function SearchResults({ menu, search, onAdd, onCustomize }) {
             key={product.id}
             product={product}
             categoryName={product.categoryName}
+            isTop={(menu.topProductIds || []).includes(product.id)}
             onAdd={onAdd}
             onCustomize={onCustomize}
           />
