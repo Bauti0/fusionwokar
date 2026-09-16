@@ -407,6 +407,12 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
               <span>a confirmar</span>
             </div>
           )}
+          {shippingCost > 0 && (
+            <div className="summary__row">
+              <span>Envío</span>
+              <span>{formatPrice(shippingCost)}</span>
+            </div>
+          )}
           <div className="summary__row summary__row--total">
             <span>Total ({count} items)</span>
             <span>{formatPrice(finalTotal)}</span>
