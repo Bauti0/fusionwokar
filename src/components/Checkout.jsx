@@ -54,6 +54,13 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
   const shippingCost = wantsDelivery ? shipping?.cost || 0 : 0;
   const finalTotal = (coupon ? coupon.totalAfter : total) + shippingCost;
   const discount = coupon ? coupon.discount : 0;
+  // El cálculo automático de envío falló del todo (servicio caído, saturación).
+  // Para efectivo/transferencia se deja pasar con envío "a confirmar"; para
+  // Mercado Pago se bloquea pero con la puerta de WhatsApp del local.
+  const shippingUnavailable = wantsDelivery && isTandil && !!shippingError;
+  const contactWaLink = `https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(
+    "Hola! Estoy haciendo un pedido pero no puedo calcular el envío automáticamente en la página. ¿Me pueden ayudar?"
+  )}`;
 
   // Cotización de envío con debounce (no satura la API). Espera una dirección
   // con un mínimo de texto y nunca encola una segunda consulta mientras una va
@@ -145,10 +152,13 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
     }
     if (orderMode === "delivery" && isTandil) {
       if (shippingError) {
-        setError(shippingError);
-        return;
-      }
-      if (!shipping) {
+        // Mercado Pago: sin costo final no se puede cobrar → se bloquea.
+        if (isMp) {
+          setError(shippingError);
+          return;
+        }
+        // Efectivo/transferencia: se pasa con envío a confirmar por WhatsApp.
+      } else if (!shipping) {
         setError("Estamos calculando el costo de envío…");
         return;
       }
@@ -174,8 +184,8 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
         address: orderMode === "delivery" ? address.trim() : "",
         deliveryNotes: orderMode === "delivery" ? deliveryNotes.trim() : "",
         shipping: wantsDelivery
-          ? { cost: shipping?.cost || 0, blocks: shipping?.blocks || 0 }
-          : { cost: 0, blocks: 0 },
+          ? { cost: shipping?.cost || 0, blocks: shipping?.blocks || 0, pending: shippingUnavailable && !isMp }
+          : { cost: 0, blocks: 0, pending: false },
         scheduledFor: scheduleMode === "scheduled" && scheduledAt
           ? new Date(scheduledAt).toISOString()
           : "",
@@ -361,6 +371,22 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
         </div>
 
         <div className="summary">
+          {shippingUnavailable && isMp && (
+            <div className="checkout-note checkout-note--error">
+              <span>
+                {shippingError} No pudimos calcular el envío automático del todo.
+              </span>
+              <a className="btn btn--ghost btn--sm" href={contactWaLink} target="_blank" rel="noreferrer">
+                💬 Escribinos por WhatsApp
+              </a>
+            </div>
+          )}
+          {shippingUnavailable && !isMp && (
+            <div className="checkout-note" role="status">
+              No pudimos calcular el envío automático — te confirmamos el costo por
+              WhatsApp antes de salir.
+            </div>
+          )}
           {items.map((item) => (
             <div className="summary__row" key={item.key}>
               <span>
@@ -373,6 +399,12 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
             <div className="summary__row">
               <span>Descuento ({coupon?.code})</span>
               <span>−{formatPrice(discount)}</span>
+            </div>
+          )}
+          {shippingUnavailable && !isMp && (
+            <div className="summary__row">
+              <span>Envío</span>
+              <span>a confirmar</span>
             </div>
           )}
           <div className="summary__row summary__row--total">

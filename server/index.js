@@ -569,7 +569,16 @@ async function validateOrderBody(body) {
     try {
       shipping = await computeShipping(branch, address);
     } catch (err) {
-      return { error: err.message };
+      // Si TODOS los proveedores de cálculo fallaron:
+      //  - Mercado Pago → se bloquea (no se puede cobrar sin saber el costo),
+      //    pero se marca "contactWhatsApp" para que el checkout ofrezca hablar
+      //    con el local en vez de dejar al cliente sin salida.
+      //  - Efectivo/transferencia → el pedido pasa igual con envío "pendiente";
+      //    el costo se confirma por WhatsApp antes de salir (badge en el panel).
+      if (paymentMethod === "mercadopago") {
+        return { error: err.message, contactWhatsApp: true };
+      }
+      shipping = { cost: 0, blocks: 0, supported: true, pending: true };
     }
   }
   return {
@@ -653,7 +662,11 @@ function progressiveLoginLimit(req, res, next) {
 app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "orders" }), async (req, res) => {
   try {
     const result = await validateOrderBody(req.body);
-    if (result.error) return res.status(400).json({ error: result.error });
+    if (result.error) {
+      const payload = { error: result.error };
+      if (result.contactWhatsApp) payload.contactWhatsApp = true;
+      return res.status(400).json(payload);
+    }
     const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
 
     const orderNumber = await nextOrderNumber();
@@ -700,8 +713,8 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         INSERT INTO orders
           (order_number, branch, customer_name, customer_phone, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
-           scheduled_for, notes, mp_preference_id, shipping, shipping_km, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           scheduled_for, notes, mp_preference_id, shipping, shipping_km, shipping_pending, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
           args: [
             orderNumber,
@@ -722,6 +735,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
             mpPreferenceId,
             shipping.cost,
             shipping.blocks,
+            shipping.pending ? 1 : 0,
             ts,
             ts,
           ],
@@ -749,7 +763,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         discount,
         couponCode,
         scheduledFor,
-        shipping: { cost: shipping.cost, blocks: shipping.blocks },
+        shipping: { cost: shipping.cost, blocks: shipping.blocks, pending: !!shipping.pending },
       });
     } catch (err) {
       // El pedido no se creó: devolvemos el uso reservado del cupón
@@ -1527,8 +1541,8 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
           sql: `INSERT INTO orders
           (order_number, branch, customer_name, customer_phone, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
-           scheduled_for, notes, source, shipping, shipping_km, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           scheduled_for, notes, source, shipping, shipping_km, shipping_pending, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           args: [
             orderNumber,
             branch,
@@ -1546,6 +1560,7 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
             source,
             shipping.cost,
             shipping.blocks,
+            shipping.pending ? 1 : 0,
             ts,
             ts,
           ],

@@ -15,9 +15,11 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
   const [phase, setPhase] = useState(demo ? "demo" : "loading");
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
+  const [slow, setSlow] = useState(false); // el pago tarda más de lo normal
   const mounted = useRef(true);
   const brickContainer = useRef(null);
   const pollTimer = useRef(null);
+  const slowTimer = useRef(null);
   const dialogRef = useDialogA11y({ onClose: onCancel });
 
   useEffect(() => {
@@ -25,17 +27,26 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
     return () => {
       mounted.current = false;
       clearInterval(pollTimer.current);
+      clearTimeout(slowTimer.current);
     };
   }, []);
 
   // Polling del estado del pago
   function startPolling() {
+    setSlow(false);
     clearInterval(pollTimer.current);
+    clearTimeout(slowTimer.current);
+    // Si pasan ~90 s sin que el pago se resuelva, avisamos (el webhook puede
+    // llegar tarde). El polling sigue corriendo por si se aprueba/rechaza.
+    slowTimer.current = setTimeout(() => {
+      if (mounted.current) setSlow(true);
+    }, 90000);
     pollTimer.current = setInterval(async () => {
       try {
         const order = await getOrder(orderId);
         if (order.paymentStatus === "approved" || order.paymentStatus === "rejected") {
           clearInterval(pollTimer.current);
+          clearTimeout(slowTimer.current);
           if (mounted.current) setResult(order);
         }
       } catch {
@@ -46,6 +57,7 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
 
   useEffect(() => {
     if (!result) return;
+    clearTimeout(slowTimer.current);
     const t = setTimeout(() => onResult?.(result), 1200);
     return () => clearTimeout(t);
   }, [result, onResult]);
@@ -163,6 +175,18 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
         </div>
 
         {error && <p className="form-error">{error}</p>}
+
+        {slow && (
+          <div className="payment-slow" role="status">
+            <p>
+              Esto está tardando más de lo normal. Si ya completaste el pago, esperá
+              un poco más; si no, podés cerrar e intentarlo de nuevo.
+            </p>
+            <button className="btn btn--ghost btn--sm" onClick={onCancel}>
+              Cerrar e intentar de nuevo
+            </button>
+          </div>
+        )}
 
         <button className="btn btn--ghost btn--block" onClick={onCancel}>
           Cancelar

@@ -550,6 +550,19 @@ a { color: var(--color-primary); }
   border-color: rgba(255,193,7,.4);
 }
 
+/* Aviso de envío a confirmar (cálculo automático caído) en el checkout */
+.checkout-note {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  font-size: 13px; color: var(--color-text-soft); background: var(--color-surface);
+  border: 1px solid var(--color-border); border-left: 3px solid var(--color-secondary);
+  border-radius: var(--radius-sm); padding: 11px 14px; margin-bottom: 12px;
+}
+.checkout-note--error {
+  color: var(--color-primary-dark); background: var(--color-primary-soft);
+  border-color: rgba(229,52,46,.25); border-left-color: var(--color-primary);
+}
+.checkout-note a { align-self: flex-start; }
+
 .trust-strip {
   display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center;
   margin-top: 16px; font-size: 12.5px; font-weight: 600; color: var(--color-text-soft);
@@ -699,6 +712,7 @@ a { color: var(--color-primary); }
 .badge--pay-approved { background: #e6f6ec; color: var(--color-success); border-color: #bfe6cd; }
 .badge--pay-pending { background: #fff4e0; color: #b36b00; border-color: #f0d9a8; }
 .badge--pay-rejected { background: #fdecea; color: var(--color-primary); border-color: #f3c2c0; }
+.badge--shipping-pending { background: #fff4e0; color: #b36b00; border-color: #f0d9a8; }
 
 /* Skeleton loading (menú) */
 .skeleton { background: linear-gradient(90deg, var(--color-surface) 25%, #f0ede8 40%, var(--color-surface) 60%); background-size: 300% 100%; animation: shimmer 1.2s infinite linear; border-radius: var(--radius-sm); }
@@ -750,6 +764,14 @@ a { color: var(--color-primary); }
 }
 .demo-mode p { font-size: 13px; color: var(--color-text-soft); margin: 0 0 14px; }
 .demo-mode__actions { display: grid; gap: 8px; }
+.payment-slow {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  text-align: center; margin: 0 0 14px;
+  background: #fff7e6; border: 1px solid #f0d9a8; color: #8a6d1a;
+  border-radius: var(--radius-sm); padding: 14px 16px; font-size: 13.5px;
+  animation: fadeSlide .25s var(--ease) both;
+}
+.payment-slow p { margin: 0; }
 .payment-result--ok .success__icon { background: var(--color-success); }
 .payment-result--ko .success__icon { background: var(--color-primary); }
 .payment-result--wait .success__icon { background: #b36b00; }

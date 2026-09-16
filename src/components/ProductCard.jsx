@@ -15,7 +15,14 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   const hasExtras = product.extras && product.extras.length > 0;
   const unavailable = product.available === false;
   const [added, setAdded] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
   const timer = useRef(null);
+
+  // Si la foto no carga (archivo borrado, ruta rota…) caemos al mismo estado
+  // visual que los productos sin foto: el div "product__media--blank". El
+  // estado persiste para no volver a intentar la misma imagen rota en cada
+  // re-render (React podría re-montar el <img> con el mismo src).
+  const hasImage = !!product.image && !imgFailed;
 
   function flash() {
     setAdded(true);
@@ -34,10 +41,10 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   }
 
   return (
-    <div className={`product ${unavailable ? "product--unavailable" : ""} ${product.image ? "product--with-image" : ""}`}>
-      {product.image ? (
+    <div className={`product ${unavailable ? "product--unavailable" : ""} ${hasImage ? "product--with-image" : ""}`}>
+      {hasImage ? (
         <div className="product__media">
-          <img src={product.image} alt={product.name} width="132" height="132" loading="lazy" />
+          <img src={product.image} alt={product.name} width="132" height="132" loading="lazy" onError={() => setImgFailed(true)} />
         </div>
       ) : (
         <div className="product__media product__media--blank" aria-hidden="true" />

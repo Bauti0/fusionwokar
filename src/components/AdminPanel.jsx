@@ -401,6 +401,7 @@ export default function AdminPanel({ onLogout }) {
                       {o.source === "counter" && o.orderMode !== "delivery" && (
                         <span className="badge badge--source">🧍 Mostrador</span>
                       )}
+                      {o.shipping?.pending && <span className="badge badge--shipping-pending">⚠️ Envío a confirmar</span>}
                       {o.scheduledFor && <span className="badge" title={`Programado: ${new Date(o.scheduledFor).toLocaleString("es-AR")}`}>🕒</span>}
                     </div>
                     <div className="admin-order__bottom">
@@ -497,6 +498,7 @@ export default function AdminPanel({ onLogout }) {
                   <h4>Sucursal / Entrega</h4>
                   <p>{BRANCHES[selected.branch]?.name}</p>
                   <p>{selected.orderMode === "delivery" ? "🛵 Delivery" : "🥡 Retiro"}</p>
+                  {selected.shipping?.pending && <p className="badge badge--shipping-pending">⚠️ Envío a confirmar</p>}
                   <p>{new Date(selected.createdAt).toLocaleString("es-AR")}</p>
                   {selected.scheduledFor && (
                     <p className="badge">🕒 Programado: {new Date(selected.scheduledFor).toLocaleString("es-AR")}</p>

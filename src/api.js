@@ -10,7 +10,12 @@ async function request(path, options = {}) {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Error ${res.status}`);
+    err.contactWhatsApp = !!data.contactWhatsApp;
+    err.shippingPending = !!data.shippingPending;
+    throw err;
+  }
   return data;
 }
 

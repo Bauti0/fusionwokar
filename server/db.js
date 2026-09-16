@@ -202,6 +202,9 @@ await ensureColumn("orders", "source", "source TEXT NOT NULL DEFAULT 'web'");
 // "shipping_km" por legado pero guarda el número de cuadras.
 await ensureColumn("orders", "shipping", "shipping INTEGER NOT NULL DEFAULT 0");
 await ensureColumn("orders", "shipping_km", "shipping_km INTEGER NOT NULL DEFAULT 0");
+// Envío "pendiente": el cálculo automático falló y el pedido se aceptó igual
+// (efectivo/transferencia). El costo se confirma por WhatsApp antes de salir.
+await ensureColumn("orders", "shipping_pending", "shipping_pending INTEGER NOT NULL DEFAULT 0");
 
 // Visitante anónimo por evento (para contar personas, no vistas netas).
 // El índice se crea DESPUÉS de agregar la columna (sino falla en DBs viejas).
@@ -353,6 +356,11 @@ export function toPublicOrder(row) {
     couponCode: row.coupon_code || "",
     shippingCost: row.shipping || 0,
     shippingBlocks: row.shipping_km || 0,
+    shipping: {
+      cost: row.shipping || 0,
+      blocks: row.shipping_km || 0,
+      pending: !!row.shipping_pending,
+    },
     scheduledFor: row.scheduled_for || "",
     notes: row.notes,
     source: row.source || "web",
@@ -380,6 +388,11 @@ export function toPublicOrderPublic(row) {
     couponCode: row.coupon_code || "",
     shippingCost: row.shipping || 0,
     shippingBlocks: row.shipping_km || 0,
+    shipping: {
+      cost: row.shipping || 0,
+      blocks: row.shipping_km || 0,
+      pending: !!row.shipping_pending,
+    },
     scheduledFor: row.scheduled_for || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,

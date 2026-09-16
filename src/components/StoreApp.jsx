@@ -175,7 +175,12 @@ export default function StoreApp() {
           });
           setView(VIEWS.payment);
         } catch (err) {
-          showToast("No se pudo iniciar el pago. Volvé a intentarlo.", "error");
+          showToast(
+            err.contactWhatsApp
+              ? "No pudimos calcular el envío. Escribinos por WhatsApp para coordinar el pago."
+              : "No se pudo iniciar el pago. Volvé a intentarlo.",
+            "error"
+          );
           setView(VIEWS.checkout);
         }
         return;
