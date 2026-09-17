@@ -17,8 +17,29 @@ const PAYMENT_OPTIONS = [
 // Reusa el mismo menú/precios/validación que el checkout online,
 // así los pedidos cargados acá también entran en las estadísticas.
 // ============================================================
-export default function AdminNewOrder({ onBack, onCreated }) {
-  const [branchId, setBranchId] = useState(BRANCH_LIST[0]?.id || "");
+export default function AdminNewOrder({ onBack, onCreated, initialBranch = "" }) {
+  const BRANCH_KEY = "fw.admin.lastNewOrderBranch";
+
+  function rememberedBranch() {
+    try {
+      const v = localStorage.getItem(BRANCH_KEY) || "";
+      return BRANCH_LIST.some((b) => b.id === v) ? v : "";
+    } catch {
+      return "";
+    }
+  }
+
+  const [branchId, setBranchId] = useState(() => {
+    if (BRANCH_LIST.some((b) => b.id === initialBranch)) return initialBranch;
+    return rememberedBranch() || BRANCH_LIST[0]?.id || "";
+  });
+
+  function changeBranch(v) {
+    setBranchId(v);
+    try {
+      localStorage.setItem(BRANCH_KEY, v);
+    } catch {}
+  }
   const [menu, setMenu] = useState(null);
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState([]);
@@ -138,7 +159,7 @@ export default function AdminNewOrder({ onBack, onCreated }) {
       )}
 
       <div className="admin-products__controls" style={{ marginBottom: 14 }}>
-        <Dropdown value={branchId} onChange={setBranchId} options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))} />
+        <Dropdown value={branchId} onChange={changeBranch} options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))} />
       </div>
 
       <div className="new-order__grid">

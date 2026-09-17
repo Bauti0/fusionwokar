@@ -5,7 +5,7 @@ import { formatPrice } from "../utils/format.js";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 
 // ============================================================
-// TicketPrint — imprime el ticket de cocina/entrega en 80mm.
+// TicketPrint — imprime el ticket de cocina/entrega en 58mm.
 // Abre una ventana con el ticket listo y dispara print()
 // (la impresora térmica debe estar configurada como predeterminada)
 // Prop `variant`:
@@ -47,16 +47,19 @@ function buildTicketHtml(order) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>Ticket ${esc(order.orderNumber)}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { width:80mm; font-family:'Courier New',monospace; font-size:12px; color:#000; padding:4mm; }
+  @page { size:58mm auto; margin:0; }
+  @media print { html, body { width:48mm; margin:0; } }
+  html, body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body { width:48mm; font-family:'Courier New',monospace; font-size:12px; color:#000; padding:2mm; }
   .center { text-align:center; }
-  h1 { font-size:16px; margin-bottom:2px; }
+  h1 { font-size:15px; margin-bottom:2px; }
   .line { border-top:1px dashed #000; margin:6px 0; }
   table { width:100%; border-collapse:collapse; }
-  td { vertical-align:top; padding:1px 0; }
-  .right { text-align:right; }
+  td { vertical-align:top; padding:1px 0; word-break:break-word; }
+  .right { text-align:right; white-space:nowrap; }
   .sub { font-size:11px; color:#333; }
   .b { font-weight:bold; }
-  .big { font-size:15px; }
+  .big { font-size:14px; }
   .mt { margin-top:8px; }
   .section { margin-top:6px; }
 </style></head><body>
@@ -101,15 +104,18 @@ function buildComandaHtml(order) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>Comanda ${esc(order.orderNumber)}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { width:80mm; font-family:'Courier New',monospace; font-size:15px; color:#000; padding:4mm; }
+  @page { size:58mm auto; margin:0; }
+  @media print { html, body { width:48mm; margin:0; } }
+  html, body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body { width:48mm; font-family:'Courier New',monospace; font-size:14px; color:#000; padding:2mm; }
   .center { text-align:center; }
-  h1 { font-size:17px; margin-bottom:2px; }
+  h1 { font-size:16px; margin-bottom:2px; }
   .line { border-top:1px dashed #000; margin:6px 0; }
   table { width:100%; border-collapse:collapse; }
-  td { vertical-align:top; padding:2px 0; }
-  .qty { width:18%; }
+  td { vertical-align:top; padding:2px 0; word-break:break-word; }
+  .qty { width:22%; white-space:nowrap; }
   .b { font-weight:bold; }
-  .big { font-size:18px; }
+  .big { font-size:17px; }
 </style></head><body>
   <div class="center">
     <h1>FUSIÓN WOK</h1>

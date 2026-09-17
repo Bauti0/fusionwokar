@@ -289,6 +289,7 @@ export default function AdminPanel({ onLogout }) {
           <AdminNewOrder
             onBack={() => setSection("orders")}
             onCreated={() => load({ showSpinner: false })}
+            initialBranch={branch}
           />
         )}
 
