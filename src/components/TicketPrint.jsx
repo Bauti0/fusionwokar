@@ -46,20 +46,20 @@ function buildTicketHtml(order) {
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Ticket ${esc(order.orderNumber)}</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
+  * { margin:0; padding:0; box-sizing:border-box; font-weight:bold; }
   @page { size:58mm auto; margin:0; }
   @media print { html, body { width:48mm; margin:0; } }
   html, body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  body { width:48mm; font-family:'Courier New',monospace; font-weight:bold; font-size:13px; color:#000; padding:2mm; -webkit-font-smoothing:none; }
+  body { width:48mm; font-family:'Arial',sans-serif; font-weight:bold; font-size:14px; color:#000; padding:2mm; -webkit-font-smoothing:none; }
   .center { text-align:center; }
-  h1 { font-size:17px; margin-bottom:2px; }
+  h1 { font-size:18px; margin-bottom:2px; }
   .line { border-top:2px solid #000; margin:6px 0; }
   table { width:100%; border-collapse:collapse; }
   td { vertical-align:top; padding:1px 0; word-break:break-word; }
   .right { text-align:right; white-space:nowrap; }
-  .sub { font-size:12px; color:#000; }
+  .sub { font-size:13px; color:#000; }
   .b { font-weight:bold; }
-  .big { font-size:16px; }
+  .big { font-size:17px; }
   .mt { margin-top:8px; }
   .section { margin-top:6px; }
 </style></head><body>
@@ -103,19 +103,19 @@ function buildComandaHtml(order) {
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Comanda ${esc(order.orderNumber)}</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
+  * { margin:0; padding:0; box-sizing:border-box; font-weight:bold; }
   @page { size:58mm auto; margin:0; }
   @media print { html, body { width:48mm; margin:0; } }
   html, body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  body { width:48mm; font-family:'Courier New',monospace; font-weight:bold; font-size:16px; color:#000; padding:2mm; -webkit-font-smoothing:none; }
+  body { width:48mm; font-family:'Arial',sans-serif; font-weight:bold; font-size:17px; color:#000; padding:2mm; -webkit-font-smoothing:none; }
   .center { text-align:center; }
-  h1 { font-size:18px; margin-bottom:2px; }
+  h1 { font-size:19px; margin-bottom:2px; }
   .line { border-top:2px solid #000; margin:6px 0; }
   table { width:100%; border-collapse:collapse; }
   td { vertical-align:top; padding:2px 0; word-break:break-word; }
   .qty { width:22%; white-space:nowrap; }
   .b { font-weight:bold; }
-  .big { font-size:20px; }
+  .big { font-size:21px; }
 </style></head><body>
   <div class="center">
     <h1>FUSIÓN WOK</h1>
