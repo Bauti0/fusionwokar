@@ -83,10 +83,14 @@ export async function getPayment(paymentId) {
   };
 }
 
-// Verifica la firma del webhook (opcional, si se define MP_WEBHOOK_SECRET)
+// Verifica la firma del webhook (requiere MP_WEBHOOK_SECRET configurado).
+// Sin secret la firma NO se puede verificar → se rechaza. (Antes devolvía true
+// "por comodidad en demo", lo que dejaba el webhook abierto a que cualquiera
+// marcara pagos como aprobados. En demo no llegan webhooks reales, así que
+// rechazar es seguro: el flujo demo se simula por el endpoint /demo con token.)
 export function verifyWebhookSignature(req) {
   const secret = process.env.MP_WEBHOOK_SECRET;
-  if (!secret) return true; // sin secret configurado → confiamos (útil en demo)
+  if (!secret) return false; // firma no verificable → inválida
   const signature = req.headers["x-signature"] || "";
   const requestId = req.headers["x-request-id"] || "";
   const body = req.body || {};

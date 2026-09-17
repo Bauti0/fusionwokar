@@ -133,7 +133,7 @@ function routeInfo(pathname, query, baseUrl) {
   };
 }
 
-export function enhanceHtml(html, { pathname = "/", query = {}, baseUrl = "", canonicalPath = "" }) {
+export function enhanceHtml(html, { pathname = "/", query = {}, baseUrl = "", canonicalPath = "", nonce = "" }) {
   const info = routeInfo(pathname, query, baseUrl);
   const title = info.title || SEO_DEFAULTS.title;
   const description = info.description || SEO_DEFAULTS.description;
@@ -155,9 +155,13 @@ export function enhanceHtml(html, { pathname = "/", query = {}, baseUrl = "", ca
     out = out.replace(/<meta name="robots" content="[^"]*" \/>/, '<meta name="robots" content="noindex,follow" />');
   }
   const json = JSON.stringify(info.jsonLd);
+  // Nonce para el CSP: el JSON-LD es el único <script> inline del HTML servido.
+  // Con 'nonce-<n>' en script-src, el navegador lo acepta y bloquea cualquier
+  // otro script inline inyectado.
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   out = out.replace(
     /<script type="application\/ld\+json" id="seo-jsonld"><\/script>/,
-    () => `<script type="application/ld+json" id="seo-jsonld">${json}</script>`
+    () => `<script type="application/ld+json" id="seo-jsonld"${nonceAttr}>${json}</script>`
   );
   return out;
 }

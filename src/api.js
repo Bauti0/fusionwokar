@@ -4,10 +4,19 @@
 // El admin se autentica con cookie httpOnly (sin token en localStorage)
 // ============================================================
 
+// Token CSRF de doble cookie: el backend emite fw_admin_csrf en el login del
+// panel; este header viaja en cada petición que lo tenga. Un sitio ajeno no
+// puede leer la cookie (same-origin policy), así que no puede forjar el header.
+function csrfHeader() {
+  if (typeof document === "undefined") return {};
+  const m = document.cookie.match(/(?:^|;\s*)fw_admin_csrf=([^;]*)/);
+  return m ? { "X-CSRF-Token": decodeURIComponent(m[1]) } : {};
+}
+
 async function request(path, options = {}) {
   const res = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: { "Content-Type": "application/json", ...csrfHeader(), ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -70,9 +79,13 @@ export function trackEvent(type, branch = "") {
   });
 }
 
-// Demo: simula la aprobación/rechazo del pago
-export function simulatePayment(orderId, action) {
-  return request(`/api/payments/demo/${orderId}/${action}`, { method: "POST" });
+// Demo: simula la aprobación/rechazo del pago. Requiere el demoToken que el
+// backend entregó al crear ese pedido (solo el navegador que lo creó lo tiene).
+export function simulatePayment(orderId, action, demoToken = "") {
+  return request(`/api/payments/demo/${orderId}/${action}`, {
+    method: "POST",
+    body: JSON.stringify({ demoToken }),
+  });
 }
 
 // ---- cupones (cliente) ----

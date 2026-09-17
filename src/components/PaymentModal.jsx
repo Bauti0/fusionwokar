@@ -11,7 +11,7 @@ import useDialogA11y from "../hooks/useDialogA11y.js";
 // hasta que el webhook (o la simulación) actualice el estado.
 // ============================================================
 
-export default function PaymentModal({ orderId, orderNumber, demo, publicKey, preferenceId, onResult, onCancel }) {
+export default function PaymentModal({ orderId, orderNumber, demo, publicKey, preferenceId, demoToken, onResult, onCancel }) {
   const [phase, setPhase] = useState(demo ? "demo" : "loading");
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
@@ -112,7 +112,7 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
     setPhase("simulating");
     setError("");
     try {
-      await simulatePayment(orderId, action);
+      await simulatePayment(orderId, action, demoToken);
       startPolling();
       setPhase("polling");
     } catch (err) {

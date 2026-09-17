@@ -4,7 +4,7 @@ import cors from "cors";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
+import { randomBytes, createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import {
   db,
@@ -24,6 +24,7 @@ import { MENUS } from "../src/data/menus.js";
 import { enhanceHtml } from "./seo.js";
 import { isOpenAtTime, toWallclock } from "../src/utils/schedule.js";
 import { computeShipping } from "./shipping.js";
+import { isValidPhone } from "../src/utils/validation.js";
 
 // ============================================================
 // FUSIÓN WOK — API + servidor de producción
@@ -73,6 +74,12 @@ import { computeShipping } from "./shipping.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
 const app = express();
+
+// Estamos detrás del proxy de Render (terminación TLS). Sin esto, req.ip es la
+// IP del proxy: TODOS los rate limits y el bloqueo progresivo de login se
+// llavearían con la MISMA clave → un atacante agota los buckets de todos
+// (DoS global). Con 1 salto confiado, Express lee la X-Forwarded-For real.
+app.set("trust proxy", 1);
 
 // Siembra el menú y las categorías en la BD (solo la primera vez)
 await seedProducts(MENUS);
@@ -206,6 +213,10 @@ app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "no-referrer");
+  // HSTS: los navegadores solo lo honran en respuestas HTTPS (Render lo es);
+  // en HTTP plano (dev local) el header se ignora sin romper nada.
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   next();
 });
 
@@ -216,33 +227,47 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
-// Protección CSRF para las mutaciones del panel: con auth por cookie, una
-// petición que llega desde un origen distinto al del servidor se rechaza.
-// (Los GET del panel son idempotentes y no se protegen.)
+// Protección CSRF para las mutaciones del panel (doble capa):
+//  1) Origin check: solo orígenes permitidos (mismo host, ALLOWED_ORIGINS o dev).
+//  2) Token de doble cookie: el header X-CSRF-Token debe coincidir con la
+//     cookie fw_admin_csrf que se emite en el login. Un sitio ajeno no puede
+//     leer esa cookie (same-origin policy): cubre DNS rebinding y peticiones
+//     cross-site sin Origin, aunque el Host coincida con el nuestro.
+// /api/admin/login queda exento: el primer login todavía no tiene cookie CSRF.
 app.use("/api/admin", (req, res, next) => {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  if (req.originalUrl === "/api/admin/login") return next();
   const origin = req.headers.origin;
-  if (!origin) return next();
-  try {
-    const o = new URL(origin);
-    // Mismo host directo (producción: todo detrás del mismo dominio)
-    if (o.host === req.headers.host) return next();
-    // Orígenes habilitados vía ALLOWED_ORIGINS (p. ej. el front servido
-    // desde otro puerto/dominio que el backend)
-    if (allowedOrigins.includes(o.origin)) return next();
-    // En desarrollo el proxy de Vite reescribe el Host (changeOrigin), así
-    // que el origen del navegador es localhost:5173 y el host llega como
-    // localhost:3001. Se acepta localhost/127.0.0.1 en cualquier puerto.
-    if (
-      process.env.NODE_ENV !== "production" &&
-      ["localhost", "127.0.0.1"].includes(o.hostname)
-    ) {
-      return next();
+  if (origin) {
+    let allowed = false;
+    try {
+      const o = new URL(origin);
+      // Mismo host directo (producción: todo detrás del mismo dominio)
+      if (o.host === req.headers.host) allowed = true;
+      // Orígenes habilitados vía ALLOWED_ORIGINS (p. ej. el front servido
+      // desde otro puerto/dominio que el backend)
+      else if (allowedOrigins.includes(o.origin)) allowed = true;
+      // En desarrollo el proxy de Vite reescribe el Host (changeOrigin), así
+      // que el origen del navegador es localhost:5173 y el host llega como
+      // localhost:3001. Se acepta localhost/127.0.0.1 en cualquier puerto.
+      else if (
+        process.env.NODE_ENV !== "production" &&
+        ["localhost", "127.0.0.1"].includes(o.hostname)
+      ) {
+        allowed = true;
+      }
+    } catch {
+      return res.status(403).json({ error: "Origen inválido" });
     }
-  } catch {
-    return res.status(403).json({ error: "Origen inválido" });
+    if (!allowed) return res.status(403).json({ error: "Origen no permitido" });
   }
-  return res.status(403).json({ error: "Origen no permitido" });
+  // Doble cookie CSRF: header debe igualar la cookie emitida en el login.
+  const cookieToken = readCookie(req, "fw_admin_csrf");
+  const headerToken = String(req.headers["x-csrf-token"] || "").trim();
+  if (!cookieToken || !headerToken || !safeEqual(cookieToken, headerToken)) {
+    return res.status(403).json({ error: "Token CSRF inválido" });
+  }
+  return next();
 });
 
 // ---------- utilidades ----------
@@ -251,9 +276,18 @@ app.use("/api/admin", (req, res, next) => {
 // request (Host + proto) → funciona sin config en el subdominio *.onrender.com
 // y en cualquier dominio que apunte al servicio.
 const ENV_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+// Host header injection (canonical/sitemap/back_urls de MP): solo se confía en
+// hosts con forma plausible de hostname[:puerto]. Cualquier carácter raro
+// (/, \, espacios, %) cae al default local. La solución completa es fijar
+// PUBLIC_BASE_URL en el entorno de producción.
+function safeHostForBaseUrl(req) {
+  const host = String(req.headers.host || "").trim();
+  if (!host) return "";
+  return /^[A-Za-z0-9.-]+(?::\d{2,5})?$/.test(host) ? host : "";
+}
 function requestBaseUrl(req) {
   if (ENV_BASE_URL) return ENV_BASE_URL;
-  const host = req.headers.host;
+  const host = safeHostForBaseUrl(req);
   if (!host) return `http://localhost:${PORT}`;
   const proto = req.headers["x-forwarded-proto"];
   return `${proto && String(proto).includes("https") ? "https" : "http"}://${host}`;
@@ -300,6 +334,31 @@ function getAdminToken(req) {
   return "";
 }
 
+// Lee una cookie puntual del header Cookie (sin librerías)
+function readCookie(req, name) {
+  const cookie = req.headers.cookie || "";
+  for (const part of cookie.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx < 0) continue;
+    if (part.slice(0, idx).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(idx + 1).trim());
+      } catch {
+        return "";
+      }
+    }
+  }
+  return "";
+}
+
+// La cookie de sesión solo debe viajar por HTTPS. Se marca Secure cuando:
+//  - NODE_ENV=production (Render lo define por defecto), o
+//  - la request llegó por TLS (req.secure usa X-Forwarded-Proto con trust proxy), o
+//  - hay credenciales reales de MP (nunca cookies por HTTP plano).
+function isSecureRequest(req) {
+  return process.env.NODE_ENV === "production" || !!req.secure || !isDemoMode();
+}
+
 // ---------- rate limiting simple (en memoria) ----------
 const rateBuckets = new Map();
 function rateLimit({ windowMs = 60000, max = 30, name = "api" } = {}) {
@@ -320,11 +379,33 @@ function rateLimit({ windowMs = 60000, max = 30, name = "api" } = {}) {
   };
 }
 
+// Rate limit con clave custom (p. ej. teléfono+IP) para casos como by-phone,
+// donde varios clientes pueden compartir IP (NAT) o uno solo usar varias.
+const keyedBuckets = new Map();
+function rateLimitByKey(keyFn, { windowMs = 10 * 60 * 1000, max = 8, name = "keyed" } = {}) {
+  return (req, res, next) => {
+    const key = `${name}:${keyFn(req)}`;
+    const nowTime = Date.now();
+    const bucket = keyedBuckets.get(key);
+    if (!bucket || bucket.reset < nowTime) {
+      keyedBuckets.set(key, { count: 1, reset: nowTime + windowMs });
+      return next();
+    }
+    bucket.count += 1;
+    if (bucket.count > max) {
+      return res.status(429).json({ error: "Demasiadas solicitudes, intentá más tarde" });
+    }
+    return next();
+  };
+}
+
 // ---------- catálogo de productos (para validar precios server-side) ----------
 // La BD es la fuente de verdad del menú. Se siembra desde los archivos
 // estáticos la primera vez y luego se edita desde el panel admin.
 async function buildCatalog() {
-  const catalog = {};
+  // Object.create(null): una branch llamada "__proto__" (admitida por el regex
+  // del panel) no puede contaminar la cadena de prototipos de este mapa.
+  const catalog = Object.create(null);
   const rows = await db.prepare("SELECT * FROM products ORDER BY sort_order").all();
   for (const row of rows) {
     const p = toProduct(row);
@@ -493,7 +574,9 @@ async function validateOrderBody(body) {
     return { error: "Faltan datos del cliente" };
   }
   const phone = String(customer.phone || "").trim();
-  if (!phone || phone.length > 30) return { error: "Falta el teléfono" };
+  // Mismo regex que el front (isValidPhone): el server valida igual para que
+  // el teléfono almacenado sea siempre consultable por "Mis pedidos".
+  if (!isValidPhone(phone)) return { error: "Falta un teléfono válido" };
   if (!["delivery", "pickup"].includes(orderMode)) return { error: "Modalidad inválida" };
   if (!["mercadopago", "efectivo", "transferencia"].includes(paymentMethod)) {
     return { error: "Método de pago inválido" };
@@ -796,6 +879,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
       orderId,
       orderNumber,
       demo,
+      demoToken: demo ? demoTokenFor(orderId) : "",
       publicKey: isMp ? getMpPublicKey() : "",
       preferenceId: mpPreferenceId || `demo-${orderId}`,
       initPoint,
@@ -823,8 +907,10 @@ function isNotModified(req, row) {
   return new Date(row.updated_at).getTime() <= client;
 }
 
-// Estado público de un pedido (por id) — usado para el polling del pago
-app.get("/api/orders/:id", async (req, res) => {
+// Estado público de un pedido (por id) — usado para el polling del pago.
+// El polling de PaymentModal hace 1 request/2.5s por pestaña (≈24/min): 120/min
+// deja margen sin abrir el endpoint a spam.
+app.get("/api/orders/:id", rateLimit({ max: 120, windowMs: 60000, name: "orderget" }), async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
@@ -839,7 +925,7 @@ app.get("/api/orders/:id", async (req, res) => {
 });
 
 // Tracking del cliente por número de pedido (FW-00001)
-app.get("/api/orders/number/:orderNumber", async (req, res) => {
+app.get("/api/orders/number/:orderNumber", rateLimit({ max: 120, windowMs: 60000, name: "ordernum" }), async (req, res) => {
   try {
     const num = String(req.params.orderNumber || "").trim().toUpperCase();
     if (!/^FW-\d{4,10}$/.test(num)) return res.status(400).json({ error: "Número de pedido inválido" });
@@ -855,10 +941,21 @@ app.get("/api/orders/number/:orderNumber", async (req, res) => {
 
 // "Mis pedidos": lista los pedidos de un cliente por su teléfono.
 // Solo se devuelven datos mínimos (sin exponer pedidos de otras personas).
-app.get("/api/orders/by-phone/:phone", rateLimit({ max: 15, name: "byphone" }), async (req, res) => {
-  try {
-    const phone = (req.params.phone || "").trim();
-    if (!phone || phone.length > 30) return res.status(400).json({ error: "Falta el teléfono" });
+// Sin verificación de propiedad no es por sí solo seguro: el formato del
+// teléfono se valida igual que el front y se agrega un límite estricto por
+// teléfono+IP (además del general por IP) para dificultar el barrido de
+// números. Una verificación completa requeriría OTP por SMS/WhatsApp.
+app.get(
+  "/api/orders/by-phone/:phone",
+  rateLimit({ max: 15, name: "byphone" }),
+  rateLimitByKey(
+    (req) => `${String(req.params.phone || "").trim()}:${getClientIp(req)}`,
+    { max: 8, windowMs: 10 * 60 * 1000, name: "byphonepk" }
+  ),
+  async (req, res) => {
+    try {
+      const phone = (req.params.phone || "").trim();
+      if (!isValidPhone(phone)) return res.status(400).json({ error: "Teléfono inválido" });
     const rows = await db
       .prepare(
         "SELECT * FROM orders WHERE customer_phone = ? ORDER BY created_at DESC LIMIT 50"
@@ -977,15 +1074,12 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
     const { type, data } = req.body || {};
     console.log("Webhook recibido:", JSON.stringify({ type, data }));
 
-    // En producción, exigimos firma válida. En demo (sin credenciales) se acepta
-    // solo si la firma está configurada y es válida.
+    // Sin MP_WEBHOOK_SECRET configurado la firma no es verificable:
+    // verifyWebhookSignature devuelve false y el webhook se rechaza con 400
+    // (Mercado Pago reintentará; el flujo demo no usa webhooks, se simula).
     if (!verifyWebhookSignature(req)) {
-      console.warn("Webhook rechazado: firma inválida");
+      console.warn("Webhook rechazado: firma inválida o MP_WEBHOOK_SECRET sin configurar");
       return res.status(400).json({ error: "Firma inválida" });
-    }
-    if (!isDemoMode() && !process.env.MP_WEBHOOK_SECRET) {
-      console.warn("Webhook rechazado: falta MP_WEBHOOK_SECRET en producción");
-      return res.status(400).json({ error: "Falta configuración de webhook" });
     }
 
     if (type === "payment" && data?.id) {
@@ -1025,28 +1119,46 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
 });
 
 // ---------- demo (solo activo en modo demo) ----------
+// Clave HMAC efímera por proceso: el demoToken se entrega exclusivamente en la
+// respuesta de creación del pedido, de modo que solo el navegador que lo creó
+// puede simular su pago. Sin el token no se pueden aprobar pedidos ajenos.
+const DEMO_HMAC_KEY = randomBytes(32);
+function demoTokenFor(orderId) {
+  return createHmac("sha256", DEMO_HMAC_KEY).update(String(orderId)).digest("hex");
+}
+
 if (isDemoMode()) {
-  app.post("/api/payments/demo/:id/:action", async (req, res) => {
-    try {
-      const id = Number(req.params.id);
-      const action = req.params.action; // "approve" | "reject"
-      if (!Number.isInteger(id) || id <= 0 || !["approve", "reject"].includes(action)) {
-        return res.status(400).json({ error: "Solicitud inválida" });
+  app.post(
+    "/api/payments/demo/:id/:action",
+    rateLimit({ max: 30, windowMs: 60000, name: "demopay" }),
+    async (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        const action = req.params.action; // "approve" | "reject"
+        if (!Number.isInteger(id) || id <= 0 || !["approve", "reject"].includes(action)) {
+          return res.status(400).json({ error: "Solicitud inválida" });
+        }
+        // Autorización: el pedido solo puede simularse con su demoToken (HMAC
+        // del id). Cualquier otro request → 403.
+        const demoToken = String((req.body && req.body.demoToken) || "");
+        if (!demoToken || !safeEqual(demoToken, demoTokenFor(id))) {
+          return res.status(403).json({ error: "No autorizado" });
+        }
+        const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+        if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
+        const approved = action === "approve";
+        const wasApproved = row.payment_status === "approved";
+        await db.prepare(
+          "UPDATE orders SET payment_status = ?, status = ?, updated_at = ? WHERE id = ?"
+        ).run(approved ? "approved" : "rejected", approved ? "received" : row.status, now(), id);
+        if (approved && !wasApproved) await recordEvent("order_created", row.branch);
+        res.json({ ok: true, orderId: id, paymentStatus: approved ? "approved" : "rejected" });
+      } catch (err) {
+        console.error("POST /api/payments/demo/:id/:action:", err.message);
+        res.status(500).json({ error: "Error interno" });
       }
-      const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-      if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
-      const approved = action === "approve";
-      const wasApproved = row.payment_status === "approved";
-      await db.prepare(
-        "UPDATE orders SET payment_status = ?, status = ?, updated_at = ? WHERE id = ?"
-      ).run(approved ? "approved" : "rejected", approved ? "received" : row.status, now(), id);
-      if (approved && !wasApproved) await recordEvent("order_created", row.branch);
-      res.json({ ok: true, orderId: id, paymentStatus: approved ? "approved" : "rejected" });
-    } catch (err) {
-      console.error("POST /api/payments/demo/:id/:action:", err.message);
-      res.status(500).json({ error: "Error interno" });
     }
-  });
+  );
 }
 
 // ---------- admin ----------
@@ -1074,14 +1186,30 @@ app.post(
          return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
        }
       recordLoginSuccess(req);
+      // Higiene: purga sesiones vencidas para que la tabla no crezca sin límite
+      try {
+        const cutoff = new Date(Date.now() - TOKEN_TTL_MS).toISOString();
+        await db.prepare("DELETE FROM admin_tokens WHERE created_at < ?").run(cutoff);
+      } catch (purgeErr) {
+        console.error("purga admin_tokens:", purgeErr.message);
+      }
       const token = randomBytes(32).toString("hex");
       await db.prepare("INSERT INTO admin_tokens (token, created_at) VALUES (?, ?)").run(token, now());
       // Cookie httpOnly: el token nunca queda en localStorage ni en JS.
-      // secure en producción (o con MP real configurado): nunca viaja por HTTP plano
+      // secure en producción/HTTPS/MP real: nunca viaja por HTTP plano.
       res.cookie("fw_admin_token", token, {
         httpOnly: true,
         sameSite: "lax",
-        secure: process.env.NODE_ENV === "production" || !isDemoMode(),
+        secure: isSecureRequest(req),
+        maxAge: TOKEN_TTL_MS,
+        path: "/",
+      });
+      // Token CSRF de doble cookie (NO httpOnly: el front lo lee y lo manda como
+      // header X-CSRF-Token). Un sitio ajeno no puede leerlo (same-origin policy).
+      res.cookie("fw_admin_csrf", randomBytes(32).toString("hex"), {
+        httpOnly: false,
+        sameSite: "lax",
+        secure: isSecureRequest(req),
         maxAge: TOKEN_TTL_MS,
         path: "/",
       });
@@ -1099,6 +1227,7 @@ app.post("/api/admin/logout", requireAdmin, async (req, res) => {
     const token = getAdminToken(req);
     await db.prepare("DELETE FROM admin_tokens WHERE token = ?").run(token);
     res.clearCookie("fw_admin_token", { path: "/" });
+    res.clearCookie("fw_admin_csrf", { path: "/" });
     res.json({ ok: true });
   } catch (err) {
     console.error("POST /api/admin/logout:", err.message);
@@ -1236,6 +1365,21 @@ function safeIso(value, fallback) {
   if (!value) return fallback;
   const d = new Date(value);
   return isNaN(d.getTime()) ? fallback : d.toISOString();
+}
+
+// Fecha YYYY-MM-DD en la zona del local (Argentina, UTC-3 fijo) para el
+// agrupado diario de ventas. Antes se usaba la fecha UTC del created_at: los
+// pedidos de 21:00–03:00 AR caían en el día equivocado. Node 20+ trae ICU.
+const AR_DAY_FORMAT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Argentina/Buenos_Aires",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+function arDate(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso || "").slice(0, 10);
+  return AR_DAY_FORMAT.format(d);
 }
 
 app.get("/api/admin/stats", requireAdmin, async (req, res) => {
@@ -1420,7 +1564,7 @@ app.get("/api/admin/sales", requireAdmin, async (req, res) => {
       m.total += r.total;
       byMethod[r.payment_method] = m;
 
-      const day = r.created_at.slice(0, 10);
+      const day = arDate(r.created_at);
       const d = byDay.get(day) || { date: day, count: 0, total: 0 };
       d.count += 1;
       d.total += r.total;
@@ -1653,7 +1797,8 @@ app.get("/api/admin/products", requireAdmin, async (req, res) => {
        ORDER BY COALESCE(c.sort_order, 999999), p.sort_order`
       )
       .all();
-    const grouped = {};
+    // Object.create(null): una branch "__proto__" no puede contaminar el mapa
+    const grouped = Object.create(null);
     for (const row of rows) {
       const p = productRowToAdmin(row);
       if (!grouped[p.branch]) {
@@ -2275,6 +2420,29 @@ function indexTemplate() {
   return indexHtml;
 }
 
+// CSP: solo en páginas HTML (ruta SEO). Scripts permitidos: assets propios
+// ('self'), el SDK de Mercado Pago y el JSON-LD inline con nonce por request.
+// Sin 'unsafe-inline' para scripts: cualquier script inline inyectado queda
+// bloqueado. Estilos inline (React) sí se permiten (style-src 'unsafe-inline').
+// El ticket de impresión abre una ventana about:blank SIN <script> (solo un
+// <style>, permitido): la impresión no se ve afectada.
+function buildCsp(nonce) {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' https://sdk.mercadopago.com https://http2.mlstatic.com`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data: blob: https://*.mercadopago.com https://http2.mlstatic.com",
+    "connect-src 'self' https://*.mercadopago.com https://http2.mlstatic.com",
+    "frame-src https://*.mercadopago.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "upgrade-insecure-requests",
+  ].join("; ");
+}
+
 app.get("/robots.txt", (req, res) => {
   res.type("text/plain");
   res.setHeader("Cache-Control", "no-cache, must-revalidate");
@@ -2328,12 +2496,17 @@ app.use((req, res, next) => {
       ? `/?branch=${req.query.branch}`
       : req.path;
   res.setHeader("Cache-Control", "no-cache, must-revalidate");
+  // Nonce por request → el JSON-LD se marca con él en enhanceHtml y la CSP
+  // solo admite ese script inline puntual.
+  const nonce = randomBytes(16).toString("base64");
+  res.setHeader("Content-Security-Policy", buildCsp(nonce));
   res.send(
     enhanceHtml(indexTemplate(), {
       pathname: req.path,
       query: req.query || {},
       baseUrl: requestBaseUrl(req),
       canonicalPath,
+      nonce,
     })
   );
 });

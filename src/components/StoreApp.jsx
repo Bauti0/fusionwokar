@@ -357,6 +357,7 @@ export default function StoreApp() {
           demo={paymentFlow.demo}
           publicKey={paymentFlow.publicKey}
           preferenceId={paymentFlow.preferenceId}
+          demoToken={paymentFlow.demoToken}
           onResult={handlePaymentResult}
           onCancel={() => setView(VIEWS.checkout)}
         />

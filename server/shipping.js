@@ -12,7 +12,8 @@
 //       2) Ruta por calles: OpenRouteService si ORS_API_KEY está seteada
 //          (clave gratuita en openrouteservice.org) → si no, OSRM → si
 //          falla, distancia en línea recta (factor ~1.25x).
-//   - MAX_BLOCKS evita que direcciones absurdas disparen el costo.
+//   - MAX_BLOCKS es opcional (SHIPPING_MAX_BLOCKS): si se define, las
+//     direcciones más allá de ese tope se rechazan como "fuera de zona".
 // Necochea aún NO implementado: devuelve costo 0.
 // ============================================================
 
@@ -22,8 +23,12 @@ const FLAT_BLOCKS = Number(process.env.SHIPPING_FLAT_BLOCKS || 20);
 const SHIPPING_BASE_COST = Number(process.env.SHIPPING_BASE_COST || 4000);
 // Costo por cuadra extra por encima de la franquicia
 const SHIPPING_PER_BLOCK = Number(process.env.SHIPPING_PER_BLOCK || 100);
-// Tope de reparto total en cuadras (~39 km con cuadras de 130 m)
-const MAX_BLOCKS = Number(process.env.SHIPPING_MAX_BLOCKS || 300);
+// Tope de reparto total en cuadras. OPCIONAL: si SHIPPING_MAX_BLOCKS no está
+// definida (o es 0/negativa) NO hay tope de distancia — aplica la regla
+// comercial: las primeras SHIPPING_FLAT_BLOCKS cuadras salen SHIPPING_BASE_COST
+// y cada cuadra adicional SHIPPING_PER_BLOCK. (SHIPPING_MAX_KM quedó obsoleta:
+// la regla es por cuadras y el reparto no tiene límite de cobertura.)
+const MAX_BLOCKS = Math.max(0, Number(process.env.SHIPPING_MAX_BLOCKS || 0) || 0);
 const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
 // Una cuadra en Tandil ≈ 130 m (los geocoders devuelven metros)
 const BLOCK_METERS = Number(process.env.SHIPPING_BLOCK_METERS || 130);
@@ -234,8 +239,9 @@ export async function computeShipping(branch, address) {
   const km = await roadDistanceKm(await getOrigin(), dest);
   const exact = (km * 1000) / BLOCK_METERS;
 
-  // Fuera de zona de reparto
-  if (exact > MAX_BLOCKS) {
+  // Fuera de zona de reparto: solo si hay un tope configurado (SHIPPING_MAX_BLOCKS).
+  // Sin tope configurado el reparto no tiene límite de cobertura.
+  if (MAX_BLOCKS > 0 && exact > MAX_BLOCKS) {
     failCache.set(key, { at: Date.now() });
     throw new ShippingError(
       "zone",
