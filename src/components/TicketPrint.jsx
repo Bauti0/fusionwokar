@@ -13,9 +13,19 @@ import ConfirmModal from "./ui/ConfirmModal.jsx";
 //   "comanda" → comanda para la cocina, SOLO cantidades y nombre del producto
 // ============================================================
 
-// Escapa texto para evitar inyección de HTML/XSS en el ticket
+// Quita emojis/símbolos pictográficos del texto del ticket: las térmicas de
+// 58mm no los renderizan (salen como cuadros). Se aplica en esc(), así cubre
+// nombres de producto, adicionales, notas y cliente (también los ZWJ, tonos
+// de piel y el selector de variación que quedan sueltos al quitar el emoji).
+function stripEmoji(value) {
+  return String(value)
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[\u{FE0F}\u{1F3FB}-\u{1F3FF}\u{200D}]/gu, "");
+}
+
+// Escapa texto para evitar inyección de HTML/XSS en el ticket (y quita emojis)
 function esc(value) {
-  return String(value ?? "")
+  return stripEmoji(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -83,7 +93,7 @@ function buildTicketHtml(order) {
   <table>
     <tr><td><b>Estado:</b> ${esc(statusLabel(order.status))}</td></tr>
     <tr><td><b>Pago:</b> ${esc(paymentLabel(order.paymentStatus))} (${esc(order.paymentMethod)})</td></tr>
-    <tr><td><b>Entrega:</b> ${order.orderMode === "delivery" ? "DELIVERY 🛵" : "RETIRO 🥡"}</td></tr>
+    <tr><td><b>Entrega:</b> ${order.orderMode === "delivery" ? "DELIVERY" : "RETIRO"}</td></tr>
     ${order.orderMode === "delivery" && order.address ? `<tr><td><b>Dirección:</b> ${esc(order.address)}</td></tr>` : ""}
     <tr><td><b>Cliente:</b> ${esc(order.customer?.name)}</td></tr>
     <tr><td><b>Tel:</b> ${esc(order.customer?.phone)}</td></tr>
@@ -141,7 +151,7 @@ function buildComandaHtml(order) {
   </div>
   <div class="line"></div>
   <div class="center big b">COMANDA · ${esc(order.orderNumber)}</div>
-  <div class="center">${esc(date)} · ${order.orderMode === "delivery" ? "DELIVERY 🛵" : "RETIRO 🥡"}</div>
+  <div class="center">${esc(date)} · ${order.orderMode === "delivery" ? "DELIVERY" : "RETIRO"}</div>
   <div class="line"></div>
   <table>${items}</table>
 </body></html>`;
