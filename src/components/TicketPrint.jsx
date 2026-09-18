@@ -32,10 +32,16 @@ function buildTicketHtml(order) {
 
   const items = order.items
     .map((it) => {
-      const lines = [`<tr><td colspan="2">${it.qty}× ${esc(it.name)}</td></tr>`];
+      const lines = [];
+      // Producto principal: nombre (+ " × n" si hay más de 1) y a la derecha el
+      // precio base TOTAL del renglón (unitario × cantidad). Así se ve de un
+      // vistazo cuál es el plato y cuánto vale.
+      const qtyLabel = it.qty > 1 ? ` × ${it.qty}` : "";
+      lines.push(`<tr><td>${esc(it.name)}${qtyLabel}</td><td class="right">${formatPrice(it.unitPrice * it.qty)}</td></tr>`);
+      // Adicionales seleccionados (salsa, palitos, galletas…): debajo del
+      // producto, subordinados visualmente, cada uno con su precio (× cantidad)
+      // y los sin costo en $0.
       if (it.extras?.length) {
-        // Un renglón por opcional, con su precio (los sin costo salen en $0):
-        // así el ticket detalla Salsa / Palitos / Galleta por separado.
         for (const e of it.extras) {
           lines.push(`<tr><td class="sub">&nbsp;&nbsp;· ${esc(e.label)}</td><td class="right">${formatPrice(e.price * it.qty)}</td></tr>`);
         }
@@ -43,7 +49,6 @@ function buildTicketHtml(order) {
       if (it.notes) {
         lines.push(`<tr><td colspan="2" class="sub">&nbsp;&nbsp;Nota: ${esc(it.notes)}</td></tr>`);
       }
-      lines.push(`<tr><td class="sub">&nbsp;&nbsp;${formatPrice(it.unitPrice)} c/u × ${it.qty}</td><td class="right">${formatPrice(it.unitPrice * it.qty)}</td></tr>`);
       return lines.join("");
     })
     .join("");
