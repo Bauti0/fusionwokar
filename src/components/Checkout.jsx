@@ -383,8 +383,9 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
           )}
           {shippingUnavailable && !isMp && (
             <div className="checkout-note" role="status">
-              No pudimos calcular el envío automático — te confirmamos el costo por
-              WhatsApp antes de salir.
+              No pudimos calcular el envío automático — si es un problema temporal, te
+              confirmamos el costo por WhatsApp antes de salir. Si tu dirección está
+              fuera de la zona de reparto, no vamos a poder tomar el pedido.
             </div>
           )}
           {items.map((item) => (

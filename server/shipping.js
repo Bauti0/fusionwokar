@@ -264,3 +264,13 @@ export async function computeShipping(branch, address) {
   blockCache.set(key, { blocks, cost, at: Date.now() });
   return { cost, blocks, supported: true };
 }
+
+// Poda de cachés de envío: elimina las entradas vencidas para que los Map no
+// crezcan sin límite con direcciones distintas. Corre en segundo plano y no
+// mantiene vivo el proceso.
+function pruneShippingCaches() {
+  const t = Date.now();
+  for (const [k, v] of blockCache) if (t - v.at > KM_TTL) blockCache.delete(k);
+  for (const [k, v] of failCache) if (t - v.at > FAIL_TTL * 2) failCache.delete(k);
+}
+setInterval(pruneShippingCaches, 10 * 60 * 1000).unref();

@@ -276,6 +276,13 @@ app.use("/api/admin", (req, res, next) => {
 // request (Host + proto) → funciona sin config en el subdominio *.onrender.com
 // y en cualquier dominio que apunte al servicio.
 const ENV_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
+if (process.env.NODE_ENV === "production" && !ENV_BASE_URL) {
+  console.warn(
+    "⚠️  PUBLIC_BASE_URL no está definido: las URLs canónicas, el sitemap y los " +
+      "back_urls de Mercado Pago se derivarán del header Host (residual de host " +
+      "header injection). Fijalo en el dashboard de Render."
+  );
+}
 // Host header injection (canonical/sitemap/back_urls de MP): solo se confía en
 // hosts con forma plausible de hostname[:puerto]. Cualquier carácter raro
 // (/, \, espacios, %) cae al default local. La solución completa es fijar
@@ -293,6 +300,13 @@ function requestBaseUrl(req) {
   return `${proto && String(proto).includes("https") ? "https" : "http"}://${host}`;
 }
 const TOKEN_TTL_MS = Number(process.env.ADMIN_TOKEN_TTL_MS || 24 * 3600 * 1000); // 24h por defecto
+
+// Parsea un :id de ruta de forma estricta (solo dígitos). Number() acepta
+// notaciones raras ("1e3", "0x10") que no son ids canónicos.
+function paramId(value) {
+  const s = String(value || "").trim();
+  return /^\d+$/.test(s) ? Number(s) : NaN;
+}
 
 // Carpeta de imágenes de producto (servida como /uploads)
 const uploadsDir = path.join(__dirname, "..", "public", "uploads", "products");
@@ -574,9 +588,12 @@ async function validateOrderBody(body) {
     return { error: "Faltan datos del cliente" };
   }
   const phone = String(customer.phone || "").trim();
-  // Mismo regex que el front (isValidPhone): el server valida igual para que
-  // el teléfono almacenado sea siempre consultable por "Mis pedidos".
+  // Mismo regex que el front (isValidPhone): el server valida igual y además
+  // NORMALIZA el teléfono a solo dígitos (sin espacios/guiones/paréntesis),
+  // para que "Mis pedidos" (búsqueda por teléfono) coincida sin importar el
+  // formato con que el cliente lo tipeó al cargar el pedido.
   if (!isValidPhone(phone)) return { error: "Falta un teléfono válido" };
+  const normalizedPhone = phone.replace(/\D/g, "");
   if (!["delivery", "pickup"].includes(orderMode)) return { error: "Modalidad inválida" };
   if (!["mercadopago", "efectivo", "transferencia"].includes(paymentMethod)) {
     return { error: "Método de pago inválido" };
@@ -655,14 +672,23 @@ async function validateOrderBody(body) {
     try {
       shipping = await computeShipping(branch, address);
     } catch (err) {
-      // Si TODOS los proveedores de cálculo fallaron:
+      const code = err && err.code;
+      // Errores DEFINITIVOS (fuera de zona / dirección no encontrada): se
+      // rechazan igual para todos los medios de pago. Antes, efectivo y
+      // transferencia pasaban con envío "pendiente" y se aceptaban direcciones
+      // fuera de la zona de reparto.
+      if (code === "zone" || code === "unknown") {
+        return { error: err.message };
+      }
+      // Fallo TRANSITORIO (proveedores caídos) o inesperado:
       //  - Mercado Pago → se bloquea (no se puede cobrar sin saber el costo),
       //    pero se marca "contactWhatsApp" para que el checkout ofrezca hablar
       //    con el local en vez de dejar al cliente sin salida.
       //  - Efectivo/transferencia → el pedido pasa igual con envío "pendiente";
       //    el costo se confirma por WhatsApp antes de salir (badge en el panel).
       if (paymentMethod === "mercadopago") {
-        return { error: err.message, contactWhatsApp: true };
+        const msg = code === "transient" ? err.message : "No pudimos calcular el envío. Escribinos por WhatsApp.";
+        return { error: msg, contactWhatsApp: true };
       }
       shipping = { cost: 0, blocks: 0, supported: true, pending: true };
     }
@@ -670,7 +696,7 @@ async function validateOrderBody(body) {
   return {
     data: {
       branch,
-      customer: { name: customer.name.trim().slice(0, 100), phone },
+      customer: { name: customer.name.trim().slice(0, 100), phone: normalizedPhone },
       orderMode,
       paymentMethod,
       address: address.slice(0, 200),
@@ -720,9 +746,10 @@ const loginAttempts = new Map(); // ip → { fails, blockedUntil }
 
 function recordLoginFailure(req) {
   const ip = getClientIp(req);
-  const entry = loginAttempts.get(ip) || { fails: 0, blockedUntil: 0 };
+  const entry = loginAttempts.get(ip) || { fails: 0, blockedUntil: 0, at: 0 };
   entry.fails += 1;
   const t = Date.now();
+  entry.at = t;
   if (entry.fails >= 20) entry.blockedUntil = t + 30 * 60000;
   else if (entry.fails >= 10) entry.blockedUntil = t + 5 * 60000;
   loginAttempts.set(ip, entry);
@@ -740,6 +767,19 @@ function progressiveLoginLimit(req, res, next) {
   }
   next();
 }
+
+// Poda periódica de los maps en memoria (rate limits y login): se eliminan
+// las claves vencidas para que la memoria no crezca sin límite con IPs
+// distintas. Corre en segundo plano y no mantiene vivo el proceso.
+setInterval(() => {
+  const t = Date.now();
+  for (const [k, b] of rateBuckets) if (b.reset < t) rateBuckets.delete(k);
+  for (const [k, b] of keyedBuckets) if (b.reset < t) keyedBuckets.delete(k);
+  for (const [k, e] of loginAttempts) {
+    if (e.blockedUntil > t) continue; // bloqueo activo: no se toca
+    if (e.at && t - e.at > 30 * 60000) loginAttempts.delete(k);
+  }
+}, 15 * 60 * 1000).unref();
 
 // ---------- pedidos (cliente) ----------
 // Ventana generosa a propósito: en el flujo de Mercado Pago es normal que el
@@ -912,7 +952,7 @@ function isNotModified(req, row) {
 // deja margen sin abrir el endpoint a spam.
 app.get("/api/orders/:id", rateLimit({ max: 120, windowMs: 60000, name: "orderget" }), async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
@@ -954,13 +994,17 @@ app.get(
   ),
   async (req, res) => {
     try {
-      const phone = (req.params.phone || "").trim();
+      const phone = String(req.params.phone || "").trim();
       if (!isValidPhone(phone)) return res.status(400).json({ error: "Teléfono inválido" });
+      // Se busca el número ya normalizado (solo dígitos), igual que se
+      // almacena al crear el pedido: así coincide sin importar el formato
+      // (espacios, guiones, paréntesis, +).
+      const searchPhone = phone.replace(/\D/g, "");
     const rows = await db
       .prepare(
         "SELECT * FROM orders WHERE customer_phone = ? ORDER BY created_at DESC LIMIT 50"
       )
-      .all(phone);
+      .all(searchPhone);
     res.json({
       orders: rows.map((row) => ({
         id: row.id,
@@ -1016,10 +1060,12 @@ app.post("/api/events", rateLimit({ max: 60, name: "events" }), async (req, res)
 // Render). No toca la DB ni dispara analytics.
 app.get("/api/health", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.json({ ok: true, demo: isDemoMode(), time: now() });
+  // No se expone el modo demo hacia afuera (info disclosure para cualquiera
+  // que consulte el endpoint sin autenticación).
+  res.json({ ok: true, time: now() });
 });
 
-app.get("/api/menu/:branchId", async (req, res) => {
+app.get("/api/menu/:branchId", rateLimit({ max: 120, name: "menu" }), async (req, res) => {
   try {
     const branchId = String(req.params.branchId || "").trim();
     const menu = await getMenuFromDb(branchId);
@@ -1133,7 +1179,7 @@ if (isDemoMode()) {
     rateLimit({ max: 30, windowMs: 60000, name: "demopay" }),
     async (req, res) => {
       try {
-        const id = Number(req.params.id);
+        const id = paramId(req.params.id);
         const action = req.params.action; // "approve" | "reject"
         if (!Number.isInteger(id) || id <= 0 || !["approve", "reject"].includes(action)) {
           return res.status(400).json({ error: "Solicitud inválida" });
@@ -1286,7 +1332,7 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
 
 app.get("/api/admin/orders/:id", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
@@ -1341,7 +1387,7 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (req, res) => {
     if (!ALLOWED_STATUSES.includes(status)) {
       return res.status(400).json({ error: "Estado inválido" });
     }
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
@@ -1649,6 +1695,8 @@ app.post("/api/admin/cash-register/open", requireAdmin, async (req, res) => {
   try {
     const { branch, openingAmount } = req.body || {};
     if (!branch) return res.status(400).json({ error: "Falta la sucursal" });
+    // Campo vacío no debe interpretarse como $0 (Number("") === 0)
+    if (String(openingAmount ?? "").trim() === "") return res.status(400).json({ error: "Ingresá el monto inicial" });
     const amount = Number(openingAmount);
     if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: "Monto inicial inválido" });
     const already = await db
@@ -1670,8 +1718,10 @@ app.post("/api/admin/cash-register/open", requireAdmin, async (req, res) => {
 
 app.post("/api/admin/cash-register/:id/close", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     const { closingCounted, notes } = req.body || {};
+    // Campo vacío no debe interpretarse como $0 (Number("") === 0)
+    if (String(closingCounted ?? "").trim() === "") return res.status(400).json({ error: "Ingresá el monto contado" });
     const counted = Number(closingCounted);
     if (!Number.isFinite(counted) || counted < 0) return res.status(400).json({ error: "Monto contado inválido" });
     const row = await db.prepare("SELECT * FROM cash_registers WHERE id = ?").get(id);
@@ -1885,7 +1935,10 @@ function validateProductBody(body, partial = false) {
 app.post("/api/admin/products", requireAdmin, async (req, res) => {
   try {
     const { branch, ...rest } = req.body || {};
-    if (typeof branch !== "string" || !branch.trim() || !/^[a-z0-9-_]+$/i.test(branch)) {
+    // La sucursal debe existir de verdad (tandil/necochea): antes se aceptaba
+    // cualquier id con formato válido y se podían crear productos de una
+    // sucursal "fantasma" que después quedaba en el catálogo y aceptaba pedidos.
+    if (typeof branch !== "string" || !MENUS[branch.trim()]) {
       return res.status(400).json({ error: "Sucursal inválida" });
     }
     // Si no se manda categoryId pero sí categoryName, se genera el slug
@@ -1950,7 +2003,7 @@ app.post("/api/admin/products", requireAdmin, async (req, res) => {
 
 app.put("/api/admin/products/:id", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
@@ -1998,7 +2051,7 @@ app.put("/api/admin/products/:id", requireAdmin, async (req, res) => {
 
 app.patch("/api/admin/products/:id/available", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
@@ -2017,7 +2070,7 @@ app.patch("/api/admin/products/:id/available", requireAdmin, async (req, res) =>
 
 app.delete("/api/admin/products/:id", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
@@ -2044,7 +2097,7 @@ app.delete("/api/admin/products/:id", requireAdmin, async (req, res) => {
 // Reordenar un producto dentro de su grupo (↑/↓)
 app.post("/api/admin/products/:id/move", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     const dir = req.body?.dir === "down" ? "down" : "up";
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
@@ -2087,7 +2140,8 @@ function catScope(req) {
 app.post("/api/admin/categories", requireAdmin, async (req, res) => {
   try {
     const { branch, name } = req.body || {};
-    if (typeof branch !== "string" || !/^[a-z0-9-_]+$/i.test(branch)) {
+    // La sucursal debe existir de verdad (tandil/necochea), ver POST /api/admin/products
+    if (typeof branch !== "string" || !MENUS[branch.trim()]) {
       return res.status(400).json({ error: "Sucursal inválida" });
     }
     const catName = String(name || "").trim();
@@ -2120,7 +2174,7 @@ app.post("/api/admin/categories", requireAdmin, async (req, res) => {
 
 app.put("/api/admin/categories/:id", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Categoría no encontrada" });
@@ -2144,7 +2198,7 @@ app.put("/api/admin/categories/:id", requireAdmin, async (req, res) => {
 
 app.delete("/api/admin/categories/:id", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Categoría no encontrada" });
@@ -2162,7 +2216,7 @@ app.delete("/api/admin/categories/:id", requireAdmin, async (req, res) => {
 // Reordenar una categoría dentro de su sucursal (↑/↓)
 app.post("/api/admin/categories/:id/move", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     const dir = req.body?.dir === "down" ? "down" : "up";
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
@@ -2290,7 +2344,7 @@ app.post("/api/admin/coupons", requireAdmin, async (req, res) => {
 
 app.patch("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM coupons WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Cupón no encontrado" });
@@ -2306,7 +2360,7 @@ app.patch("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
 
 app.delete("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM coupons WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Cupón no encontrado" });
@@ -2385,7 +2439,7 @@ app.get(
   rateLimit({ max: 300, windowMs: 60000, name: "images" }),
   async (req, res) => {
     try {
-      const id = Number(req.params.id);
+      const id = paramId(req.params.id);
       if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
       const row = await getProductImage(id);
       if (!row) return res.status(404).json({ error: "Imagen no encontrada" });
@@ -2485,12 +2539,8 @@ app.get("/sitemap.xml", (req, res) => {
 // Páginas SPA → HTML con SEO por ruta. Va ANTES de express.static porque
 // el static sirve dist/index.html para "/" (y se saltaría la inyección).
 // Los archivos con extensión (js/css/img) se dejan pasar al static.
-app.use((req, res, next) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return next();
-  if (req.path.startsWith("/api")) return next();
-  if (/\.[a-zA-Z0-9]{1,10}$/.test(req.path)) return next();
-  const isSensitive = req.path.startsWith("/admin") || req.path.startsWith("/track/");
-  if (isSensitive) res.setHeader("X-Robots-Tag", "noindex, follow");
+function serveSpaPage(req, res, { noindex = false } = {}) {
+  if (noindex) res.setHeader("X-Robots-Tag", "noindex, follow");
   const canonicalPath =
     req.path === "/" && (req.query.branch === "necochea" || req.query.branch === "tandil")
       ? `/?branch=${req.query.branch}`
@@ -2509,6 +2559,14 @@ app.use((req, res, next) => {
       nonce,
     })
   );
+}
+
+app.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  if (req.path.startsWith("/api")) return next();
+  if (/\.[a-zA-Z0-9]{1,10}$/.test(req.path)) return next();
+  const isSensitive = req.path.startsWith("/admin") || req.path.startsWith("/track/");
+  serveSpaPage(req, res, { noindex: isSensitive });
 });
 
 // index.html y demás estáticos sin hash: negocian con ETag/Last-Modified
@@ -2523,10 +2581,28 @@ app.use(
   })
 );
 
-// Fallback SPA de último recurso (rutas no-api que el static no sirvió)
+// Fallback SPA de último recurso (rutas no-api que el static no sirvió,
+// p. ej. un asset con hash viejo). Se sirve con el mismo HTML+SEO+CSP que
+// el resto y con noindex: antes se enviaba index.html crudo, sin CSP ni
+// noindex (headers inconsistentes).
 app.get(/^(?!\/api).*/, (req, res) => {
-  res.setHeader("Cache-Control", "no-cache, must-revalidate");
-  res.sendFile(path.join(distDir, "index.html"));
+  serveSpaPage(req, res, { noindex: true });
+});
+
+// 404 JSON para lo que no matcheó (incluye rutas /api desconocidas y métodos
+// no-GET a rutas inexistentes). Antes Express devolvía su 404 HTML por defecto.
+app.use((req, res) => {
+  res.status(404).json({ error: "Ruta no encontrada" });
+});
+
+// Error handler final: nunca filtra detalles internos (stacks) al cliente.
+app.use((err, req, res, next) => {
+  if (err && err.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "JSON inválido" });
+  }
+  console.error("Error no controlado:", err && err.stack ? err.stack : err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: "Error interno" });
 });
 
 app.listen(PORT, () => {

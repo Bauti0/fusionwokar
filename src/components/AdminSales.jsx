@@ -152,6 +152,10 @@ function CashRegister({ branch }) {
 
   async function handleOpen(e) {
     e.preventDefault();
+    if (String(openingAmount || "").trim() === "") {
+      setError("Ingresá un monto inicial");
+      return;
+    }
     const amount = Number(openingAmount);
     if (!Number.isFinite(amount) || amount < 0) {
       setError("Ingresá un monto inicial válido");
@@ -171,6 +175,10 @@ function CashRegister({ branch }) {
 
   async function handleClose(e) {
     e.preventDefault();
+    if (String(closingCounted || "").trim() === "") {
+      setError("Ingresá el monto contado");
+      return;
+    }
     const counted = Number(closingCounted);
     if (!Number.isFinite(counted) || counted < 0) {
       setError("Ingresá el monto contado");

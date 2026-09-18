@@ -390,10 +390,12 @@ export function toPublicOrderPublic(row) {
     paymentMethod: row.payment_method,
     paymentStatus: row.payment_status,
     status: row.status,
-    items: JSON.parse(row.items),
+    // Ítems SIN la nota libre del cliente: como este endpoint es público y los
+    // id/número de pedido son correlativos, las notas no deben exponerse a
+    // terceros que conozcan el número de un pedido ajeno.
+    items: (JSON.parse(row.items) || []).map(({ notes, ...item }) => item),
     total: row.total,
     discount: row.discount || 0,
-    couponCode: row.coupon_code || "",
     shippingCost: row.shipping || 0,
     shippingBlocks: row.shipping_km || 0,
     shipping: {
