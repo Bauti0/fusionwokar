@@ -34,7 +34,11 @@ function buildTicketHtml(order) {
     .map((it) => {
       const lines = [`<tr><td colspan="2">${it.qty}× ${esc(it.name)}</td></tr>`];
       if (it.extras?.length) {
-        lines.push(`<tr><td class="sub">&nbsp;&nbsp;· ${it.extras.map((e) => esc(e.label)).join(", ")}</td><td class="right">${formatPrice(it.extras.reduce((a, e) => a + e.price, 0) * it.qty)}</td></tr>`);
+        // Un renglón por opcional, con su precio (los sin costo salen en $0):
+        // así el ticket detalla Salsa / Palitos / Galleta por separado.
+        for (const e of it.extras) {
+          lines.push(`<tr><td class="sub">&nbsp;&nbsp;· ${esc(e.label)}</td><td class="right">${formatPrice(e.price * it.qty)}</td></tr>`);
+        }
       }
       if (it.notes) {
         lines.push(`<tr><td colspan="2" class="sub">&nbsp;&nbsp;Nota: ${esc(it.notes)}</td></tr>`);
@@ -48,7 +52,7 @@ function buildTicketHtml(order) {
 <style>
   * { margin:0; padding:0; box-sizing:border-box; font-weight:bold; }
   @page { size:58mm auto; margin:0; }
-  @media print { html, body { width:48mm; margin:0; } }
+  @media print { html, body { width:48mm; height:auto; margin:0; overflow:hidden; } }
   html, body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   body { width:48mm; font-family:'Arial',sans-serif; font-weight:bold; font-size:14px; color:#000; padding:2mm; -webkit-font-smoothing:none; }
   .center { text-align:center; }
@@ -98,14 +102,22 @@ function buildComandaHtml(order) {
   });
 
   const items = order.items
-    .map((it) => `<tr><td class="qty">${it.qty}×</td><td>${esc(it.name)}</td></tr>`)
+    .map((it) => {
+      const row = `<tr><td class="qty">${it.qty}×</td><td>${esc(it.name)}</td></tr>`;
+      // Los opcionales (salsa, palitos, galletas) también van en la comanda:
+      // la cocina necesita saber qué incluye cada plato.
+      const extras = (it.extras || [])
+        .map((e) => `<tr><td class="qty"></td><td class="sub">&nbsp;· ${esc(e.label)}</td></tr>`)
+        .join("");
+      return row + extras;
+    })
     .join("");
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Comanda ${esc(order.orderNumber)}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; font-weight:bold; }
   @page { size:58mm auto; margin:0; }
-  @media print { html, body { width:48mm; margin:0; } }
+  @media print { html, body { width:48mm; height:auto; margin:0; overflow:hidden; } }
   html, body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   body { width:48mm; font-family:'Arial',sans-serif; font-weight:bold; font-size:17px; color:#000; padding:2mm; -webkit-font-smoothing:none; }
   .center { text-align:center; }
@@ -114,6 +126,7 @@ function buildComandaHtml(order) {
   table { width:100%; border-collapse:collapse; }
   td { vertical-align:top; padding:2px 0; word-break:break-word; }
   .qty { width:22%; white-space:nowrap; }
+  .sub { font-size:15px; color:#000; }
   .b { font-weight:bold; }
   .big { font-size:21px; }
 </style></head><body>
