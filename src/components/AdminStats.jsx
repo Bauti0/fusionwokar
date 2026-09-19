@@ -18,6 +18,14 @@ const PERIODS = [
   { id: "custom", label: "Personalizado" },
 ];
 
+const branchLabel = (v) => (typeof v === "number" && Number.isFinite(v) ? `${v}%` : "0%");
+
+function branchShare(part, whole) {
+  if (!whole) return "0%";
+  const pct = (part / whole) * 100;
+  return `${Math.round(pct * 10) / 10}%`;
+}
+
 export default function AdminStats() {
   const [period, setPeriod] = useState("30d");
   const [from, setFrom] = useState("");
