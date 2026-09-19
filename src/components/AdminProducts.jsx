@@ -68,6 +68,10 @@ export default function AdminProducts() {
   const [confirmState, setConfirmState] = useState(null);
   const [query, setQuery] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [dragProductId, setDragProductId] = useState(null);
+  const [overProductId, setOverProductId] = useState(null);
+  const [dragCatId, setDragCatId] = useState(null);
+  const [overCatId, setOverCatId] = useState(null);
   const fileRef = useRef(null);
   const dialogRef = useDialogA11y({ onClose: closeModal, isActive: !!editing });
 
@@ -242,6 +246,38 @@ export default function AdminProducts() {
     }
   }
 
+  async function applyMoveSteps(id, steps, dir, moveFn) {
+    try {
+      for (let i = 0; i < steps; i++) {
+        await moveFn(id, dir);
+      }
+      await load();
+    } catch (err) {
+      setError(err.message);
+      try {
+        await load();
+      } catch {}
+    }
+  }
+
+  function handleProductDrop(fromId, toId, list) {
+    const from = list.findIndex((x) => x.id === fromId);
+    const to = list.findIndex((x) => x.id === toId);
+    if (from === -1 || to === -1 || from === to) return;
+    const steps = Math.abs(from - to);
+    const dir = from < to ? "down" : "up";
+    applyMoveSteps(fromId, steps, dir, adminMoveProduct);
+  }
+
+  function handleCategoryDrop(fromId, toId, list) {
+    const from = list.findIndex((x) => (x.rowId ?? x.id) === fromId);
+    const to = list.findIndex((x) => (x.rowId ?? x.id) === toId);
+    if (from === -1 || to === -1 || from === to) return;
+    const steps = Math.abs(from - to);
+    const dir = from < to ? "down" : "up";
+    applyMoveSteps(fromId, steps, dir, (id, d) => adminMoveCategory(id, d));
+  }
+
   function openRenameGroup(group, cat) {
     setCatPrompt({ mode: "group", group, cat });
   }
@@ -346,7 +382,30 @@ export default function AdminProducts() {
           )}
           {visibleCategories.map((cat) => (
             <section className="admin-cat" key={cat.id}>
-              <div className="admin-cat__head">
+              <div
+                className={`admin-cat__head ${dragCatId === (cat.rowId ?? cat.id) ? "is-dragging" : ""} ${overCatId === (cat.rowId ?? cat.id) ? "is-drop-target" : ""}`}
+                draggable={!q}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData("text/plain", String(cat.rowId ?? cat.id));
+                  e.dataTransfer.effectAllowed = "move";
+                  setDragCatId(cat.rowId ?? cat.id);
+                }}
+                onDragOver={(e) => {
+                  if (dragCatId && dragCatId !== (cat.rowId ?? cat.id)) {
+                    e.preventDefault();
+                    setOverCatId(cat.rowId ?? cat.id);
+                  }
+                }}
+                onDragLeave={() => setOverCatId((cur) => (cur === (cat.rowId ?? cat.id) ? null : cur))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleCategoryDrop(dragCatId, cat.rowId ?? cat.id, visibleCategories);
+                }}
+                onDragEnd={() => {
+                  setDragCatId(null);
+                  setOverCatId(null);
+                }}
+              >
                 <h4 className="admin-cat__name">{cat.name}</h4>
                 <div className="admin-cat__actions">
                   <Tooltip label="Mover arriba">
@@ -371,7 +430,31 @@ export default function AdminProducts() {
                     )}
                   </div>
                   {group.products.map((p) => (
-                    <div className={`admin-product ${p.available ? "" : "is-hidden"}`} key={p.id}>
+                    <div
+                    className={`admin-product ${p.available ? "" : "is-hidden"} ${dragProductId === p.id ? "is-dragging" : ""} ${overProductId === p.id ? "is-drop-target" : ""}`}
+                    key={p.id}
+                    draggable={!q}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("text/plain", String(p.id));
+                      e.dataTransfer.effectAllowed = "move";
+                      setDragProductId(p.id);
+                    }}
+                    onDragOver={(e) => {
+                      if (dragProductId && dragProductId !== p.id) {
+                        e.preventDefault();
+                        setOverProductId(p.id);
+                      }
+                    }}
+                    onDragLeave={() => setOverProductId((cur) => (cur === p.id ? null : cur))}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleProductDrop(dragProductId, p.id, group.products);
+                    }}
+                    onDragEnd={() => {
+                      setDragProductId(null);
+                      setOverProductId(null);
+                    }}
+                  >
                       <div className="admin-product__info">
                         <div className="admin-product__title">
                           <strong>{p.name}</strong>

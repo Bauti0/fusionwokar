@@ -87,6 +87,22 @@ export default function StoreApp() {
     if (customer) localStorage.setItem("fw.customer", JSON.stringify(customer));
   }, [customer]);
 
+  // "Rehacer" desde el panel admin: bridge efímero por localStorage.
+  // El carrito ya quedó escrito en fw.cart.<branch>; acá solo se aplica
+  // el modo de entrega y se abre el drawer con lo cargado.
+  useEffect(() => {
+    let meta = null;
+    try {
+      meta = JSON.parse(localStorage.getItem("fw.afterRepeat") || "null");
+    } catch {
+      meta = null;
+    }
+    if (!meta) return;
+    localStorage.removeItem("fw.afterRepeat");
+    if (meta.orderMode === "pickup" || meta.orderMode === "delivery") setOrderMode(meta.orderMode);
+    if (meta.openCart) setCartOpen(true);
+  }, []);
+
   const goHome = useCallback(() => {
     setCartOpen(false);
     if (branchId) setView(VIEWS.menu);

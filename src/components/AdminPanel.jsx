@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   adminOrders,
   adminSetStatus,
@@ -106,6 +106,61 @@ export default function AdminPanel({ onLogout }) {
   const [unseenIds, setUnseenIds] = useState(() => new Set());
   const [today, setToday] = useState(null);
   const dialogRef = useDialogA11y({ onClose: () => setSelected(null), isActive: !!selected });
+  const navigate = useNavigate();
+
+  // "Rehacer": vuelve a cargar un pedido en el carrito del cliente (store).
+  // Usa el mismo bridge de localStorage que useCart.repeatOrder: escribe los
+  // items en fw.cart.<branch> y navega a "/" para que el checkout quede listo.
+  function rehacerPedido(order) {
+    const cartKey = `fw.cart.${order.branch}`;
+    let current = [];
+    try {
+      current = JSON.parse(localStorage.getItem(cartKey) || "[]");
+    } catch {
+      current = [];
+    }
+    if (!Array.isArray(current)) current = [];
+    const byKey = new Map(current.map((it) => [it.key, it]));
+    for (const it of order.items || []) {
+      const key = `${it.productId}|${(it.extras || [])
+        .map((e) => e.id)
+        .sort()
+        .join(",")}`;
+      const line = {
+        key,
+        productId: it.productId,
+        name: it.name,
+        unitPrice: it.unitPrice,
+        extras: it.extras || [],
+        notes: it.notes || "",
+        qty: it.qty,
+      };
+      const existing = byKey.get(key);
+      if (existing) byKey.set(key, { ...existing, qty: existing.qty + line.qty });
+      else byKey.set(key, line);
+    }
+    try {
+      localStorage.setItem(cartKey, JSON.stringify(Array.from(byKey.values())));
+    } catch {}
+    try {
+      localStorage.setItem("fw.lastBranch", order.branch);
+    } catch {}
+    const cust = { name: order.customer?.name || "", phone: order.customer?.phone || "" };
+    if (order.orderMode === "delivery") {
+      cust.notes = order.notes || "";
+      if (order.address) cust.address = order.address;
+    }
+    try {
+      localStorage.setItem("fw.customer", JSON.stringify(cust));
+    } catch {}
+    try {
+      localStorage.setItem(
+        "fw.afterRepeat",
+        JSON.stringify({ orderMode: order.orderMode || "delivery", openCart: true })
+      );
+    } catch {}
+    navigate("/");
+  }
 
   // Mini resumen del día ("Hoy: $X · N pedidos") para la pestaña de pedidos
   useEffect(() => {
@@ -258,7 +313,7 @@ export default function AdminPanel({ onLogout }) {
         </div>
       </header>
 
-      <div className="container admin__body">
+      <div className="admin-layout">
         <nav className="admin-nav">
           <button
             className={`admin-nav__btn ${section === "orders" ? "is-active" : ""}`}
@@ -298,6 +353,8 @@ export default function AdminPanel({ onLogout }) {
             💵 Ventas
           </button>
         </nav>
+
+        <div className="container admin__body">
 
         {section === "stats" && <AdminStats />}
 
@@ -402,45 +459,63 @@ export default function AdminPanel({ onLogout }) {
               const historicOrders = orders.filter((o) => !isActiveOrder(o));
               const splitView = !status; // solo separamos si no hay filtro de estado puntual
 
-              const renderOrder = (o) => {
-                const b = BRANCHES[o.branch];
-                const cancelled = o.status === STATUS_CANCELLED.id;
-                const unseen = unseenIds.has(o.id);
-                return (
-                  <button
-                    key={o.id}
-                    className={`admin-order ${cancelled ? "is-cancelled" : ""} ${o.paymentStatus === "rejected" ? "is-rejected" : ""} ${unseen ? "is-unseen" : ""}`}
-                    onClick={() => openDetailAndMarkSeen(o)}
-                  >
-                    {unseen && <span className="admin-order__dot" aria-hidden="true" />}
-                    <div className="admin-order__top">
-                      <strong className="admin-order__num">{o.orderNumber}</strong>
-                      <span className="admin-order__time">{timeAgo(o.createdAt)}</span>
+const renderOrder = (o) => {
+                  const b = BRANCHES[o.branch];
+                  const cancelled = o.status === STATUS_CANCELLED.id;
+                  const unseen = unseenIds.has(o.id);
+                  return (
+                    <div
+                      key={o.id}
+                      className={`admin-order ${cancelled ? "is-cancelled" : ""} ${o.paymentStatus === "rejected" ? "is-rejected" : ""} ${unseen ? "is-unseen" : ""}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openDetailAndMarkSeen(o)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openDetailAndMarkSeen(o);
+                        }
+                      }}
+                    >
+                      {unseen && <span className="admin-order__dot" aria-hidden="true" />}
+                      <div className="admin-order__top">
+                        <strong className="admin-order__num">{o.orderNumber}</strong>
+                        <span className="admin-order__time">{timeAgo(o.createdAt)}</span>
+                      </div>
+                      <div className="admin-order__mid">
+                        <span className="badge badge--branch">{b?.name}</span>
+                        <span className="admin-order__name">{o.customer.name}</span>
+                        {o.source === "whatsapp" && <span className="badge badge--source">💬 WhatsApp</span>}
+                        {o.source === "counter" && o.orderMode === "delivery" && (
+                          <span className="badge badge--source">🛵 Delivery</span>
+                        )}
+                        {o.source === "counter" && o.orderMode !== "delivery" && (
+                          <span className="badge badge--source">🧍 Mostrador</span>
+                        )}
+                        {o.shipping?.pending && <span className="badge badge--shipping-pending">⚠️ Envío a confirmar</span>}
+                        {o.scheduledFor && <span className="badge" title={`Programado: ${new Date(o.scheduledFor).toLocaleString("es-AR")}`}>🕒</span>}
+                      </div>
+                      <div className="admin-order__bottom">
+                        <span className="badge">{statusEmoji(o.status)} {statusLabel(o.status)}</span>
+                        <span className={`badge badge--pay badge--pay-${o.paymentStatus}`}>
+                          {o.paymentMethod === "mercadopago" ? "💳 " : "💰 "}
+                          {paymentLabel(o.paymentStatus)}
+                        </span>
+                        <strong className="admin-order__total">{formatPrice(o.total)}</strong>
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--sm admin-order__redo"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            rehacerPedido(o);
+                          }}
+                        >
+                          🔁 Rehacer
+                        </button>
+                      </div>
                     </div>
-                    <div className="admin-order__mid">
-                      <span className="badge badge--branch">{b?.name}</span>
-                      <span className="admin-order__name">{o.customer.name}</span>
-                      {o.source === "whatsapp" && <span className="badge badge--source">💬 WhatsApp</span>}
-                      {o.source === "counter" && o.orderMode === "delivery" && (
-                        <span className="badge badge--source">🛵 Delivery</span>
-                      )}
-                      {o.source === "counter" && o.orderMode !== "delivery" && (
-                        <span className="badge badge--source">🧍 Mostrador</span>
-                      )}
-                      {o.shipping?.pending && <span className="badge badge--shipping-pending">⚠️ Envío a confirmar</span>}
-                      {o.scheduledFor && <span className="badge" title={`Programado: ${new Date(o.scheduledFor).toLocaleString("es-AR")}`}>🕒</span>}
-                    </div>
-                    <div className="admin-order__bottom">
-                      <span className="badge">{statusEmoji(o.status)} {statusLabel(o.status)}</span>
-                      <span className={`badge badge--pay badge--pay-${o.paymentStatus}`}>
-                        {o.paymentMethod === "mercadopago" ? "💳 " : "💰 "}
-                        {paymentLabel(o.paymentStatus)}
-                      </span>
-                      <strong className="admin-order__total">{formatPrice(o.total)}</strong>
-                    </div>
-                  </button>
-                );
-              };
+                  );
+                };
 
               if (!splitView) {
                 return <div className="admin-orders">{orders.map(renderOrder)}</div>;
@@ -490,6 +565,7 @@ export default function AdminPanel({ onLogout }) {
         )}
         </>
         )}
+      </div>
       </div>
 
       {selected && (
