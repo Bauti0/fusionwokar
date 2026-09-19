@@ -20,12 +20,6 @@ const PERIODS = [
 
 const branchLabel = (v) => (typeof v === "number" && Number.isFinite(v) ? `${v}%` : "0%");
 
-function branchShare(part, whole) {
-  if (!whole) return "0%";
-  const pct = (part / whole) * 100;
-  return `${Math.round(pct * 10) / 10}%`;
-}
-
 export default function AdminStats() {
   const [period, setPeriod] = useState("30d");
   const [from, setFrom] = useState("");
@@ -98,10 +92,6 @@ export default function AdminStats() {
               <strong className="stat-card__value">{formatPrice(stats.ventaNeta)}</strong>
             </div>
             <div className="stat-card">
-              <span className="stat-card__label">Venta Neta · Necochea</span>
-              <strong className="stat-card__value">{formatPrice(stats.ventaNecochea)}</strong>
-            </div>
-            <div className="stat-card">
               <span className="stat-card__label">Venta Neta · Tandil</span>
               <strong className="stat-card__value">{formatPrice(stats.ventaTandil)}</strong>
             </div>
@@ -116,58 +106,6 @@ export default function AdminStats() {
             <div className="stat-card">
               <span className="stat-card__label">Visitantes (personas)</span>
               <strong className="stat-card__value">{stats.visitas}</strong>
-            </div>
-          </div>
-
-          <div className="split-stats">
-            <div className="split-stat">
-              <span className="split-stat__label">Necochea</span>
-              <div className="split-stat__bar">
-                <span
-                  className="split-stat__fill split-stat__fill--necochea"
-                  style={{ width: branchShare(stats.ventaNecochea, stats.ventaNeta) }}
-                />
-              </div>
-              <strong className="split-stat__value">
-                {branchShare(stats.ventaNecochea, stats.ventaNeta)} · {formatPrice(stats.ventaNecochea)}
-              </strong>
-            </div>
-            <div className="split-stat">
-              <span className="split-stat__label">Tandil</span>
-              <div className="split-stat__bar">
-                <span
-                  className="split-stat__fill split-stat__fill--tandil"
-                  style={{ width: branchShare(stats.ventaTandil, stats.ventaNeta) }}
-                />
-              </div>
-              <strong className="split-stat__value">
-                {branchShare(stats.ventaTandil, stats.ventaNeta)} · {formatPrice(stats.ventaTandil)}
-              </strong>
-            </div>
-          </div>
-
-          <div className="funnel">
-            <h4>🥘 Embudo de conversión</h4>
-            <div className="funnel__list">
-              {[
-                { name: "Visitas", value: stats.visitas },
-                { name: "Productos vistos", value: stats.productosVistos },
-                { name: "Checkouts iniciados", value: stats.checkouts },
-                { name: "Pedidos confirmados", value: stats.pedidos },
-              ].map((f, i) => {
-                const pct = stats.visitas > 0 ? Math.round((f.value / stats.visitas) * 1000) / 10 : 0;
-                return (
-                  <div className="funnel__row" key={f.name}>
-                    <div className="funnel__stage">
-                      <span className="funnel__num">{i + 1}</span>
-                      <span className="funnel__name">{f.name}</span>
-                      <span className="funnel__count">{f.value}</span>
-                    </div>
-                    <div className="funnel__bar">{i > 0 && <span className="funnel__fill" style={{ width: `${pct}%` }} />}</div>
-                    {i > 0 && <span className="funnel__conv">{pct}%</span>}
-                  </div>
-                );
-              })}
             </div>
           </div>
 
