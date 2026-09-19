@@ -24,11 +24,22 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
     if (!el) return;
     const update = () => setCatsHint(el.scrollWidth > el.clientWidth + 4 && el.scrollLeft < el.scrollWidth - el.clientWidth - 4);
     update();
+    const onWheel = (e) => {
+      const max = el.scrollWidth - el.clientWidth;
+      if (max <= 0) return;
+      const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      const canScroll = (dx > 0 && el.scrollLeft < max) || (dx < 0 && el.scrollLeft > 0);
+      if (!canScroll) return;
+      e.preventDefault();
+      el.scrollLeft += dx;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
     el.addEventListener("scroll", update, { passive: true });
     window.addEventListener("resize", update);
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => {
+      el.removeEventListener("wheel", onWheel);
       el.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
       ro.disconnect();
