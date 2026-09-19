@@ -174,9 +174,8 @@ export default function TicketPrint({ order, onClose, variant = "ticket" }) {
     const t = setTimeout(() => {
       win.focus();
       win.print();
-      const t2 = setTimeout(() => win.close(), 300);
+      setTimeout(() => win.close(), 300);
       setTimeout(() => onClose(), 200);
-      clearTimeout(t2);
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps

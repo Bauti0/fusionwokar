@@ -103,12 +103,17 @@ export default function AdminPanel({ onLogout }) {
       .catch(() => {});
   }, []);
 
-  const searchTimer = useRef(null);
+  const filtersRef = useRef("");
 
   const load = useCallback(
     async ({ append = false, showSpinner = true } = {}) => {
       if (showSpinner) setLoading(true);
-      const p = append ? pageRef.current + 1 : 1;
+      const filterKey = [branch, status, payment, search, includePending ? "1" : "0"].join("|");
+      if (filterKey !== filtersRef.current) {
+        filtersRef.current = filterKey;
+        pageRef.current = 1;
+      }
+      const p = append ? pageRef.current + 1 : pageRef.current;
       try {
         const data = await adminOrders({
           branch,
@@ -123,7 +128,9 @@ export default function AdminPanel({ onLogout }) {
         setOrders((prev) => (append ? [...prev, ...data.orders] : data.orders));
         setError("");
       } catch (err) {
-        if (err.message === "No autorizado") onLogout();
+        // Tanto "No autorizado" como "Sesión expirada" significan que el token
+        // ya no sirve: se cierra la sesión en lugar de dejar un panel fantasma.
+        if (err.message === "No autorizado" || err.message === "Sesión expirada") onLogout();
         else setError(err.message);
       } finally {
         setLoading(false);
@@ -132,7 +139,10 @@ export default function AdminPanel({ onLogout }) {
     [branch, status, payment, search, includePending, onLogout]
   );
 
-  // Carga inicial + auto-refresh cada 10 segundos (vuelve a la página 1)
+  // Carga inicial + auto-refresh cada 10 segundos. Se dispara también cuando
+  // cambia la identidad de `load` (es decir, cambió un filtro), así el panel
+  // NUNCA consulta con filtros viejos (antes había llamadas inmediatas en los
+  // onChange del filtro que viajaban con el valor anterior al estado).
   useEffect(() => {
     load();
     const t = setInterval(() => load({ showSpinner: false }), 10000);
@@ -143,15 +153,18 @@ export default function AdminPanel({ onLogout }) {
   // aviso corto. No suena en la primera carga de la página, solo
   // cuando aparece uno realmente nuevo durante la sesión.
   const loadedOnceRef = useRef(false);
+  const prevNotSeenRef = useRef(new Set());
   useEffect(() => {
     const activeIds = orders.filter(isActiveOrder).map((o) => o.id);
     const notSeen = activeIds.filter((id) => !seenRef.current.has(id));
-    setUnseenIds((prev) => {
-      const isNew = notSeen.some((id) => !prev.has(id));
-      if (isNew && loadedOnceRef.current) playNewOrderChime();
-      return new Set(notSeen);
-    });
-    loadedOnceRef.current = true;
+    const isNew = notSeen.some((id) => !prevNotSeenRef.current.has(id));
+    // El sonido se dispara FUERA del setState (un updater de React puede
+    // ejecutarse dos veces en StrictMode y sonar de más) y solo cuando aparece
+    // un pedido nuevo durante la sesión, no en la primera carga.
+    if (loadedOnceRef.current && isNew) setTimeout(playNewOrderChime, 0);
+    prevNotSeenRef.current = new Set(notSeen);
+    setUnseenIds(new Set(notSeen));
+    if (orders.length > 0) loadedOnceRef.current = true;
   }, [orders]);
 
   function markSeen(id) {
@@ -173,12 +186,9 @@ export default function AdminPanel({ onLogout }) {
     setUnseenIds(new Set());
   }
 
-  // Búsqueda con debounce
-  useEffect(() => {
-    clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => load(), 350);
-    return () => clearTimeout(searchTimer.current);
-  }, [search, load]);
+  // Búsqueda sin debounce: al cambiar cualquier filtro (incluida la búsqueda)
+  // cambia la identidad de `load` y el efecto de carga se re-dispara con el
+  // valor NUEVO, sin llamadas duplicadas ni consultas con filtros viejos.
 
   function openDetailAndMarkSeen(order) {
     markSeen(order.id);
@@ -194,7 +204,8 @@ export default function AdminPanel({ onLogout }) {
       }
       load({ showSpinner: false });
     } catch (err) {
-      setError(err.message);
+      if (err.message === "No autorizado" || err.message === "Sesión expirada") onLogout();
+      else setError(err.message);
     }
   }
 
@@ -324,7 +335,7 @@ export default function AdminPanel({ onLogout }) {
           />
           <Dropdown
             value={branch}
-            onChange={(v) => { setBranch(v); load(); }}
+            onChange={setBranch}
             options={[
               { value: "", label: "Todas las sucursales" },
               ...BRANCH_LIST.map((b) => ({ value: b.id, label: b.name })),
@@ -333,7 +344,7 @@ export default function AdminPanel({ onLogout }) {
           />
           <Dropdown
             value={status}
-            onChange={(v) => { setStatus(v); load(); }}
+            onChange={setStatus}
             options={[
               { value: "", label: "Estado: todos" },
               ...ORDER_STATUSES.map((s) => ({ value: s.id, label: s.label })),
@@ -343,7 +354,7 @@ export default function AdminPanel({ onLogout }) {
           />
           <Dropdown
             value={payment}
-            onChange={(v) => { setPayment(v); load(); }}
+            onChange={setPayment}
             options={[
               { value: "", label: "Pago: todos" },
               { value: "approved", label: "Pagados" },
@@ -355,7 +366,7 @@ export default function AdminPanel({ onLogout }) {
           <Switch
             id="include-pending"
             checked={includePending}
-            onChange={(v) => { setIncludePending(v); load(); }}
+            onChange={setIncludePending}
             label="Incluir MP sin pagar"
           />
         </div>

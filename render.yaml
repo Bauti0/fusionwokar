@@ -13,8 +13,6 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-      - key: DEMO_MODE
-        value: "true"
       - key: ADMIN_USER
         value: admin
       - key: ADMIN_PASSWORD

@@ -128,7 +128,7 @@ export default function StoreApp() {
   // - Efectivo/Transferencia → se crea el pedido (confirmado) y se abre
   //   WhatsApp con el detalle, como antes.
   const handleConfirmCheckout = useCallback(
-    async ({ customer: cust, orderMode: mode, paymentMethod, address, deliveryNotes, scheduledFor, couponCode, shipping }) => {
+    async ({ customer: cust, orderMode: mode, paymentMethod, address, deliveryNotes, scheduledFor, couponCode, couponDiscount, shipping }) => {
       // Guardamos los datos del cliente; si es delivery conservamos también
       // la dirección y las observaciones para autocompletar el próximo pedido
       setCustomer((prev) =>
@@ -199,7 +199,11 @@ export default function StoreApp() {
         serverCoupon = res.couponCode || "";
         serverScheduled = res.scheduledFor || serverScheduled;
       } catch {
-        /* el pedido igual se arma por WhatsApp */
+        // El pedido igual se arma por WhatsApp. Si el server no validó el cupón,
+        // se usa el descuento ya validado en el cliente para que el mensaje no
+        // cobre de más al que el cliente confirmó en pantalla.
+        serverDiscount = couponDiscount || 0;
+        serverCoupon = couponCode || "";
       }
       sendOrderByWhatsApp({
         branch,
@@ -226,15 +230,17 @@ export default function StoreApp() {
     (order) => {
       const meta = paymentMeta || {};
       const fullOrder = { ...order, orderMode: order.orderMode || meta.orderMode, paymentMethod: order.paymentMethod || meta.paymentMethod, address: order.address || meta.address };
-      // Solo se registra en el historial si el pago se aprobó
+      // Solo se registra en el historial Y se vacía el carrito si el pago se
+      // aprobó. Si quedó rechazado/pendiente el carrito se conserva para que
+      // el cliente pueda reintentar sin perder su pedido.
       if (fullOrder?.paymentStatus === "approved") {
         cart.placeOrder({
           orderMode: fullOrder.orderMode,
           paymentMethod: fullOrder.paymentMethod,
           address: fullOrder.address,
         });
+        cart.clearCart();
       }
-      cart.clearCart();
       setLastOrder(fullOrder);
       setView(VIEWS.paymentResult);
     },

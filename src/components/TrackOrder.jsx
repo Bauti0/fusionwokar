@@ -20,6 +20,11 @@ import TrackHeader from "./TrackHeader.jsx";
 // del estado y el estado del pago.
 // ============================================================
 
+// Estados terminales: no tiene sentido seguir consultando después.
+function isTerminal(o) {
+  return o.status === STATUS_CANCELLED.id || o.status === "completed" || o.paymentStatus === "rejected";
+}
+
 export default function TrackOrder() {
   const { orderNumber } = useParams();
   const [order, setOrder] = useState(null);
@@ -31,15 +36,29 @@ export default function TrackOrder() {
       const o = await getOrderByNumber(orderNumber);
       setOrder(o);
       setNotFound(false);
-    } catch {
-      setNotFound(true);
+      if (isTerminal(o)) clearTimer();
+    } catch (err) {
+      // Solo un 404 real (pedido inexistente) muestra el estado "no encontrado".
+      // Errores transitorios (servidor caído, límite de rate, red) NO deben
+      // borrar el pedido que ya teníamos cargado: se reintenta en el próximo poll.
+      if (err.message === "Pedido no encontrado") {
+        setNotFound(true);
+        clearTimer();
+      }
     }
   }, [orderNumber]);
+
+  function clearTimer() {
+    if (timer.current) {
+      clearInterval(timer.current);
+      timer.current = null;
+    }
+  }
 
   useEffect(() => {
     load();
     timer.current = setInterval(load, 6000);
-    return () => clearInterval(timer.current);
+    return clearTimer;
   }, [load]);
 
   if (notFound) {

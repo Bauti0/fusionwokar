@@ -29,6 +29,15 @@ export default function useCart(branchId) {
   const [items, setItems] = useState(() => load(cartKey, []));
   const [history, setHistory] = useState(() => load(historyKey, []));
 
+  // Al cambiar de sucursal se vuelve a leer el carrito/historial de ESA
+  // sucursal desde localStorage (el estado solo se inicializa en el mount).
+  // Va ANTES de los efectos de guardado: si fuera al revés, el save de la
+  // sucursal anterior pisaría la clave nueva con items ajenos.
+  useEffect(() => {
+    setItems(load(cartKey, []));
+    setHistory(load(historyKey, []));
+  }, [cartKey, historyKey]);
+
   useEffect(() => {
     save(cartKey, items);
   }, [cartKey, items]);

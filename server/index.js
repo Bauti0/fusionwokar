@@ -325,6 +325,17 @@ function now() {
   return new Date().toISOString();
 }
 
+// Argentina NO usa horario de verano: UTC fijo -03:00. El frontend manda las
+// fechas elegidas como datetime-local ("YYYY-MM-DDTHH:mm", sin zona). Si acá
+// se usara `new Date(s)` el resultado dependería de la zona del servidor
+// (UTC en Render, -03:00 en dev), corriendo la hora hasta ~3h. Este helper
+// las interpreta SIEMPRE en hora argentina para guardar el instante correcto.
+const LOCAL_DT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+function parseArLocal(s) {
+  if (typeof s !== "string" || !LOCAL_DT_RE.test(s)) return new Date(NaN);
+  return new Date(`${s}:00-03:00`);
+}
+
 function getClientIp(req) {
   return req.ip || req.socket.remoteAddress || "unknown";
 }
@@ -579,6 +590,28 @@ async function releaseCoupon(code) {
     .run(now(), code);
 }
 
+// Libera reservas huérfanas de cupones: pedidos Mercado Pago en estados que
+// nunca van a cobrar (pending abandonados hace +30 min, rechazados, cancelados
+// o devueltos). Sin esto, un cupón con límite de usos se quemaba para siempre
+// con pedidos que nunca se pagaron. Es idempotente (releaseCoupon nunca baja
+// de 0) y corre antes de reservar, para que un cupón siempre tenga su cupo real.
+async function releaseStaleCouponReservations() {
+  try {
+    const cutoff = new Date(Date.now() - 30 * 60000).toISOString();
+    const rows = await db
+      .prepare(
+        `SELECT DISTINCT coupon_code AS code FROM orders
+         WHERE coupon_code IS NOT NULL AND coupon_code != ''
+           AND payment_status IN ('pending', 'rejected', 'cancelled', 'refunded')
+           AND created_at < ?`
+      )
+      .all(cutoff);
+    for (const r of rows) await releaseCoupon(r.code);
+  } catch (err) {
+    console.error("releaseStaleCouponReservations:", err.message);
+  }
+}
+
 // Valida y normaliza el cuerpo del pedido (evita manipulación de precios,
 // cantidades negativas, productos inexistentes y pedidos falsos).
 async function validateOrderBody(body) {
@@ -604,7 +637,7 @@ async function validateOrderBody(body) {
   // Fecha programada (opcional): ISO válida, entre 10 min y 7 días
   let scheduled = "";
   if (scheduledFor) {
-    const iso = new Date(scheduledFor);
+    const iso = parseArLocal(scheduledFor);
     if (isNaN(iso.getTime())) return { error: "Fecha programada inválida" };
     const t = iso.getTime();
     if (t < Date.now() + 10 * 60000) {
@@ -799,7 +832,10 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     const isMp = paymentMethod === "mercadopago";
 
     // Reserva atómica del uso del cupón ANTES de cualquier await/insert:
-    // evita que dos checkouts simultáneos consuman el mismo cupón limitado
+    // evita que dos checkouts simultáneos consuman el mismo cupón limitado.
+    // Primero se liberan reservas huérfanas de pedidos nunca pagados para que
+    // el cupo no se queme con pedidos en pending_payment abandonados.
+    await releaseStaleCouponReservations();
     let couponReserved = false;
     if (couponCode) {
       if (!(await reserveCoupon(couponCode))) {
@@ -897,10 +933,10 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         mpPreferenceId = pref.id;
         initPoint = pref.init_point || pref.sandbox_init_point || null;
       } catch (err) {
-        // El pedido quedó guardado (no se libera el cupón: existe). Respondemos
-        // con el error + datos del pedido para que el cliente se contacte y se
-        // pueda reintentar el link sin crear un pedido duplicado.
+        // La preferencia no se generó y el cliente va a resolver por WhatsApp:
+        // se libera la reserva del cupón (no hay venta real por esta vía).
         console.error("MP preference falló después de guardar el pedido:", err.message);
+        if (couponReserved) await releaseCoupon(couponCode);
         return res.status(502).json({
           error:
             "Tu pedido quedó registrado pero no se pudo generar el link de pago. Escribinos por WhatsApp con tu número de pedido y lo resolvemos enseguida.",
@@ -1136,17 +1172,25 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
           .prepare("SELECT * FROM orders WHERE order_number = ?")
           .get(payment.external_reference.toUpperCase());
         if (row) {
+          // Mapeo del estado del pago de MP a nuestros estados (approbed/pending/
+          // rejected): cancelled/refunded/charged_back quedan como "rejected" para
+          // que no sigan contando como cobradas y no rompan etiquetas/filtros.
           const status =
             payment.status === "approved"
               ? "approved"
-              : payment.status === "rejected"
+              : ["rejected", "cancelled", "refunded", "charged_back"].includes(payment.status)
                 ? "rejected"
                 : row.payment_status;
+          // No pisar el avance del admin: MP reenvía el webhook varias veces,
+          // y si el admin ya avanzó el pedido a "cocina"/"en camino"/etc. no se
+          // lo vuelve a "received". Solo aprueba la primera vez (pending_payment → received).
           const orderStatus =
-            payment.status === "approved" ? "received" : row.status;
+            payment.status === "approved" && row.status === "pending_payment" ? "received" : row.status;
 
-          // Idempotencia: solo registrar "order_created" la primera vez que se aprueba
+          // Idempotencia: solo registrar "order_created" la primera vez que se aprueba,
+          // y liberar el cupón solo al pasar a un estado de fallo (no en reintentos).
           const wasApproved = row.payment_status === "approved";
+          const wasFailure = row.payment_status === "rejected";
           await db.prepare(
             "UPDATE orders SET payment_status = ?, status = ?, mp_payment_id = ?, updated_at = ? WHERE id = ?"
           ).run(status, orderStatus, paymentId, now(), row.id);
@@ -1154,13 +1198,18 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
             `Pedido ${row.order_number} actualizado → payment=${status} status=${orderStatus}`
           );
           if (status === "approved" && !wasApproved) await recordEvent("order_created", row.branch);
+          if (status === "rejected" && !wasFailure && row.coupon_code) {
+            await releaseCoupon(row.coupon_code);
+          }
         }
       }
     }
     res.sendStatus(200);
   } catch (err) {
     console.error("Webhook error:", err.message);
-    res.sendStatus(200); // siempre 200 para que MP no reintente en loop
+    // 500 para que Mercado Pago reintente (lo hace unas pocas veces con backoff):
+    // si devolviéramos 200 la notificación se pierde y el pedido queda sin actualizar.
+    res.status(500).json({ error: "Error interno" });
   }
 });
 
@@ -1842,7 +1891,7 @@ app.get("/api/admin/products", requireAdmin, async (req, res) => {
   try {
     const rows = await db
       .prepare(
-        `SELECT p.* FROM products p
+        `SELECT p.*, c.id AS _catRowId FROM products p
        LEFT JOIN categories c ON c.branch = p.branch AND c.category_id = p.category_id
        ORDER BY COALESCE(c.sort_order, 999999), p.sort_order`
       )
@@ -1856,7 +1905,9 @@ app.get("/api/admin/products", requireAdmin, async (req, res) => {
       }
       const g = grouped[p.branch];
       if (!g._catIndex.has(p.categoryId)) {
-        g._catIndex.set(p.categoryId, { id: p.categoryId, name: p.categoryName, groups: [] });
+        // id = slug (se usa para agrupar productos y en el formulario), rowId =
+        // id numérico de la tabla categories (se usa para renombrar/mover/eliminar).
+        g._catIndex.set(p.categoryId, { id: p.categoryId, rowId: row._catRowId ?? null, name: p.categoryName, groups: [] });
         g.categories.push(g._catIndex.get(p.categoryId));
       }
       const cat = g._catIndex.get(p.categoryId);
@@ -1932,6 +1983,22 @@ function validateProductBody(body, partial = false) {
   return { data: out };
 }
 
+// Garantiza que la categoría (slug) tenga fila propia en la tabla categories:
+// antes se podía crear un producto con "Nueva categoría" y la categoría quedaba
+// huérfana (sin id numérico), por lo que no se podía renombrar/mover/eliminar.
+async function ensureCategoryRow(branch, categoryId, categoryName) {
+  const existing = await db
+    .prepare("SELECT 1 FROM categories WHERE branch = ? AND category_id = ?")
+    .get(branch, categoryId);
+  if (existing) return;
+  const sortOrderRow = await db
+    .prepare("SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM categories WHERE branch = ?")
+    .get(branch);
+  await db
+    .prepare("INSERT INTO categories (branch, category_id, name, sort_order) VALUES (?, ?, ?, ?)")
+    .run(branch, categoryId, String(categoryName || categoryId).slice(0, 120), sortOrderRow.n);
+}
+
 app.post("/api/admin/products", requireAdmin, async (req, res) => {
   try {
     const { branch, ...rest } = req.body || {};
@@ -1953,6 +2020,7 @@ app.post("/api/admin/products", requireAdmin, async (req, res) => {
       .prepare("SELECT COUNT(*) AS n FROM products WHERE branch = ? AND category_id = ?")
       .get(branchId, data.categoryId);
     const existing = existingRow.n;
+    await ensureCategoryRow(branchId, data.categoryId, data.categoryName || data.categoryId);
     // Si la categoría ya tiene productos, reutilizar sus extras (ej: salsas en woks)
     let extrasJson = "[]";
     if (existing > 0) {
@@ -2010,6 +2078,9 @@ app.put("/api/admin/products/:id", requireAdmin, async (req, res) => {
     const validated = validateProductBody(req.body);
     if (validated.error) return res.status(400).json({ error: validated.error });
     const data = validated.data;
+    if (data.categoryId) {
+      await ensureCategoryRow(row.branch, data.categoryId, data.categoryName || data.categoryId);
+    }
     await db.prepare(`
     UPDATE products SET
       category_id = ?, category_name = ?, group_name = ?, name = ?,
@@ -2327,7 +2398,7 @@ app.post("/api/admin/coupons", requireAdmin, async (req, res) => {
     }
     let expires = "";
     if (expiresAt) {
-      const d = new Date(expiresAt);
+      const d = parseArLocal(expiresAt);
       if (isNaN(d.getTime())) return res.status(400).json({ error: "Fecha de vencimiento inválida" });
       expires = d.toISOString();
     }

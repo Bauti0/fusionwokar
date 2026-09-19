@@ -82,16 +82,19 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "" })
     return flatProducts.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 30);
   }, [flatProducts, search]);
 
-  function addToCart(product, opts = { extras: [], notes: "" }) {
+  function addToCart(product, opts = { extras: [], notes: "", qty: 1 }) {
     setCart((prev) => {
-      const key = `${product.id}|${opts.extras.map((e) => e.id).sort().join(",")}`;
+      const qty = opts.qty || 1;
+      // La nota forma parte de la clave para no fusionar líneas idénticas
+      // con notas distintas (ni perder la cantidad elegida en el modal).
+      const key = `${product.id}|${opts.extras.map((e) => e.id).sort().join(",")}|${opts.notes || ""}`;
       const existing = prev.find((it) => it.key === key);
       if (existing) {
-        return prev.map((it) => (it.key === key ? { ...it, qty: it.qty + 1 } : it));
+        return prev.map((it) => (it.key === key ? { ...it, qty: it.qty + qty } : it));
       }
       return [
         ...prev,
-        { key, productId: product.id, name: product.name, unitPrice: product.price, extras: opts.extras, notes: opts.notes || "", qty: 1 },
+        { key, productId: product.id, name: product.name, unitPrice: product.price, extras: opts.extras, notes: opts.notes || "", qty },
       ];
     });
   }

@@ -44,6 +44,10 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
   const [shippingError, setShippingError] = useState("");
   const [shippingBusy, setShippingBusy] = useState(false);
   const shippingBusyRef = useRef(false);
+  const pendingQuoteRef = useRef(false);
+  const addressRef = useRef("");
+  addressRef.current = address;
+  const [quoteTick, setQuoteTick] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -73,13 +77,20 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
       return;
     }
     const addr = address.trim();
+    // Cuando la dirección cambia se limpia la cotización anterior: mostrarla
+    // mientras se cotiza la nueva podía dejar un total de la dirección previa.
+    setShipping(null);
     if (addr.length < 8) {
-      setShipping(null);
       setShippingError("");
       setShippingBusy(false);
       return;
     }
-    if (shippingBusyRef.current) return; // una consulta por vez
+    if (shippingBusyRef.current) {
+      // Ya hay una consulta en vuelo: al terminar se re-evalúa la dirección
+      // actual (la respuesta vieja se descarta y se encola la nueva).
+      pendingQuoteRef.current = true;
+      return;
+    }
     setShippingBusy(true);
     setShippingError("");
     const t = setTimeout(async () => {
@@ -88,36 +99,45 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
       const hit = quoteCache.get(key);
       if (hit && Date.now() - hit.at < QUOTE_CACHE_TTL) {
         if (hit.err) {
-          setShippingError(hit.err);
-        } else {
+          if (addressRef.current.trim() === addr) setShippingError(hit.err);
+        } else if (addressRef.current.trim() === addr) {
           setShipping(hit.res);
           setShippingError("");
         }
         shippingBusyRef.current = false;
         setShippingBusy(false);
+        if (addressRef.current.trim() !== addr) setQuoteTick((n) => n + 1);
         return;
       }
       try {
         const res = await shippingQuote(branch.id, addr);
         const data = { blocks: res.blocks, cost: res.cost };
         quoteCache.set(key, { res: data, at: Date.now() });
-        setShipping(data);
-        setShippingError("");
+        // Solo aplicar si la dirección no cambió mientras se cotizaba: si cambió,
+        // se ignora (y el tick de más abajo re-dispara la consulta para la nueva).
+        if (addressRef.current.trim() === addr) {
+          setShipping(data);
+          setShippingError("");
+        }
       } catch (err) {
         quoteCache.set(key, { err: err.message, at: Date.now() });
-        setShippingError(err.message);
+        if (addressRef.current.trim() === addr) setShippingError(err.message);
       } finally {
         shippingBusyRef.current = false;
         setShippingBusy(false);
+        if (addressRef.current.trim() !== addr) setQuoteTick((n) => n + 1);
       }
     }, 1500);
     return () => clearTimeout(t);
-  }, [wantsDelivery, isTandil, address, branch.id]);
+  }, [wantsDelivery, isTandil, address, branch.id, quoteTick]);
 
+  // Mínimo "ahora + 10 min" en HORA LOCAL (no UTC): toISOString() corre el
+  // reloj a UTC y a las 23h en Argentina el picker deshabilitaba el día de hoy.
   function minScheduled() {
     const d = new Date(Date.now() + 10 * 60000);
     d.setSeconds(0, 0);
-    return d.toISOString().slice(0, 16);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
   async function applyCoupon() {
@@ -151,6 +171,10 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
       return;
     }
     if (orderMode === "delivery" && isTandil) {
+      if (address.trim().length < 8) {
+        setError("La dirección es muy corta. Ingresá la calle y el número.");
+        return;
+      }
       if (shippingError) {
         // Mercado Pago: sin costo final no se puede cobrar → se bloquea.
         if (isMp) {
@@ -169,6 +193,15 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
     }
     if (scheduleMode === "scheduled" && scheduledAt) {
       const when = new Date(scheduledAt);
+      if (isNaN(when.getTime())) {
+        setError("Elegí una fecha y hora válidas.");
+        return;
+      }
+      const minTime = Date.now() + 10 * 60000;
+      if (when.getTime() < minTime) {
+        setError("Elegí una hora con al menos 10 minutos de anticipación.");
+        return;
+      }
       if (!isOpenAtTime(branch.id, when)) {
         setError("Elegí una hora dentro de nuestra apertura para programar el pedido.");
         return;
@@ -190,6 +223,7 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
           ? new Date(scheduledAt).toISOString()
           : "",
         couponCode: coupon?.code || "",
+        couponDiscount: coupon?.discount || 0,
       });
     } catch (err) {
       setError(err.message || "No se pudo confirmar el pedido.");

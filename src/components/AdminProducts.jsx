@@ -142,8 +142,13 @@ export default function AdminProducts() {
       setError("Elegí una categoría");
       return;
     }
-    if (!form.name.trim() || !Number(form.price)) {
-      setError("Nombre y precio son obligatorios");
+    if (!form.name.trim()) {
+      setError("El nombre es obligatorio");
+      return;
+    }
+    const price = Number(form.price);
+    if (form.price === "" || isNaN(price) || price < 0) {
+      setError("Precio inválido");
       return;
     }
     try {
@@ -204,7 +209,7 @@ export default function AdminProducts() {
     }
     if (catPrompt.mode === "category") {
       if (name === catPrompt.cat.name) return; // sin cambios
-      await adminRenameCategory(catPrompt.cat.id, name);
+      await adminRenameCategory(catPrompt.cat.rowId ?? catPrompt.cat.id, name);
       return;
     }
     // Renombrar grupo
@@ -222,7 +227,7 @@ export default function AdminProducts() {
       message: `¿Eliminar la categoría "${cat.name}" y TODOS sus productos?`,
       confirmText: "Eliminar todo",
       onConfirm: async () => {
-        await adminDeleteCategory(cat.id);
+        await adminDeleteCategory(cat.rowId ?? cat.id);
         await load();
       },
     });
@@ -230,7 +235,7 @@ export default function AdminProducts() {
 
   async function handleMoveCategory(cat, dir) {
     try {
-      await adminMoveCategory(cat.id, dir);
+      await adminMoveCategory(cat.rowId ?? cat.id, dir);
       await load();
     } catch (err) {
       setError(err.message);
@@ -283,7 +288,11 @@ export default function AdminProducts() {
     }
   }
 
-  const availableCategories = branch?.categories || [];
+  // Las categorías del formulario salen de la sucursal del FORMULARIO (form.branch),
+  // no de la sucursal seleccionada en el filtro superior: si cambia el filtro
+  // mientras el modal está abierto no se ofrecen categorías de otra sucursal.
+  const formBranch = branches.find((b) => b.branchId === form.branch) || null;
+  const availableCategories = formBranch?.categories || [];
 
   // Búsqueda por nombre de producto (dentro de la sucursal seleccionada)
   const q = query.trim().toLowerCase();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { adminSales, adminCashRegister, adminOpenCashRegister, adminCloseCashRegister } from "../api.js";
 import { BRANCH_LIST } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
+import { periodRange } from "../utils/dates.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import DateRangePicker from "./ui/DateRangePicker.jsx";
 
@@ -13,21 +14,6 @@ const PERIODS = [
 ];
 
 const PAYMENT_LABELS = { efectivo: "💰 Efectivo", mercadopago: "💳 Mercado Pago", transferencia: "🏦 Transferencia" };
-
-function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-function periodRange(period, from, to) {
-  const n = new Date();
-  if (period === "today") return { from: startOfToday(), to: n };
-  if (period === "7d") return { from: new Date(n.getTime() - 7 * 86400000), to: n };
-  if (period === "30d") return { from: new Date(n.getTime() - 30 * 86400000), to: n };
-  const f = from ? new Date(from) : new Date(n.getTime() - 30 * 86400000);
-  const t = to ? new Date(to) : n;
-  return { from: f, to: t };
-}
 
 // ============================================================
 // AdminSales — ventas por período + arqueo de caja

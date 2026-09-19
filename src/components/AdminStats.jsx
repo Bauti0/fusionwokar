@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { adminStats } from "../api.js";
 import { formatPrice } from "../utils/format.js";
+import { periodRange } from "../utils/dates.js";
 import DateRangePicker from "./ui/DateRangePicker.jsx";
 
 // ============================================================
@@ -16,23 +17,6 @@ const PERIODS = [
   { id: "30d", label: "Últimos 30 días" },
   { id: "custom", label: "Personalizado" },
 ];
-
-function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function periodRange(period, from, to) {
-  const nowDate = new Date();
-  if (period === "today") return { from: startOfToday(), to: nowDate };
-  if (period === "7d") return { from: new Date(nowDate.getTime() - 7 * 86400000), to: nowDate };
-  if (period === "30d") return { from: new Date(nowDate.getTime() - 30 * 86400000), to: nowDate };
-  // custom
-  const f = from ? new Date(from) : new Date(nowDate.getTime() - 30 * 86400000);
-  const t = to ? new Date(to) : nowDate;
-  return { from: f, to: t };
-}
 
 export default function AdminStats() {
   const [period, setPeriod] = useState("30d");
