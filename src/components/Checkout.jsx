@@ -9,7 +9,7 @@ import { IconMoney, IconBank, IconCard, IconMercadoPago } from "./ui/icons.jsx";
 const PAYMENT_METHODS = [
   { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "Contado al retirar o al recibir" },
   { id: "transferencia", label: "Transferencia", Icon: IconBank, hint: "CBU de la sucursal al confirmar" },
-  { id: "mercadopago", label: "Mercado Pago", Icon: IconMercadoPago, hint: "Pago al instante, sin salir de la app", brand: "pay-option--mp" },
+  { id: "mercadopago", label: "Mercado Pago", Icon: IconMercadoPago, hint: "Pago al instante, sin salir de la app" },
 ];
 
 // Caché cliente de cotizaciones: la misma dirección no se vuelve a consultar
@@ -396,7 +396,7 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
             <button
               key={m.id}
               type="button"
-              className={`pay-option ${paymentMethod === m.id ? "is-active" : ""} ${m.brand || ""}`}
+              className={`pay-option ${paymentMethod === m.id ? "is-active" : ""}`}
               onClick={() => setPaymentMethod(m.id)}
             >
               <span className="pay-option__icon">
