@@ -7,7 +7,7 @@ import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 
 const PAYMENT_METHODS = [
-  { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "💰 Contado al retirar o al recibir" },
+  { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "Contado al retirar o al recibir" },
   { id: "transferencia", label: "Transferencia", Icon: IconBank, hint: "CBU de la sucursal al confirmar" },
   { id: "mercadopago", label: "Mercado Pago", Icon: IconCard, hint: "Pago al instante, sin salir de la app" },
 ];

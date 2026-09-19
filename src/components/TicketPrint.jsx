@@ -88,7 +88,7 @@ function buildTicketHtml(order) {
     <div>Pedido online · ${esc(date)}</div>
   </div>
   <div class="line"></div>
-  <div class="center big b">${esc(order.orderNumber)}</div>
+  <div class="center big b"># ${esc(order.orderNumber)}</div>
   <div class="line"></div>
   <table>
     <tr><td><b>Estado:</b> ${esc(statusLabel(order.status))}</td></tr>
