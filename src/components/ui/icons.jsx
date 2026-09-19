@@ -70,6 +70,37 @@ export function IconEmptySearch(props) {
   );
 }
 
+export function IconMoney(props) {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true" {...props}>
+      <rect x="6" y="10" width="36" height="28" rx="5" stroke="currentColor" strokeWidth="2.2" />
+      <circle cx="24" cy="24" r="6.5" stroke="currentColor" strokeWidth="2" />
+      <path d="M14 18v2M34 28v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M6 17a6 6 0 0 0 6-6M42 31a6 6 0 0 1-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IconBank(props) {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true" {...props}>
+      <path d="M5 20h38L24 8 5 20Z" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+      <path d="M9 20v15M18 20v15M30 20v15M39 20v15M6 38h36" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IconCard(props) {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true" {...props}>
+      <rect x="6" y="10" width="36" height="28" rx="5" stroke="currentColor" strokeWidth="2.2" />
+      <path d="M6 19h36" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M14 31c1.5 1.8 3.5 2.8 5.5 2.8 3 0 5-2.3 5-4.8 0-2.6-2-4-3.8-4.6-2.2-.8-4.2-1-4.2-3 0-1.6 1.5-2.8 3.2-2.8 1.8 0 3.4 1 4.6 2.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M35 26h1M22 26h2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 // Fondo decorativo: motivos dispersos, puramente ornamental
 // (aria-hidden). Se usa en la portada y en el banner del menú
 // para mantener la misma identidad visual.

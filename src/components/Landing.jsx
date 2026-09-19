@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BRAND, BRANCHES, BRANCH_LIST } from "../data/branches.js";
 import { isValidPhone } from "../utils/validation.js";
+import { isNowOpen, closedLabel } from "../utils/schedule.js";
 import { IconBowlSteam, IconChopsticks, HeroMotif } from "./ui/icons.jsx";
 
 // ============================================================
@@ -103,6 +104,10 @@ export default function Landing({ onStart, initialBranch, customer }) {
                   <span className="branch-copy">
                     <span className="branch-name">{b.name}</span>
                     <span className="branch-meta">{b.address}</span>
+                    <span className={`branch-status ${isNowOpen(b.id) ? "is-open" : ""}`}>
+                      <span className="branch-status__dot" aria-hidden="true" />
+                      {isNowOpen(b.id) ? "Abierto ahora" : (closedLabel(b.id) || "Cerrado hoy")}
+                    </span>
                   </span>
                 </button>
               ))}

@@ -4,11 +4,12 @@ import { validateCoupon, shippingQuote } from "../api.js";
 import { isValidPhone } from "../utils/validation.js";
 import { isOpenAtTime, closedLabel } from "../utils/schedule.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
+import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 
 const PAYMENT_METHODS = [
-  { id: "efectivo", label: "Efectivo" },
-  { id: "transferencia", label: "Transferencia" },
-  { id: "mercadopago", label: "Mercado Pago" },
+  { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "💰 Contado al retirar o al recibir" },
+  { id: "transferencia", label: "Transferencia", Icon: IconBank, hint: "CBU de la sucursal al confirmar" },
+  { id: "mercadopago", label: "Mercado Pago", Icon: IconCard, hint: "Pago al instante, sin salir de la app" },
 ];
 
 // Caché cliente de cotizaciones: la misma dirección no se vuelve a consultar
@@ -398,8 +399,14 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
               className={`pay-option ${paymentMethod === m.id ? "is-active" : ""}`}
               onClick={() => setPaymentMethod(m.id)}
             >
+              <span className="pay-option__icon">
+                <m.Icon />
+              </span>
+              <span className="pay-option__copy">
+                <span className="pay-option__label">{m.label}</span>
+                <span className="pay-option__hint">{m.hint}</span>
+              </span>
               <span className="radio" />
-              {m.label}
             </button>
           ))}
         </div>

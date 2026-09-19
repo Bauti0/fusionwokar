@@ -15,9 +15,16 @@ import { IconBowlSteam, IconSearch, IconClock, IconEmptySearch, HeroMotif } from
 const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
   const [query, setQuery] = useState("");
   const [customizing, setCustomizing] = useState(null);
-  const [activeCat, setActiveCat] = useState(() => menu.categories[0]?.id);
+  const [activeCat, setActiveCat] = useState(() => menu.categories[0]?.id || "");
   const catsRef = useRef(null);
   const [catsHint, setCatsHint] = useState(false);
+
+  // Al cambiar de sucursal (o refrescar el menú) la categoría activa se
+  // reinicia a la primera: si quedara apuntando a una categoría de la otra
+  // sucursal, la sección se vería vacía sin entender por qué.
+  useEffect(() => {
+    setActiveCat(menu.categories[0]?.id || "");
+  }, [menu]);
 
   useEffect(() => {
     const el = catsRef.current;

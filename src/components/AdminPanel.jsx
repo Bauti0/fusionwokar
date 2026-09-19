@@ -73,6 +73,19 @@ function saveSeen(set) {
   localStorage.setItem(SEEN_KEY, JSON.stringify(arr));
 }
 
+function LiveClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <span className="live-clock" title="Hora local (Argentina)">
+      🕐 {now.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}
+    </span>
+  );
+}
+
 export default function AdminPanel({ onLogout }) {
   const [section, setSection] = useState("orders"); // "orders" | "stats" | "products" | "coupons"
   const [orders, setOrders] = useState([]);
@@ -308,12 +321,13 @@ export default function AdminPanel({ onLogout }) {
         <>
         <div className="admin-orders-head">
           {today && (
-            <div className="admin-day">
-              <span className="admin-day__label">Hoy</span>
-              <strong className="admin-day__total">{formatPrice(today.ventaNeta)}</strong>
-              <span className="admin-day__sep">·</span>
-              <span>{today.pedidos} {today.pedidos === 1 ? "pedido" : "pedidos"}</span>
-            </div>
+          <div className="admin-day">
+            <span className="admin-day__label">Hoy</span>
+            <strong className="admin-day__total">{formatPrice(today?.ventaNeta ?? 0)}</strong>
+            <span className="admin-day__sep">·</span>
+            <span>{today?.pedidos ?? 0} {today?.pedidos === 1 ? "pedido" : "pedidos"}</span>
+            <LiveClock />
+          </div>
           )}
           <div className="admin-orders-toolbar">
             <button

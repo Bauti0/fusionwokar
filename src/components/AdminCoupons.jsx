@@ -4,6 +4,7 @@ import {
   adminCreateCoupon,
   adminToggleCoupon,
   adminDeleteCoupon,
+  adminUpdateCoupon,
 } from "../api.js";
 import { formatPrice } from "../utils/format.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
@@ -36,6 +37,7 @@ export default function AdminCoupons() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [confirmState, setConfirmState] = useState(null);
   const dialogRef = useDialogA11y({ onClose: () => setCreating(false), isActive: creating });
@@ -61,14 +63,20 @@ export default function AdminCoupons() {
     e.preventDefault();
     setError("");
     try {
-      await adminCreateCoupon({
+      const payload = {
         code: form.code,
         type: form.type,
         value: Number(form.value),
         minTotal: form.minTotal ? Number(form.minTotal) : 0,
         maxUses: form.maxUses ? Number(form.maxUses) : 0,
         expiresAt: form.expiresAt || "",
-      });
+      };
+      if (editing) {
+        await adminUpdateCoupon(editing.id, payload);
+        setEditing(null);
+      } else {
+        await adminCreateCoupon(payload);
+      }
       setCreating(false);
       setForm(EMPTY);
       await load();
@@ -128,6 +136,11 @@ export default function AdminCoupons() {
                 {!c.expiresAt && <span>Sin vencimiento</span>}
               </div>
               <div className="coupon-card__actions">
+                <button
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => { setForm({ code: c.code, type: c.type, value: c.value, minTotal: c.minTotal || "", maxUses: c.maxUses || "", expiresAt: c.expiresAt || "" }); setEditing(c.id); setCreating(true); setError(""); }}
+                  aria-label={`Editar cupón ${c.code}`}
+                >✏️</button>
                 <button className="btn btn--ghost btn--sm" onClick={() => handleToggle(c)}>
                   {c.active ? "🙈 Desactivar" : "👁️ Activar"}
                 </button>
@@ -138,8 +151,8 @@ export default function AdminCoupons() {
         </div>
       )}
 
-      {creating && (
-        <div className="modal-backdrop" onClick={() => setCreating(false)}>
+      {(creating || editing) && (
+        <div className="modal-backdrop" onClick={() => { setCreating(false); setEditing(null); }}>
           <div
             className="modal"
             role="dialog"
@@ -150,8 +163,8 @@ export default function AdminCoupons() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal__head">
-              <h3 id="coupon-modal-title">Nuevo cupón</h3>
-              <button className="modal__close" onClick={() => setCreating(false)} aria-label="Cerrar">✕</button>
+              <h3 id="coupon-modal-title">{editing ? "Editar cupón" : "Nuevo cupón"}</h3>
+              <button className="modal__close" onClick={() => { setCreating(false); setEditing(null); }} aria-label="Cerrar">✕</button>
             </div>
             <form className="modal__body" onSubmit={handleCreate}>
               <div className="field">

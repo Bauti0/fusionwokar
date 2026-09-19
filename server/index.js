@@ -2429,6 +2429,42 @@ app.patch("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
   }
 });
 
+app.put("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+    const row = await db.prepare("SELECT * FROM coupons WHERE id = ?").get(id);
+    if (!row) return res.status(404).json({ error: "Cupón no encontrado" });
+
+    const { code, type, value, minTotal, maxUses, active } = req.body || {};
+    const cleanCode = String(code ?? row.code).trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{2,30}$/.test(cleanCode)) return res.status(400).json({ error: "Código de cupón inválido" });
+    const finalType = type ?? row.type;
+    if (!["percent", "fixed"].includes(finalType)) return res.status(400).json({ error: "Tipo de cupón inválido" });
+    const finalValue = value !== undefined ? Number(value) : row.value;
+    if (!Number.isFinite(finalValue) || finalValue <= 0 || (finalType === "percent" && finalValue > 100)) {
+      return res.status(400).json({ error: "Valor inválido" });
+    }
+    const finalMin = minTotal !== undefined ? Math.max(0, Number(minTotal) || 0) : row.min_total;
+    const finalMaxUses = maxUses !== undefined ? Math.max(0, Number(maxUses) || 0) : row.max_uses;
+
+    if (cleanCode !== row.code) {
+      const dup = await db.prepare("SELECT 1 FROM coupons WHERE code = ? AND id != ?").get(cleanCode, id);
+      if (dup) return res.status(400).json({ error: "El código ya existe" });
+    }
+    const finalActive = active !== undefined ? (active ? 1 : 0) : row.active;
+    await db.prepare(
+      "UPDATE coupons SET code = ?, type = ?, value = ?, min_total = ?, max_uses = ?, active = ?, updated_at = ? WHERE id = ?"
+    ).run(cleanCode, finalType, finalValue, finalMin, finalMaxUses, finalActive, now(), id);
+
+    const updated = await db.prepare("SELECT * FROM coupons WHERE id = ?").get(id);
+    res.json({ ok: true, coupon: couponRowToAdmin(updated) });
+  } catch (err) {
+    console.error("PUT /api/admin/coupons/:id:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
 app.delete("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);

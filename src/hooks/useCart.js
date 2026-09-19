@@ -119,22 +119,32 @@ export default function useCart(branchId) {
     [items, total]
   );
 
-  // Repite un pedido anterior (vuelve a cargar sus items al carrito)
+  // Repite un pedido anterior (vuelve a cargar sus items al carrito).
+  // Suma sobre lo que ya haya en el carrito en vez de reemplazarlo:
+  // las líneas idénticas se fusionan (misma key) y el resto se agrega.
   const repeatOrder = useCallback((order) => {
-    setItems(
-      order.items.map((it) => ({
-        key: `${it.productId}|${(it.extras || [])
+    setItems((prev) => {
+      const byKey = new Map(prev.map((it) => [it.key, it]));
+      for (const it of order.items || []) {
+        const key = `${it.productId}|${(it.extras || [])
           .map((e) => e.id)
           .sort()
-          .join(",")}`,
-        productId: it.productId,
-        name: it.name,
-        unitPrice: it.unitPrice,
-        extras: it.extras || [],
-        notes: it.notes || "",
-        qty: it.qty,
-      }))
-    );
+          .join(",")}`;
+        const line = {
+          key,
+          productId: it.productId,
+          name: it.name,
+          unitPrice: it.unitPrice,
+          extras: it.extras || [],
+          notes: it.notes || "",
+          qty: it.qty,
+        };
+        const existing = byKey.get(key);
+        if (existing) byKey.set(key, { ...existing, qty: existing.qty + line.qty });
+        else byKey.set(key, line);
+      }
+      return Array.from(byKey.values());
+    });
   }, []);
 
   return {

@@ -243,6 +243,13 @@ export function adminToggleCoupon(id, active) {
   });
 }
 
+export function adminUpdateCoupon(id, payload) {
+  return request(`/api/admin/coupons/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function adminDeleteCoupon(id) {
   return request(`/api/admin/coupons/${id}`, { method: "DELETE" });
 }

@@ -97,6 +97,28 @@ export default function AdminSales() {
               </div>
             )}
           </div>
+
+          <div className="sales-chart">
+            <h4>📈 Ventas por día</h4>
+            {sales.byDay.length === 0 ? (
+              <p className="hint">No hay ventas en este período.</p>
+            ) : (
+              <div className="sales-chart__bars">
+                {sales.byDay.map((d) => {
+                  const max = Math.max(...sales.byDay.map((x) => x.total), 1);
+                  return (
+                    <div className="sales-chart__bar" key={d.date} title={`${d.date} · ${d.count} pedidos · ${formatPrice(d.total)}`}>
+                      <span
+                        className="sales-chart__fill"
+                        style={{ height: `${Math.max((d.total / max) * 100, 2)}%` }}
+                      />
+                      <span className="sales-chart__day">{dayShort(d.date)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </>
       )}
 

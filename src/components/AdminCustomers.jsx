@@ -68,15 +68,20 @@ export default function AdminCustomers() {
         <div className="customer-list">
           {customers.map((c) => (
             <div className="customer-card" key={c.phone}>
-              <div className="customer-card__info">
-                <strong className="customer-card__name">{c.name}</strong>
-                <span className="customer-card__phone">{c.phone}</span>
-                {c.address && <span className="customer-card__address">📍 {c.address}</span>}
-                <div className="customer-card__meta">
-                  <span className="badge">{c.ordersCount} {c.ordersCount === 1 ? "pedido" : "pedidos"}</span>
-                  <span className="badge">{formatPrice(c.totalSpent)} gastado</span>
+                <div className="customer-card__info">
+                  <strong className="customer-card__name">{c.name}</strong>
+                  <span className="customer-card__phone">{c.phone}</span>
+                  {c.address && <span className="customer-card__address">📍 {c.address}</span>}
+                  <div className="customer-card__meta">
+                    <span className="badge">{c.ordersCount} {c.ordersCount === 1 ? "pedido" : "pedidos"}</span>
+                    <span className="badge">{formatPrice(c.totalSpent)} gastado</span>
+                    {c.ordersCount >= 3 && <span className="badge badge--vip">⭐ Recurrente</span>}
+                  </div>
+                  <div className="customer-card__submeta">
+                    <span>🛍️ Última compra: {c.lastOrderAt ? new Date(c.lastOrderAt).toLocaleDateString("es-AR") : "—"}</span>
+                    <span>🎟️ Ticket promedio: {c.ordersCount > 0 ? formatPrice(Math.round(c.totalSpent / c.ordersCount)) : "—"}</span>
+                  </div>
                 </div>
-              </div>
               <a className="btn btn--primary btn--sm" href={waLink(c.phone)} target="_blank" rel="noreferrer">
                 💬 WhatsApp
               </a>

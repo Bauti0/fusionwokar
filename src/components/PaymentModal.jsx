@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getOrder, simulatePayment } from "../api.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
+import { BRAND } from "../data/branches.js";
 
 // ============================================================
 // PaymentModal — pago con Mercado Pago dentro del flujo
@@ -136,7 +137,7 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
         tabIndex={-1}
       >
         <div className="payment-card__brand">
-          <img src="/assets/logo-wok.jpeg" alt="Fusión Wok" />
+          <img src={BRAND.logo} alt={BRAND.name} />
         </div>
         <h3 id="payment-title">Pagá tu pedido {orderNumber}</h3>
         <p className="payment-card__sub">

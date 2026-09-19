@@ -24,7 +24,6 @@ const PaymentResult = lazy(() => import("./PaymentResult.jsx"));
 const VIEWS = {
   landing: "landing",
   menu: "menu",
-  cart: "cart",
   checkout: "checkout",
   history: "history",
   success: "success",
@@ -52,6 +51,7 @@ export default function StoreApp() {
     }
   });
   const [orderMode, setOrderMode] = useState("delivery");
+  const [cartOpen, setCartOpen] = useState(false); // carrito como bottom-sheet (drawer)
   const [paymentFlow, setPaymentFlow] = useState(null); // datos del pago MP
   const [lastOrder, setLastOrder] = useState(null); // pedido confirmado (para éxito/tracking)
   const [paymentMeta, setPaymentMeta] = useState(null); // datos locales del pedido MP (dirección, modalidad)
@@ -88,6 +88,7 @@ export default function StoreApp() {
   }, [customer]);
 
   const goHome = useCallback(() => {
+    setCartOpen(false);
     if (branchId) setView(VIEWS.menu);
     else setView(VIEWS.landing);
   }, [branchId]);
@@ -250,7 +251,7 @@ export default function StoreApp() {
   const handleRepeat = useCallback(
     (order) => {
       cart.repeatOrder(order);
-      setView(VIEWS.cart);
+      setCartOpen(true);
     },
     [cart]
   );
@@ -276,7 +277,7 @@ export default function StoreApp() {
       <Header
         branch={branch}
         cartCount={cart.count}
-        onCart={() => setView(VIEWS.cart)}
+        onCart={() => setCartOpen(true)}
         onHistory={() => setView(VIEWS.history)}
         onHome={goHome}
         onChangeBranch={handleChangeBranch}
@@ -285,16 +286,19 @@ export default function StoreApp() {
       {view === VIEWS.menu && (
         <>
           <Menu menu={menu} branch={branch} orderMode={orderMode} onAdd={handleAdd} />
-          <CartBar count={cart.count} total={cart.total} onView={() => setView(VIEWS.cart)} />
+          <CartBar count={cart.count} total={cart.total} onView={() => setCartOpen(true)} />
         </>
       )}
 
-      {view === VIEWS.cart && (
+      {cartOpen && (
         <CartView
           cart={cart}
           branch={branch}
-          onBack={() => setView(VIEWS.menu)}
-          onCheckout={() => setView(VIEWS.checkout)}
+          onBack={() => setCartOpen(false)}
+          onCheckout={() => {
+            setCartOpen(false);
+            setView(VIEWS.checkout);
+          }}
         />
       )}
 
