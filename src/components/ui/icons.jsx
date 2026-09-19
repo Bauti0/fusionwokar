@@ -101,6 +101,18 @@ export function IconCard(props) {
   );
 }
 
+// Logotipo de Mercado Pago (la sonrisa de marca). Se dibuja en blanco
+// sobre la insignia azul de marca que define el CSS (.pay-option--mp).
+export function IconMercadoPago(props) {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true" {...props}>
+      <circle cx="15.5" cy="18" r="2.4" fill="#fff" />
+      <circle cx="32.5" cy="18" r="2.4" fill="#fff" />
+      <path d="M9 23.5a15 15 0 0 0 30 0" stroke="#fff" strokeWidth="3.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 // Fondo decorativo: motivos dispersos, puramente ornamental
 // (aria-hidden). Se usa en la portada y en el banner del menú
 // para mantener la misma identidad visual.

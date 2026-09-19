@@ -590,6 +590,10 @@ a { color: var(--color-primary); }
   background: var(--color-primary-soft); color: var(--color-primary);
 }
 .pay-option__icon svg { width: 24px; height: 24px; }
+.pay-option--mp .pay-option__icon {
+  background: linear-gradient(135deg, #1a7fd1 0%, #2bb3ea 100%);
+  color: #fff;
+}
 .pay-option__copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .pay-option__label { font-weight: 700; font-size: 15px; }
 .pay-option__hint { font-weight: 400; font-size: 12px; color: var(--color-text-soft); }
