@@ -4,12 +4,12 @@ import { validateCoupon, shippingQuote } from "../api.js";
 import { isValidPhone } from "../utils/validation.js";
 import { isOpenAtTime, closedLabel } from "../utils/schedule.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
-import { IconMoney, IconBank, IconCard, IconMercadoPago } from "./ui/icons.jsx";
+import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 
 const PAYMENT_METHODS = [
   { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "Contado al retirar o al recibir" },
   { id: "transferencia", label: "Transferencia", Icon: IconBank, hint: "CBU de la sucursal al confirmar" },
-  { id: "mercadopago", label: "Mercado Pago", Icon: IconMercadoPago, hint: "Pago al instante, sin salir de la app" },
+  { id: "mercadopago", label: "Mercado Pago", Icon: IconCard, hint: "Pago al instante, sin salir de la app" },
 ];
 
 // Caché cliente de cotizaciones: la misma dirección no se vuelve a consultar
