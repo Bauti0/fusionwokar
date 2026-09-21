@@ -220,9 +220,10 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
         shipping: wantsDelivery
           ? { cost: shipping?.cost || 0, blocks: shipping?.blocks || 0, pending: shippingUnavailable && !isMp }
           : { cost: 0, blocks: 0, pending: false },
-        scheduledFor: scheduleMode === "scheduled" && scheduledAt
-          ? new Date(scheduledAt).toISOString()
-          : "",
+        // Se manda la hora local tal cual la devuelve el DateTimePicker
+        // ("YYYY-MM-DDTHH:mm"): el server la interpreta en hora AR (parseArLocal)
+        // y guarda el instante correcto sin depender de la zona del navegador.
+        scheduledFor: scheduleMode === "scheduled" && scheduledAt ? scheduledAt : "",
         couponCode: coupon?.code || "",
         couponDiscount: coupon?.discount || 0,
       });

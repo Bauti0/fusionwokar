@@ -4,7 +4,9 @@ import {
   adminOrders,
   adminSetStatus,
   adminLogout,
+  adminLogoutAll,
   adminOrder,
+  adminSetShipping,
   adminStats,
 } from "../api.js";
 import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
@@ -54,8 +56,15 @@ function timeAgo(iso) {
 
 // Estados que cuentan como "en curso" (todavía no se entregó ni se canceló)
 const ACTIVE_STATUS_IDS = new Set(["received", "preparing", "ready", "out_for_delivery"]);
+// Un pedido programado para más adelante (con +1h de holgura) no cuenta como
+// "en curso" ni dispara el aviso sonoro hasta que llegue su momento.
+function isFutureScheduled(o) {
+  if (!o?.scheduledFor) return false;
+  const t = new Date(o.scheduledFor).getTime();
+  return !Number.isNaN(t) && t > Date.now() + 60 * 60000;
+}
 function isActiveOrder(o) {
-  return ACTIVE_STATUS_IDS.has(o.status) && o.paymentStatus !== "rejected";
+  return ACTIVE_STATUS_IDS.has(o.status) && o.paymentStatus !== "rejected" && !isFutureScheduled(o);
 }
 
 // IDs ya vistos por el admin, persistidos para no repetir el sonido
@@ -101,6 +110,9 @@ export default function AdminPanel({ onLogout }) {
   const [printOrder, setPrintOrder] = useState(null);
   const [printComanda, setPrintComanda] = useState(null);
   const [hasMore, setHasMore] = useState(false);
+  const [shippingInput, setShippingInput] = useState("");
+  const [shippingBlocksInput, setShippingBlocksInput] = useState("");
+  const [busyShipping, setBusyShipping] = useState(false);
   const pageRef = useRef(1);
   const seenRef = useRef(loadSeen());
   const [unseenIds, setUnseenIds] = useState(() => new Set());
@@ -280,11 +292,48 @@ export default function AdminPanel({ onLogout }) {
   function openDetail(order) {
     setSelected(order);
     setLastWhatsApp("");
+    setShippingInput(order.shipping?.pending ? String(order.shipping?.cost || 0) : "");
+    setShippingBlocksInput(order.shipping?.pending ? String(order.shipping?.blocks || 0) : "");
+  }
+
+  // Carga el costo de envío confirmado por WhatsApp de un pedido pendiente
+  async function handleSetShipping() {
+    const cost = Number(shippingInput);
+    if (!Number.isFinite(cost) || cost < 0) {
+      setError("Ingresá un costo de envío válido.");
+      return;
+    }
+    const blocks = Number(shippingBlocksInput);
+    if (!Number.isFinite(blocks) || blocks < 0) {
+      setError("Ingresá una cantidad válida de cuadras.");
+      return;
+    }
+    setBusyShipping(true);
+    try {
+      const res = await adminSetShipping(selected.id, cost, blocks);
+      setSelected(res.order);
+      load({ showSpinner: false });
+    } catch (err) {
+      if (err.message === "No autorizado" || err.message === "Sesión expirada") onLogout();
+      else setError(err.message);
+    } finally {
+      setBusyShipping(false);
+    }
   }
 
   async function handleLogout() {
     try {
       await adminLogout();
+    } catch {
+      /* aunque falle, se cierra la sesión local */
+    }
+    onLogout();
+  }
+
+  async function handleLogoutAll() {
+    if (!window.confirm("¿Cerrar TODAS las sesiones del panel (incluida esta)?")) return;
+    try {
+      await adminLogoutAll();
     } catch {
       /* aunque falle, se cierra la sesión local */
     }
@@ -308,6 +357,9 @@ export default function AdminPanel({ onLogout }) {
             </Link>
             <button className="btn btn--ghost btn--sm" onClick={handleLogout}>
               Salir
+            </button>
+            <button className="btn btn--ghost btn--sm" onClick={handleLogoutAll}>
+              🔒 Cerrar todas las sesiones
             </button>
           </div>
         </div>
@@ -604,6 +656,42 @@ const renderOrder = (o) => {
                   <p>{new Date(selected.createdAt).toLocaleString("es-AR")}</p>
                   {selected.scheduledFor && (
                     <p className="badge">🕒 Programado: {new Date(selected.scheduledFor).toLocaleString("es-AR")}</p>
+                  )}
+                  {selected.shipping?.pending && (
+                    <div className="shipping-confirm">
+                      <h4>Cargar envío confirmado</h4>
+                      <p className="detail-note">
+                        El costo se acordó por WhatsApp. Al cargarlo se ajustan el total, el ticket y el arqueo.
+                      </p>
+                      <div className="shipping-confirm__fields">
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min="0"
+                          step="100"
+                          placeholder="Costo de envío ($)"
+                          value={shippingInput}
+                          onChange={(e) => setShippingInput(e.target.value)}
+                        />
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min="0"
+                          step="1"
+                          placeholder="Cuadras"
+                          value={shippingBlocksInput}
+                          onChange={(e) => setShippingBlocksInput(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn--primary btn--sm"
+                          disabled={busyShipping}
+                          onClick={handleSetShipping}
+                        >
+                          {busyShipping ? "Cargando…" : "Guardar envío"}
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
                 <div className="detail-block">

@@ -1320,6 +1320,10 @@ a { color: var(--color-primary); }
 .detail-block h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-soft); }
 .detail-block p { margin: 2px 0; font-size: 14.5px; }
 .detail-note { background: var(--color-primary-soft); border-radius: var(--radius-sm); padding: 6px 10px; font-size: 13.5px !important; }
+.detail-block .shipping-confirm { margin-top: 10px; border-top: 1px dashed var(--color-border); padding-top: 10px; }
+.shipping-confirm .detail-note { margin-top: 2px; }
+.shipping-confirm__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; margin-top: 8px; }
+.shipping-confirm__fields .btn { grid-column: 1 / -1; width: 100%; }
 .status-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .status-btn {
   border: 2px solid var(--color-border); background: var(--color-bg);
@@ -1409,9 +1413,13 @@ a { color: var(--color-primary); }
 .coupon-card__meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--color-text-soft); }
 .coupon-card__actions { display: flex; gap: 6px; }
 
-/* Impresión de ticket térmico (80mm) — solo se usa la ventana nueva */
+/* Impresión: por defecto no se imprime la app (los tickets usan una ventana
+   nueva con su propio CSS). Si algún día se quieren imprimir secciones desde
+   el navegador, alcanza con marcarlas con la clase .print-area. */
 @media print {
   body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; left: 0; top: 0; width: 100%; }
 }
 
 /* ============================================================

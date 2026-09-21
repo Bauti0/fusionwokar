@@ -26,7 +26,7 @@ import Tooltip from "./ui/Tooltip.jsx";
 // AdminProducts — edición del menú desde el panel
 // - Agregar / editar / ocultar / eliminar / reordenar productos
 // - CRUD de categorías y grupos (crear, renombrar, eliminar, reordenar)
-// - Imágenes de producto (subida → /uploads/products)
+// - Imágenes de producto (subida → BLOB en la base de datos)
 // - Búsqueda por nombre dentro de la sucursal seleccionada
 // ============================================================
 

@@ -634,10 +634,13 @@ async function validateOrderBody(body) {
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
     return { error: "Faltan productos" };
   }
-  // Fecha programada (opcional): ISO válida, entre 10 min y 7 días
+  // Fecha programada (opcional): entre 10 min y 7 días. El checkout puede
+  // enviar la hora local del DateTimePicker ("YYYY-MM-DDTHH:mm") o ya
+  // convertida a ISO ("...T00:00:00.000Z"). Se aceptan ambos, pero la ventana
+  // de apertura se evalúa siempre en hora local argentina.
   let scheduled = "";
   if (scheduledFor) {
-    const iso = parseArLocal(scheduledFor);
+    const iso = LOCAL_DT_RE.test(scheduledFor) ? parseArLocal(scheduledFor) : new Date(scheduledFor);
     if (isNaN(iso.getTime())) return { error: "Fecha programada inválida" };
     const t = iso.getTime();
     if (t < Date.now() + 10 * 60000) {
@@ -667,7 +670,12 @@ async function validateOrderBody(body) {
     if (!product.available) return { error: "Producto no disponible" };
     const qty = Number(it.qty);
     if (!Number.isInteger(qty) || qty < 1 || qty > 99) return { error: "Cantidad inválida" };
-    if (Number(it.unitPrice) !== product.price) return { error: "Precio inválido" };
+    if (Number(it.unitPrice) !== product.price) {
+      const name = String(it.name || "").trim() || "de un producto";
+      return {
+        error: `El precio de "${name}" cambió a $${product.price}. Actualizá el pedido para ver los precios actuales.`,
+      };
+    }
     const extras = [];
     for (const e of it.extras || []) {
       const extraPrice = product.extras.get(e.id);
@@ -1243,10 +1251,13 @@ if (isDemoMode()) {
         if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
         const approved = action === "approve";
         const wasApproved = row.payment_status === "approved";
+        const wasFailure = row.payment_status === "rejected";
         await db.prepare(
           "UPDATE orders SET payment_status = ?, status = ?, updated_at = ? WHERE id = ?"
         ).run(approved ? "approved" : "rejected", approved ? "received" : row.status, now(), id);
         if (approved && !wasApproved) await recordEvent("order_created", row.branch);
+        // Rechazo simulado: devuelve el uso del cupón igual que el webhook.
+        if (!approved && !wasFailure && row.coupon_code) await releaseCoupon(row.coupon_code);
         res.json({ ok: true, orderId: id, paymentStatus: approved ? "approved" : "rejected" });
       } catch (err) {
         console.error("POST /api/payments/demo/:id/:action:", err.message);
@@ -1326,6 +1337,20 @@ app.post("/api/admin/logout", requireAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("POST /api/admin/logout:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Revoca TODAS las sesiones del panel (máquinas, pestañas, tokens robados):
+// borra todos los tokens vivos. La sesión actual también queda invalidada.
+app.post("/api/admin/logout-all", requireAdmin, async (req, res) => {
+  try {
+    await db.prepare("DELETE FROM admin_tokens").run();
+    res.clearCookie("fw_admin_token", { path: "/" });
+    res.clearCookie("fw_admin_csrf", { path: "/" });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /api/admin/logout-all:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });
@@ -1440,6 +1465,13 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (req, res) => {
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
+    // Cancelar desde el panel también devuelve el uso del cupón (como el
+    // webhook en rejected): sin esto, un pedido cancelado quemaba el cupo
+    // hasta el sweep diferido de 30 min. Es idempotente (releaseCoupon nunca
+    // baja de 0), así que solo se dispara si realmente se pasa a cancelado.
+    if (status === "cancelled" && row.status !== "cancelled" && row.coupon_code) {
+      await releaseCoupon(row.coupon_code);
+    }
     await db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), id);
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
     res.json({
@@ -1449,6 +1481,37 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (req, res) => {
     });
   } catch (err) {
     console.error("PATCH /api/admin/orders/:id/status:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Fija el costo de envío de un pedido que quedó "pendiente" de cotización
+// (fallo transitorio en el cálculo: se confirmó por WhatsApp antes de salir).
+// Ajusta total, shipping y cuadras, y limpia el flag de pendiente para que el
+// ticket, el arqueo de caja y las estadísticas reflejen el costo real.
+app.post("/api/admin/orders/:id/shipping", requireAdmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+    const { cost, blocks } = req.body || {};
+    const shipping = Math.round(Number(cost));
+    const km = Math.round(Number(blocks));
+    if (!Number.isFinite(shipping) || shipping < 0) {
+      return res.status(400).json({ error: "Costo de envío inválido" });
+    }
+    if (!Number.isFinite(km) || km < 0) return res.status(400).json({ error: "Cuadras inválidas" });
+    const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
+    const oldShipping = Number(row.shipping) || 0;
+    const delta = shipping - oldShipping;
+    const newTotal = Math.max(0, Number(row.total) + delta);
+    await db.prepare(
+      "UPDATE orders SET shipping = ?, shipping_km = ?, shipping_pending = 0, total = ?, updated_at = ? WHERE id = ?"
+    ).run(shipping, km, newTotal, now(), id);
+    const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    res.json({ ok: true, order: toPublicOrder(updated) });
+  } catch (err) {
+    console.error("POST /api/admin/orders/:id/shipping:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });
@@ -1610,7 +1673,12 @@ app.get("/api/admin/customers", requireAdmin, async (req, res) => {
 
     const byPhone = new Map();
     for (const r of rows) {
-      const entry = byPhone.get(r.phone) || {
+      // Se agrupa por teléfono NORMALIZADO (solo dígitos), igual que se guarda
+      // desde e628540: así los pedidos con formato viejo (espacios/guiones/+54)
+      // no abren un cliente duplicado. Se muestra el formato más reciente.
+      const key = String(r.phone || "").replace(/\D/g, "");
+      if (!key) continue;
+      const entry = byPhone.get(key) || {
         phone: r.phone,
         name: r.name,
         address: "",
@@ -1619,10 +1687,12 @@ app.get("/api/admin/customers", requireAdmin, async (req, res) => {
         totalSpent: 0,
         lastOrderAt: r.created_at,
       };
+      entry.phone = r.phone || entry.phone;
+      entry.name = r.name || entry.name;
       entry.ordersCount += 1;
       entry.totalSpent += r.total;
       if (!entry.address && r.address) entry.address = r.address;
-      byPhone.set(r.phone, entry);
+      byPhone.set(key, entry);
     }
     const customers = Array.from(byPhone.values()).sort(
       (a, b) => new Date(b.lastOrderAt) - new Date(a.lastOrderAt)
@@ -1752,12 +1822,19 @@ app.post("/api/admin/cash-register/open", requireAdmin, async (req, res) => {
       .prepare("SELECT id FROM cash_registers WHERE branch = ? AND closed_at IS NULL")
       .get(branch);
     if (already) return res.status(400).json({ error: "Ya hay una caja abierta en esta sucursal" });
+    // INSERT condicional y atómico (el WHERE NOT EXISTS se evalúa dentro de la
+    // misma sentencia): dos aperturas simultáneas no pueden crear cajas
+    // duplicadas. El índice único parcial de db.js es la garantía de respaldo.
     const info = await db
       .prepare(
         `INSERT INTO cash_registers (branch, opening_amount, opened_at, notes, created_at, updated_at)
-       VALUES (?, ?, ?, '', ?, ?)`
+         SELECT ?, ?, ?, '', ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM cash_registers WHERE branch = ? AND closed_at IS NULL)`
       )
-      .run(branch, Math.round(amount), now(), now(), now());
+      .run(branch, Math.round(amount), now(), now(), now(), branch);
+    if (info.changes === 0) {
+      return res.status(400).json({ error: "Ya hay una caja abierta en esta sucursal" });
+    }
     res.json({ ok: true, id: Number(info.lastInsertRowid) });
   } catch (err) {
     console.error("POST /api/admin/cash-register/open:", err.message);
@@ -2273,8 +2350,14 @@ app.delete("/api/admin/categories/:id", requireAdmin, async (req, res) => {
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Categoría no encontrada" });
+    // Antes de borrar los productos, se anotan sus imágenes para limpiar los
+    // BLOB y no dejarlos huérfanos hasta el sweep del próximo upload.
+    const doomedImages = await db
+      .prepare("SELECT image FROM products WHERE branch = ? AND category_id = ?")
+      .all(row.branch, row.category_id);
     await db.prepare("DELETE FROM products WHERE branch = ? AND category_id = ?").run(row.branch, row.category_id);
     await db.prepare("DELETE FROM categories WHERE id = ?").run(id);
+    await deleteImagesFromProductUrls(doomedImages.map((p) => p.image));
     CATALOG = await buildCatalog();
     invalidateMenuCache();
     res.json({ ok: true });
@@ -2347,7 +2430,13 @@ app.delete("/api/admin/groups", requireAdmin, async (req, res) => {
       .get(branch, categoryId, name);
     const count = countRow.n;
     if (!count) return res.status(404).json({ error: "Grupo no encontrado" });
+    // Se limpian también los BLOB de imágenes de los productos del grupo
+    // (igual que al borrar una categoría completa).
+    const doomedImages = await db
+      .prepare("SELECT image FROM products WHERE branch = ? AND category_id = ? AND group_name = ?")
+      .all(branch, categoryId, name);
     await db.prepare("DELETE FROM products WHERE branch = ? AND category_id = ? AND group_name = ?").run(branch, categoryId, name);
+    await deleteImagesFromProductUrls(doomedImages.map((p) => p.image));
     CATALOG = await buildCatalog();
     invalidateMenuCache();
     res.json({ ok: true, deleted: count });
@@ -2489,6 +2578,21 @@ function imageIdFromProductImageUrl(url) {
   if (typeof url !== "string") return 0;
   const m = String(url).match(/^\/api\/images\/products\/(\d+)(?:\?|$)/);
   return m ? Number(m[1]) : 0;
+}
+
+// Borra los BLOB de imágenes subidas (Turso) referenciados por un grupo de
+// URLs de producto. Al eliminar una categoría o un grupo ya no hay productos
+// dueños y, sin esto, los BLOB quedarían huérfanos hasta el sweep del upload.
+async function deleteImagesFromProductUrls(urls) {
+  for (const url of urls || []) {
+    const imgId = imageIdFromProductImageUrl(url);
+    if (!imgId) continue;
+    try {
+      await deleteProductImage(imgId);
+    } catch (err) {
+      console.error("Limpieza de imagen de producto:", err.message);
+    }
+  }
 }
 
 app.post(

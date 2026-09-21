@@ -219,6 +219,38 @@ await ensureColumn("orders", "shipping_pending", "shipping_pending INTEGER NOT N
 await ensureColumn("events", "visitor_id", "visitor_id TEXT");
 await db.exec("CREATE INDEX IF NOT EXISTS idx_events_visitor ON events(visitor_id)");
 
+// Migración de apertura de caja: una apertura concurrente vieja podía dejar
+// DOS cajas abiertas para la misma sucursal (SELECT + INSERT separados). Se
+// cierran todas menos la más reciente de cada sucursal y recién después se
+// crea un índice único parcial: a futuro la BD impide el duplicado aunque el
+// código vuelva a intentarlo.
+const dupOpenCash = await db
+  .prepare(
+    `SELECT c.id FROM cash_registers c
+     WHERE c.closed_at IS NULL
+       AND c.id <> (SELECT c2.id FROM cash_registers c2
+                    WHERE c2.branch = c.branch AND c2.closed_at IS NULL
+                    ORDER BY c2.opened_at DESC, c2.id DESC LIMIT 1)`
+  )
+  .all();
+for (const d of dupOpenCash) {
+  await db
+    .prepare(
+      "UPDATE cash_registers SET closed_at = ?, notes = notes || ' [cierre por duplicado]', updated_at = ? WHERE id = ?"
+    )
+    .run(now(), now(), d.id);
+}
+try {
+  await db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_cash_registers_open_branch
+    ON cash_registers(branch) WHERE closed_at IS NULL;
+  `);
+} catch (err) {
+  // Si algún estado raro impide el índice, la apertura sigue protegida por el
+  // INSERT condicional del endpoint; solo se pierde la garantía de respaldo.
+  console.error("No se pudo crear uq_cash_registers_open_branch:", err.message);
+}
+
 // Migración de datos: los extras de woks (salsas, palitos chinos, galletas)
 // se agrupan por categoría (subgroup) en el modal de personalización, con
 // subtítulos "SALSAS ADICIONALES" / "PALITOS DESCARTABLES" / "GALLETAS".

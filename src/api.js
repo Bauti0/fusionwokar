@@ -118,6 +118,11 @@ export function adminLogout() {
   return request("/api/admin/logout", { method: "POST" });
 }
 
+// Revoca todas las sesiones del panel (incluida la actual)
+export function adminLogoutAll() {
+  return request("/api/admin/logout-all", { method: "POST" });
+}
+
 export function adminMe() {
   return request("/api/admin/me");
 }
@@ -137,6 +142,14 @@ export function adminSetStatus(id, status) {
   return request(`/api/admin/orders/${id}/status`, {
     method: "PATCH",
     body: JSON.stringify({ status }),
+  });
+}
+
+// Fija el costo de envío de un pedido que quedó "a confirmar" por WhatsApp
+export function adminSetShipping(id, cost, blocks) {
+  return request(`/api/admin/orders/${id}/shipping`, {
+    method: "POST",
+    body: JSON.stringify({ cost, blocks }),
   });
 }
 
