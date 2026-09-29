@@ -7,6 +7,7 @@ import {
   adminLogoutAll,
   adminOrder,
   adminSetShipping,
+  adminRefund,
   adminStats,
 } from "../api.js";
 import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
@@ -23,6 +24,7 @@ import useDialogA11y from "../hooks/useDialogA11y.js";
 import { IconEmptySearch } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
+import ConfirmModal from "./ui/ConfirmModal.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import AdminStats from "./AdminStats.jsx";
 import AdminProducts from "./AdminProducts.jsx";
@@ -113,6 +115,8 @@ export default function AdminPanel({ onLogout }) {
   const [shippingInput, setShippingInput] = useState("");
   const [shippingBlocksInput, setShippingBlocksInput] = useState("");
   const [busyShipping, setBusyShipping] = useState(false);
+  const [refundInput, setRefundInput] = useState("");
+  const [refundConfirm, setRefundConfirm] = useState(null); // { amount, full }
   const pageRef = useRef(1);
   const seenRef = useRef(loadSeen());
   const [unseenIds, setUnseenIds] = useState(() => new Set());
@@ -294,6 +298,8 @@ export default function AdminPanel({ onLogout }) {
     setLastWhatsApp("");
     setShippingInput(order.shipping?.pending ? String(order.shipping?.cost || 0) : "");
     setShippingBlocksInput(order.shipping?.pending ? String(order.shipping?.blocks || 0) : "");
+    setRefundInput("");
+    setError("");
   }
 
   // Carga el costo de envío confirmado por WhatsApp de un pedido pendiente
@@ -318,6 +324,48 @@ export default function AdminPanel({ onLogout }) {
       else setError(err.message);
     } finally {
       setBusyShipping(false);
+    }
+  }
+
+  // ============================================================
+  // Devoluciones (Mercado Pago)
+  // Solo sobre pagos aprobados: el monto nunca puede superar lo que
+  // quedó sin devolver. `amount` vacío = devolver todo lo restante.
+  // ============================================================
+  const refundable =
+    selected?.paymentMethod === "mercadopago"
+      ? Math.max(0, (selected.total || 0) - (selected.refundedAmount || 0))
+      : 0;
+  const canRefund = selected?.paymentStatus === "approved" && refundable > 0;
+
+  function openRefundConfirm(amount) {
+    // Sin monto → devolución total de lo que queda.
+    if (amount === undefined || amount === null || amount === "") {
+      setRefundConfirm({ amount: null, full: true, refundable });
+      return;
+    }
+    const n = Math.round(Number(amount));
+    if (!Number.isFinite(n) || n <= 0) {
+      setError("Ingresá un monto válido.");
+      return;
+    }
+    if (n > refundable) {
+      setError(`El monto supera lo que queda por devolver ($${refundable}).`);
+      return;
+    }
+    setRefundConfirm({ amount: n, full: n === refundable, refundable });
+  }
+
+  async function handleRefundConfirm() {
+    try {
+      const res = await adminRefund(selected.id, refundConfirm.amount);
+      setSelected(res.order);
+      setRefundInput("");
+      load({ showSpinner: false });
+    } catch (err) {
+      if (err.message === "No autorizado" || err.message === "Sesión expirada") onLogout();
+      // Se re-lanza para que el ConfirmModal muestre el error sin cerrarse.
+      throw err;
     }
   }
 
@@ -483,6 +531,7 @@ export default function AdminPanel({ onLogout }) {
               { value: "approved", label: "Pagados" },
               { value: "pending", label: "Pago pendiente" },
               { value: "rejected", label: "Rechazados" },
+              { value: "refunded", label: "Devueltos" },
             ]}
             placeholder="Pago"
           />
@@ -699,7 +748,60 @@ const renderOrder = (o) => {
                   <p className={`badge badge--pay badge--pay-${selected.paymentStatus}`}>
                     {paymentLabel(selected.paymentStatus)} · {selected.paymentMethod}
                   </p>
+                  {selected.mpOrderId && <p>Order MP: {selected.mpOrderId}</p>}
                   {selected.mpPaymentId && <p>ID pago: {selected.mpPaymentId}</p>}
+
+                  {selected.refunds?.length > 0 && (
+                    <div className="refunds">
+                      {selected.refunds.map((r) => (
+                        <p className="refunds__row" key={r.id}>
+                          <span>↩ {formatPrice(r.amount)}</span>
+                          <span>{new Date(r.at).toLocaleString("es-AR")}</span>
+                        </p>
+                      ))}
+                      <p className="refunds__total">
+                        Devuelto: {formatPrice(selected.refundedAmount)} de {formatPrice(selected.total)}
+                      </p>
+                    </div>
+                  )}
+
+                  {canRefund && (
+                    <div className="refund-box">
+                      <p className="refund-box__note">
+                        Quedan {formatPrice(refundable)} por devolver.
+                      </p>
+                      <div className="refund-box__row">
+                        <input
+                          className="refund-box__input"
+                          type="number"
+                          inputMode="numeric"
+                          min="1"
+                          max={refundable}
+                          placeholder="Monto parcial"
+                          value={refundInput}
+                          onChange={(e) => setRefundInput(e.target.value)}
+                        />
+                        <button
+                          className="btn btn--primary btn--sm"
+                          onClick={() => openRefundConfirm(refundInput)}
+                        >
+                          Devolver monto
+                        </button>
+                      </div>
+                      <button
+                        className="btn btn--ghost btn--sm btn--block"
+                        onClick={() => openRefundConfirm()}
+                      >
+                        Devolver todo ({formatPrice(refundable)})
+                      </button>
+                    </div>
+                  )}
+
+                  {selected.paymentMethod === "mercadopago" &&
+                    selected.paymentStatus === "approved" &&
+                    !canRefund && (
+                      <p className="refund-box__note">Este pedido fue devuelto por completo.</p>
+                    )}
                 </div>
               </div>
 
@@ -784,6 +886,27 @@ const renderOrder = (o) => {
       {printOrder && <TicketPrint order={printOrder} onClose={() => setPrintOrder(null)} />}
       {printComanda && (
         <TicketPrint order={printComanda} variant="comanda" onClose={() => setPrintComanda(null)} />
+      )}
+
+      {refundConfirm && (
+        <ConfirmModal
+          variant="danger"
+          title={refundConfirm.full ? "Devolver el total" : "Devolver un monto"}
+          message={
+            refundConfirm.full
+              ? `Se va a devolver ${formatPrice(refundConfirm.refundable)} a ${
+                  selected?.name || "el cliente"
+                } por Mercado Pago. El pedido quedará marcado como devuelto y sale de la venta.`
+              : `Se va a devolver ${formatPrice(refundConfirm.amount)} a ${
+                  selected?.name || "el cliente"
+                } por Mercado Pago. Quedarán ${formatPrice(
+                  refundConfirm.refundable - refundConfirm.amount
+                )} sin devolver.`
+          }
+          confirmText={refundConfirm.full ? "Devolver todo" : "Devolver"}
+          onConfirm={handleRefundConfirm}
+          onClose={() => setRefundConfirm(null)}
+        />
       )}
     </div>
   );

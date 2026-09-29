@@ -3,7 +3,7 @@ import { BRANCHES, BRAND } from "../data/branches.js";
 import { getMenu as getStaticMenu } from "../data/menus.js";
 import useCart from "../hooks/useCart.js";
 import { sendOrderByWhatsApp } from "../utils/whatsapp.js";
-import { createOrder, getMenu as fetchMenu } from "../api.js";
+import { createOrder, getMenu as fetchMenu, getOrderByNumber, retryPaymentLink } from "../api.js";
 import { track } from "../utils/tracking.js";
 import Landing from "./Landing.jsx";
 import Header from "./Header.jsx";
@@ -31,12 +31,51 @@ const VIEWS = {
   paymentResult: "paymentResult",
 };
 
+// Traduce el fallo de POST /api/orders a lo que ve el cliente.
+//
+// Antes se decidía con `err.contactWhatsApp ? "No pudimos calcular el envío…"`
+// sobre un flag que el backend encendía para DOS fallos distintos: no se pudo
+// cotizar el envío y no se pudo generar el link de pago. Con un token de
+// Mercado Pago inválido, el cliente veía "No pudimos calcular el envío" ante un
+// fallo de pago. Ahora cada `code` del servidor tiene su mensaje.
+//
+// `retryable` viene del server: con credenciales inválidas reintentar no sirve
+// nunca (solo WhatsApp), con una caída de MP sí.
+function describeOrderError(err) {
+  switch (err.code) {
+    case "shipping_unavailable":
+      return {
+        message: err.message,
+        canRetry: true,
+        note: "Para cobrar con Mercado Pago necesitamos saber el costo de envío.",
+      };
+    case "mp_unauthorized":
+      return {
+        message:
+          "El pago con Mercado Pago no está disponible en este momento. Tu pedido quedó " +
+          "registrado: escribinos por WhatsApp con el número y lo coordinamos.",
+        canRetry: false,
+        note: "No hace falta que reintentes: el problema es de nuestro lado, no tuyo.",
+      };
+    case "mp_unavailable":
+    case "mp_link_missing":
+      return {
+        message:
+          "No pudimos generar el link de pago de Mercado Pago. Podés reintentar en un " +
+          "momento o escribirnos por WhatsApp con el número de tu pedido.",
+        canRetry: true,
+      };
+    default:
+      return { message: err.message || "No se pudo iniciar el pago.", canRetry: true };
+  }
+}
+
 // ============================================================
 // FUSIÓN WOK — Aplicación principal (tienda)
 // - Estado global: sucursal, vista, cliente, modalidad
 // - Carrito e historial por sucursal (useCart, localStorage)
 // - Checkout: WhatsApp (efectivo/transferencia) o Mercado Pago
-//   (crea el pedido en el backend y paga con Wallet Brick)
+//   (crea el pedido en el backend y redirige al checkout de MP)
 // ============================================================
 export default function StoreApp() {
   const [branchId, setBranchId] = useState(() => localStorage.getItem("fw.lastBranch") || "");
@@ -55,6 +94,11 @@ export default function StoreApp() {
   const [paymentFlow, setPaymentFlow] = useState(null); // datos del pago MP
   const [lastOrder, setLastOrder] = useState(null); // pedido confirmado (para éxito/tracking)
   const [paymentMeta, setPaymentMeta] = useState(null); // datos locales del pedido MP (dirección, modalidad)
+  // Error del último intento de pedido, mostrado EN el checkout y no en un
+  // toast que se borra a los 3 s: el cliente tiene que poder leerlo, volver a
+  ///leerlo y decidir si reintenta el pago o pasa por WhatsApp.
+  const [checkoutError, setCheckoutError] = useState(null);
+  const [retryingLink, setRetryingLink] = useState(false);
   const [toast, setToast] = useState(null); // feedback al agregar al carrito
   const toastTimer = useRef(null);
 
@@ -139,6 +183,42 @@ export default function StoreApp() {
     [cart.addItem, showToast]
   );
 
+  // Reintento del link de pago: el pedido ya existe (el server lo guardó antes
+  // de llamar a MP), así que solo hay que volver a pedirle a MP el checkout.
+  // Evita que el cliente reenvíe el formulario y se cree un pedido duplicado.
+  const handleRetryPaymentLink = useCallback(async () => {
+    const orderId = checkoutError?.orderId;
+    if (!orderId || retryingLink) return;
+    setRetryingLink(true);
+    try {
+      const res = await retryPaymentLink(orderId);
+      setCheckoutError(null);
+      setLastOrder(res);
+      setPaymentFlow(res);
+      setPaymentMeta({
+        orderId: res.orderId,
+        orderMode: checkoutError.orderMode,
+        paymentMethod: "mercadopago",
+        address: checkoutError.address || "",
+      });
+      setView(VIEWS.payment);
+    } catch (err) {
+      // El server responde con el mismo contrato de error: si el problema es
+      // de credenciales, el reintento deja de ofrecerse.
+      const described = describeOrderError(err);
+      setCheckoutError({
+        ...described,
+        orderId: err.orderId ?? orderId,
+        orderNumber: err.orderNumber || checkoutError.orderNumber,
+        orderMode: checkoutError.orderMode,
+        address: checkoutError.address,
+      });
+      showToast(described.message, "error");
+    } finally {
+      setRetryingLink(false);
+    }
+  }, [checkoutError, retryingLink, showToast]);
+
   // Confirmación del checkout
   // - Mercado Pago → se crea el pedido en el backend (pendiente de pago)
   //   y se abre el Wallet Brick para pagar sin salir del flujo.
@@ -180,6 +260,7 @@ export default function StoreApp() {
       };
 
       if (paymentMethod === "mercadopago") {
+        setCheckoutError(null);
         try {
           const res = await createOrder(payload);
           setLastOrder(res);
@@ -192,12 +273,19 @@ export default function StoreApp() {
           });
           setView(VIEWS.payment);
         } catch (err) {
-          showToast(
-            err.contactWhatsApp
-              ? "No pudimos calcular el envío. Escribinos por WhatsApp para coordinar el pago."
-              : "No se pudo iniciar el pago. Volvé a intentarlo.",
-            "error"
-          );
+          // El error se muestra EN el checkout (no en un toast que se borra):
+          // si el pedido llegó a guardarse, se muestra también su número para
+          // que el cliente pueda escribir por WhatsApp con el número correcto.
+          // Se guarda la modalidad y la dirección para que el reintento del
+          // link use los del pedido real y no adivine.
+          const described = describeOrderError(err);
+          setCheckoutError({
+            ...described,
+            orderId: err.orderId,
+            orderNumber: err.orderNumber,
+            orderMode: mode,
+            address: mode === "delivery" ? address : "",
+          });
           setView(VIEWS.checkout);
         }
         return;
@@ -264,6 +352,54 @@ export default function StoreApp() {
     [cart, paymentMeta]
   );
 
+  // handlePaymentResult cambia de identidad cuando cambia paymentMeta; para que
+  // el efecto de retorno de MP no se re-dispare, se guarda en un ref.
+  const paymentResultRef = useRef(handlePaymentResult);
+  paymentResultRef.current = handlePaymentResult;
+
+  // Retorno de Mercado Pago: con la Orders API el pago ocurre en el checkout
+  // alojado por MP, así que el navegador se va y vuelve con
+  // ?pago=<resultado>&pedido=<nro>. El estado real se pide al backend (el
+  // webhook puede tardar) y, si sigue "pendiente", se reintenta un rato antes
+  // de mostrar la pantalla.
+  const mpReturnDone = useRef(false);
+  useEffect(() => {
+    if (mpReturnDone.current) return;
+    const qs = new URLSearchParams(window.location.search);
+    const orderNumber = qs.get("pedido");
+    if (!qs.get("pago") || !orderNumber) return;
+    mpReturnDone.current = true;
+    // Saca los parámetros del histórico: si el cliente recarga, no vuelve a saltar.
+    window.history.replaceState({}, "", window.location.pathname);
+
+    let alive = true;
+    let tries = 0;
+    (async function poll() {
+      try {
+        const order = await getOrderByNumber(orderNumber);
+        if (!alive) return;
+        setBranchId(order.branch);
+        if (order.paymentStatus === "pending" && tries < 8) {
+          tries += 1;
+          setTimeout(poll, 2500);
+          return;
+        }
+        setPaymentMeta({
+          orderId: order.id,
+          orderMode: order.orderMode,
+          paymentMethod: order.paymentMethod,
+        });
+        paymentResultRef.current(order);
+      } catch {
+        if (alive) showToast("No pudimos recuperar el resultado del pago.", "error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleRepeat = useCallback(
     (order) => {
       cart.repeatOrder(order);
@@ -326,6 +462,10 @@ export default function StoreApp() {
           orderMode={orderMode}
           setOrderMode={setOrderMode}
           onConfirm={handleConfirmCheckout}
+          serverError={checkoutError}
+          onClearServerError={() => setCheckoutError(null)}
+          onRetryPaymentLink={handleRetryPaymentLink}
+          retryingLink={retryingLink}
         />
       )}
 
@@ -381,9 +521,10 @@ export default function StoreApp() {
           orderId={paymentFlow.orderId}
           orderNumber={paymentFlow.orderNumber}
           demo={paymentFlow.demo}
-          publicKey={paymentFlow.publicKey}
-          preferenceId={paymentFlow.preferenceId}
+          checkoutUrl={paymentFlow.checkoutUrl}
+          total={paymentFlow.total}
           demoToken={paymentFlow.demoToken}
+          branch={branch}
           onResult={handlePaymentResult}
           onCancel={() => setView(VIEWS.checkout)}
         />

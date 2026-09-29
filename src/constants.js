@@ -29,6 +29,7 @@ export const PAYMENT_LABELS = {
   approved: "Pagado",
   pending: "Pago pendiente",
   rejected: "Pago rechazado",
+  refunded: "Devuelto",
 };
 
 export function paymentLabel(id) {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { formatPrice, lineTotal } from "../utils/format.js";
 import { validateCoupon, shippingQuote } from "../api.js";
+import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
 import { isValidPhone } from "../utils/validation.js";
 import { isOpenAtTime, closedLabel } from "../utils/schedule.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
@@ -9,7 +10,7 @@ import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 const PAYMENT_METHODS = [
   { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "Contado al retirar o al recibir" },
   { id: "transferencia", label: "Transferencia", Icon: IconBank, hint: "CBU de la sucursal al confirmar" },
-  { id: "mercadopago", label: "Mercado Pago", Icon: IconCard, hint: "Pago al instante, sin salir de la app" },
+  { id: "mercadopago", label: "Mercado Pago", Icon: IconCard, hint: "Tarjeta, saldo o dinero en cuenta" },
 ];
 
 // Caché cliente de cotizaciones: la misma dirección no se vuelve a consultar
@@ -27,8 +28,25 @@ const quoteCache = new Map(); // dirección (minúsc.) → { res | err, at }
 // 5) Método de pago
 // Confirma el pedido armando el mensaje de WhatsApp al número
 // de la sucursal correspondiente.
+//
+// `serverError` es el fallo del último intento de pedido, resuelto en
+// StoreApp con el `code` que manda el backend. Se muestra acá, en el formulario
+// (no como toast que se borra a los 3 s): si el pedido llegó a guardarse, se
+// muestra también su número para que el cliente pueda escribir por WhatsApp
+// con el número correcto, y se ofrece reintentar el link de pago si corresponde.
 // ============================================================
-export default function Checkout({ branch, cart, customer, orderMode, setOrderMode, onConfirm }) {
+export default function Checkout({
+  branch,
+  cart,
+  customer,
+  orderMode,
+  setOrderMode,
+  onConfirm,
+  serverError = null,
+  onClearServerError,
+  onRetryPaymentLink,
+  retryingLink = false,
+}) {
   const [name, setName] = useState(customer?.name || "");
   const [phone, setPhone] = useState(customer?.phone || "");
   // Autocompleta con la última dirección usada (guardada en el dispositivo)
@@ -66,6 +84,11 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
   const contactWaLink = `https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(
     "Hola! Estoy haciendo un pedido pero no puedo calcular el envío automáticamente en la página. ¿Me pueden ayudar?"
   )}`;
+  // Link de WhatsApp del pedido que YA quedó registrado en la base pero sin
+  // pago. Incluye el número de pedido: sin él el local no encuentra la fila.
+  const orderWaLink = serverError
+    ? waLinkForUnpaidOrder(branch, { orderNumber: serverError.orderNumber, reason: serverError.message })
+    : "";
 
   // Cotización de envío con debounce (no satura la API). Espera una dirección
   // con un mínimo de texto y nunca encola una segunda consulta mientras una va
@@ -159,6 +182,9 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
   }
 
   async function handleConfirm() {
+    // Un intento nuevo borra el error del anterior: si sigue visible, el
+    // cliente no puede distinguir si el botón funcionó.
+    onClearServerError?.();
     if (!name.trim() || !phone.trim()) {
       setError("Completá tu nombre y celular para confirmar.");
       return;
@@ -415,9 +441,7 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
         <div className="summary">
           {shippingUnavailable && isMp && (
             <div className="checkout-note checkout-note--error">
-              <span>
-                {shippingError} No pudimos calcular el envío automático del todo.
-              </span>
+              <span>No pudimos calcular el costo de envío: {shippingError}</span>
               <a className="btn btn--ghost btn--sm" href={contactWaLink} target="_blank" rel="noreferrer">
                 💬 Escribinos por WhatsApp
               </a>
@@ -464,6 +488,43 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
 
         {error && <div className="form-error">{error}</div>}
 
+        {serverError && (
+          <div className="checkout-note checkout-note--error" role="alert">
+            <span>
+              {serverError.message}
+              {serverError.orderNumber && (
+                <>
+                  {" "}
+                  Tu pedido quedó registrado con el número{" "}
+                  <strong>{serverError.orderNumber}</strong>.
+                </>
+              )}
+              {serverError.note && <> {serverError.note}</>}
+            </span>
+            <div className="checkout-note__actions">
+              {serverError.orderNumber && serverError.canRetry && onRetryPaymentLink && (
+                <button
+                  className="btn btn--primary btn--sm"
+                  onClick={onRetryPaymentLink}
+                  disabled={retryingLink}
+                >
+                  {retryingLink ? "Generando link…" : "Reintentar el pago"}
+                </button>
+              )}
+              {serverError.orderNumber && (
+                <a
+                  className="btn btn--ghost btn--sm"
+                  href={orderWaLink}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  💬 Resolver por WhatsApp
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="trust-strip" aria-label="Garantías de tu pedido">
           <span>🔒 Pago seguro</span>
           <span>✅ Confirmación al instante</span>
@@ -471,17 +532,43 @@ export default function Checkout({ branch, cart, customer, orderMode, setOrderMo
         </div>
 
         <div style={{ display: "grid", gap: 10, marginTop: 16 }}>
+          {/* Si el pedido YA se guardó, reenviar el formulario crearía un
+              pedido DUPLICADO. En ese caso el botón principal reintenta el link
+              del pedido existente, o queda deshabilitado si el fallo no es
+              reintentable (credenciales inválidas de MP) y la salida es
+              WhatsApp. */}
           <button
             className="btn btn--primary btn--block"
-            onClick={handleConfirm}
-            disabled={busy}
+            onClick={
+              serverError?.orderId && serverError.canRetry && onRetryPaymentLink
+                ? onRetryPaymentLink
+                : handleConfirm
+            }
+            disabled={busy || retryingLink || (!!serverError?.orderId && !serverError.canRetry)}
           >
-            {busy
+            {busy || retryingLink
               ? "Procesando…"
-              : isMp
-                ? "Pagar con Mercado Pago"
-                : "Confirmar pedido por WhatsApp"}
+              : serverError?.orderId && !serverError.canRetry
+                ? "Mercado Pago no disponible"
+                : serverError?.orderId
+                  ? "Reintentar el pago"
+                  : isMp
+                    ? "Pagar con Mercado Pago"
+                    : "Confirmar pedido por WhatsApp"}
           </button>
+          {serverError?.orderId && !serverError.canRetry && (
+            // Reenviar el checkout crearía otro pedido (el anterior ya está
+            // guardado sin pago). La salida real es cambiar de medio de pago.
+            <button
+              className="btn btn--ghost btn--block"
+              onClick={() => {
+                onClearServerError?.();
+                setPaymentMethod("efectivo");
+              }}
+            >
+              Pedir en efectivo o por transferencia
+            </button>
+          )}
           {isMp && (
             <p className="hint">
               Pagás con Mercado Pago sin salir de la app. El pedido se confirma cuando se

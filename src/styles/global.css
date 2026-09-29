@@ -566,6 +566,8 @@ a { color: var(--color-primary); }
   border-color: rgba(229,52,46,.25); border-left-color: var(--color-primary);
 }
 .checkout-note a { align-self: flex-start; }
+/* Botones de salida de un pedido ya registrado (reintento de pago / WhatsApp) */
+.checkout-note__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .trust-strip {
   display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center;
@@ -756,6 +758,7 @@ a { color: var(--color-primary); }
 .badge--pay-approved { background: #e6f6ec; color: var(--color-success); border-color: #bfe6cd; }
 .badge--pay-pending { background: #fff4e0; color: #b36b00; border-color: #f0d9a8; }
 .badge--pay-rejected { background: #fdecea; color: var(--color-primary); border-color: #f3c2c0; }
+.badge--pay-refunded { background: #eceafc; color: #4a4fc4; border-color: #d7d9f5; }
 .badge--shipping-pending { background: #fff4e0; color: #b36b00; border-color: #f0d9a8; }
 
 /* Skeleton loading (menú) */
@@ -808,6 +811,16 @@ a { color: var(--color-primary); }
 }
 .demo-mode p { font-size: 13px; color: var(--color-text-soft); margin: 0 0 14px; }
 .demo-mode__actions { display: grid; gap: 8px; }
+
+/* Pago con Mercado Pago: el checkout vive en el sitio de MP, así que la app
+   solo avisa a dónde va, muestra el total y ofrece el botón por si el
+   navegador bloquea la redirección automática. */
+.payment-redirect { text-align: center; }
+.payment-redirect p { font-size: 14px; color: var(--color-text-soft); margin: 0 0 16px; }
+.payment-redirect__total { font-size: 15px; color: var(--color-text); }
+.payment-redirect__total strong { font-size: 19px; }
+.payment-redirect .btn { margin-bottom: 8px; }
+
 .payment-slow {
   display: flex; flex-direction: column; align-items: center; gap: 12px;
   text-align: center; margin: 0 0 14px;
@@ -928,6 +941,8 @@ a { color: var(--color-primary); }
 .stat-card--main { grid-column: 1 / -1; background: var(--color-secondary); color: #fff; border-color: var(--color-secondary); }
 .stat-card__label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--color-text-soft); margin-bottom: 4px; }
 .stat-card--main .stat-card__label { color: rgba(255,255,255,0.75); }
+.stat-card__note { display: block; margin-top: 4px; font-size: 12px; color: var(--color-text-soft); }
+.stat-card--main .stat-card__note { color: rgba(255,255,255,0.75); }
 .stat-card__value { font-size: 20px; font-weight: 800; }
 .funnel { margin-top: 18px; }
 .funnel h4 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -1324,6 +1339,23 @@ a { color: var(--color-primary); }
 .shipping-confirm .detail-note { margin-top: 2px; }
 .shipping-confirm__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; margin-top: 8px; }
 .shipping-confirm__fields .btn { grid-column: 1 / -1; width: 100%; }
+
+/* Devoluciones (Mercado Pago) en el detalle del pedido */
+.refunds { margin-top: 8px; border-top: 1px dashed var(--color-border); padding-top: 8px; }
+.refunds__row {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 13px !important; color: var(--color-text-soft);
+}
+.refunds__total { margin-top: 4px !important; font-weight: 700; color: #4a4fc4 !important; }
+.refund-box { margin-top: 10px; border-top: 1px dashed var(--color-border); padding-top: 10px; }
+.refund-box__note { font-size: 13.5px !important; color: var(--color-text-soft); }
+.refund-box__row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin: 8px 0; }
+.refund-box__row input {
+  border: 2px solid var(--color-border); border-radius: var(--radius-sm);
+  padding: 10px 12px; background: var(--color-surface); outline: none;
+  transition: border-color .15s var(--ease); min-width: 0;
+}
+.refund-box__row input:focus { border-color: var(--color-primary); background: #fff; box-shadow: 0 0 0 4px rgba(229,52,46,.1); }
 .status-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .status-btn {
   border: 2px solid var(--color-border); background: var(--color-bg);

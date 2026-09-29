@@ -12,6 +12,15 @@ export function startOfToday() {
   return d;
 }
 
+// Etiqueta de dia para el grafico de ventas del admin ("lun", "mar", ...).
+// La fecha viene del servidor como dia calendario de Argentina, asi que se
+// parsea a la midnight local: new Date(fecha) seria UTC y correria el dia.
+export function dayShort(isoDate) {
+  return new Date(`${isoDate}T00:00:00`).toLocaleDateString("es-AR", {
+    weekday: "short",
+  });
+}
+
 export function periodRange(period, from, to) {
   const nowDate = new Date();
   if (period === "today") return { from: startOfToday(), to: nowDate };

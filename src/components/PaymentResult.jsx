@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { formatPrice } from "../utils/format.js";
+import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
 
 // ============================================================
 // PaymentResult — pantalla de aprobado / pendiente / rechazado
@@ -64,6 +65,19 @@ export default function PaymentResult({ order, branch, onHome }) {
               <Link className="btn btn--primary btn--block" to={`/track/${order?.orderNumber}`}>
                 📍 Seguir mi pedido
               </Link>
+            )}
+            {pending && (
+              // "Pendiente" no siempre es "esperando": si la confirmación nunca
+              // llega (webhook caído, credenciales), el pedido igual existe y
+              // el local lo puede cobrar por otro medio. WhatsApp es la salida.
+              <a
+                className="btn btn--ghost btn--block"
+                href={waLinkForUnpaidOrder(branch, { orderNumber: order?.orderNumber })}
+                target="_blank"
+                rel="noreferrer"
+              >
+                💬 Consultar por WhatsApp
+              </a>
             )}
             {rejected && (
               <button className="btn btn--primary btn--block" onClick={onHome}>

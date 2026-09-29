@@ -33,3 +33,8 @@ coverage/
 *.bak
 
 *.md
+opencode.json
+skills-lock.json
+.agents/
+.opencode/
+.env

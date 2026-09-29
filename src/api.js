@@ -13,18 +13,50 @@ function csrfHeader() {
   return m ? { "X-CSRF-Token": decodeURIComponent(m[1]) } : {};
 }
 
+// Error de API con TODO el contexto que manda el backend. Antes se perdía casi
+// todo: el frontend solo leía `error` y dos flags, así que un fallo al generar
+// el link de pago (503) se mostraba con el mensaje de "no pudimos calcular el
+// envío" y el cliente nunca veía el número de pedido que ya se había guardado.
+class ApiError extends Error {
+  constructor(message, { status = 0, code = "", orderId = null, orderNumber = "", contactWhatsApp = false, retryable = false } = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.orderId = orderId;
+    this.orderNumber = orderNumber;
+    this.contactWhatsApp = contactWhatsApp;
+    this.retryable = retryable;
+  }
+}
+
+// Si la respuesta no es JSON (página de error de un proxy, 502 de Render, un
+// corte de conexión con HTML) `data` queda vacío y el mensaje era el inútil
+// "Error 502". Esto le dice al cliente qué hacer sin inventar nada del server.
+function networkMessage(status) {
+  if (status === 429) return "Demasiados intentos. Esperá un momento e intentá de nuevo.";
+  if (status >= 500) return "El servidor está teniendo problemas. Probá de nuevo en un momento.";
+  return "No pudimos conectarnos con el servidor. Revisá tu conexión a internet.";
+}
+
+function toApiError(data, status) {
+  return new ApiError(data?.error || networkMessage(status), {
+    status,
+    code: data?.code || "",
+    orderId: data?.orderId ?? null,
+    orderNumber: data?.orderNumber || "",
+    contactWhatsApp: !!data?.contactWhatsApp,
+    retryable: !!data?.retryable,
+  });
+}
+
 async function request(path, options = {}) {
   const res = await fetch(path, {
     ...options,
     headers: { "Content-Type": "application/json", ...csrfHeader(), ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new Error(data.error || `Error ${res.status}`);
-    err.contactWhatsApp = !!data.contactWhatsApp;
-    err.shippingPending = !!data.shippingPending;
-    throw err;
-  }
+  if (!res.ok) throw toApiError(data, res.status);
   return data;
 }
 
@@ -40,12 +72,15 @@ async function pollRequest(path) {
   const res = await fetch(path, { headers });
   if (res.status === 304) return prev;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  // Mismo error tipado que el resto: el tracking y el polling del pago pueden
+  // mostrar el mensaje real del server en vez de "Error 500".
+  if (!res.ok) throw toApiError(data, res.status);
   lastPayloadPerPath.set(path, data);
   return data;
 }
 
-// Crea un pedido (MP devuelve preferenceId/publicKey; WhatsApp queda "received")
+// Crea un pedido (MP devuelve el checkoutUrl para redirigir al pago; WhatsApp
+// queda "received")
 export function createOrder(payload) {
   return request("/api/orders", {
     method: "POST",
@@ -55,6 +90,14 @@ export function createOrder(payload) {
 
 export function getOrder(id) {
   return pollRequest(`/api/orders/${id}`);
+}
+
+// Reintenta generar el link de pago de un pedido que quedó guardado pero sin
+// order de MP. Evita que el cliente tenga que reenviar el checkout y duplicar
+// el pedido. Devuelve el mismo contrato de error que la creación (code,
+// orderNumber, retryable) para que el checkout muestre lo mismo.
+export function retryPaymentLink(orderId) {
+  return request(`/api/orders/${orderId}/payment-link`, { method: "POST" });
 }
 
 export function getOrderByNumber(orderNumber) {
@@ -150,6 +193,15 @@ export function adminSetShipping(id, cost, blocks) {
   return request(`/api/admin/orders/${id}/shipping`, {
     method: "POST",
     body: JSON.stringify({ cost, blocks }),
+  });
+}
+
+// Devuelve dinero de un pedido pagado con Mercado Pago. Sin `amount` devuelve
+// todo lo que queda del pedido; con `amount`, esa parte.
+export function adminRefund(id, amount) {
+  return request(`/api/admin/orders/${id}/refund`, {
+    method: "POST",
+    body: JSON.stringify({ amount }),
   });
 }
 

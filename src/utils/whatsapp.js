@@ -69,3 +69,15 @@ export function sendOrderByWhatsApp({ branch, order, customer, orderMode, paymen
   const url = `https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(message)}`;
   window.open(url, "_blank");
 }
+
+// Link de WhatsApp para cuando el pedido YA quedó guardado en la base pero el
+// pago automático no se pudo completar (Mercado Pago caído, credenciales
+// inválidas, sin costo de envío). Es el último resort: si no lleva el número de
+// pedido, el local no tiene forma de encontrar la fila y el pedido se pierde.
+export function waLinkForUnpaidOrder(branch, { orderNumber, reason = "" } = {}) {
+  const text =
+    `Hola! Hice el pedido ${orderNumber} en ${branch?.name || "Fusión Wok"} y no pude completar el pago en la página.\n` +
+    (reason ? `\nMotivo que me muestra la web: ${reason}\n` : "\n") +
+    "¿Me confirmás si puedo pagar por otro medio?";
+  return `https://wa.me/${branch?.whatsapp || ""}?text=${encodeURIComponent(text)}`;
+}

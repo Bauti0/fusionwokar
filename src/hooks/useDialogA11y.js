@@ -23,15 +23,19 @@ export default function useDialogA11y({ onClose, isActive = true, initialFocusRe
     const dialog = ref.current;
     const opener = document.activeElement;
 
+    // Declaration en el scope del efecto (no dentro del else de abajo):
+    // onKeyDown tambien la usa para el trampa de foco, y si viviera en el
+    // bloque del else seria ReferenceError al presionar Tab.
+    const focusables = () =>
+      Array.from(dialog.querySelectorAll(FOCUSABLE)).filter(
+        (el) => el.offsetParent !== null || el === document.activeElement
+      );
+
     // Mueve el foco adentro apenas se abre
     const initial = initialFocusRef?.current;
     if (initial && !initial.disabled && dialog.contains(initial)) {
       initial.focus();
     } else {
-      const focusables = () =>
-        Array.from(dialog.querySelectorAll(FOCUSABLE)).filter(
-          (el) => el.offsetParent !== null || el === document.activeElement
-        );
       (focusables()[0] || dialog).focus();
     }
 

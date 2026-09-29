@@ -2,25 +2,30 @@ import { useEffect, useRef, useState } from "react";
 import { getOrder, simulatePayment } from "../api.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 import { BRAND } from "../data/branches.js";
+import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
+import { formatPrice } from "../utils/format.js";
 
 // ============================================================
 // PaymentModal — pago con Mercado Pago dentro del flujo
-// - Modo real: Wallet Brick con redirectMode "modal" (no se
-//   sale de la app para pagar).
+// - Modo real: la Orders API de MP no se puede embeber (no hay
+//   Brick que acepte un order id), así que el pago ocurre en el
+//   checkout alojado por Mercado Pago: redirigimos al
+//   checkout_url y el cliente vuelve con ?pago=<resultado>&pedido=<nro>.
 // - Modo demo (sin credenciales): botones "Simular pago".
 // Mientras el pago está pendiente se hace polling al backend
 // hasta que el webhook (o la simulación) actualice el estado.
 // ============================================================
 
-export default function PaymentModal({ orderId, orderNumber, demo, publicKey, preferenceId, demoToken, onResult, onCancel }) {
-  const [phase, setPhase] = useState(demo ? "demo" : "loading");
-  const [error, setError] = useState("");
+export default function PaymentModal({ orderId, orderNumber, demo, checkoutUrl, demoToken, total, branch, onResult, onCancel }) {
+  const [phase, setPhase] = useState(demo ? "demo" : "ready");
   const [result, setResult] = useState(null);
   const [slow, setSlow] = useState(false); // el pago tarda más de lo normal
+  const [pollError, setPollError] = useState(""); // el polling se cortó
+  const [redirecting, setRedirecting] = useState(false);
   const mounted = useRef(true);
-  const brickContainer = useRef(null);
   const pollTimer = useRef(null);
   const slowTimer = useRef(null);
+  const failCount = useRef(0);
   const dialogRef = useDialogA11y({ onClose: onCancel });
 
   useEffect(() => {
@@ -35,23 +40,40 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
   // Polling del estado del pago
   function startPolling() {
     setSlow(false);
+    setPollError("");
+    failCount.current = 0;
     clearInterval(pollTimer.current);
     clearTimeout(slowTimer.current);
     // Si pasan ~90 s sin que el pago se resuelva, avisamos (el webhook puede
-    // llegar tarde). El polling sigue corriendo por si se aprueba/rechaza.
+    // llegar tarde, y el server también reconcilia contra la API de MP).
     slowTimer.current = setTimeout(() => {
       if (mounted.current) setSlow(true);
     }, 90000);
     pollTimer.current = setInterval(async () => {
       try {
         const order = await getOrder(orderId);
-        if (order.paymentStatus === "approved" || order.paymentStatus === "rejected") {
+        failCount.current = 0;
+        if (mounted.current) setPollError("");
+        if (
+          order.paymentStatus === "approved" ||
+          order.paymentStatus === "rejected" ||
+          order.paymentStatus === "refunded"
+        ) {
           clearInterval(pollTimer.current);
           clearTimeout(slowTimer.current);
           if (mounted.current) setResult(order);
         }
-      } catch {
-        /* reintenta */
+      } catch (err) {
+        // Antes el catch era un comentario y el intervalo seguía para siempre
+        // sin decir nada: el cliente veía un modal girando indefinidamente,
+        // sin saber si había que esperar o si el pago se había perdido.
+        // Ahora se corta y se ofrece una salida.
+        failCount.current += 1;
+        if (failCount.current >= 6 && mounted.current) {
+          clearInterval(pollTimer.current);
+          clearTimeout(slowTimer.current);
+          setPollError(err.message || "No pudimos consultar el estado del pago.");
+        }
       }
     }, 2500);
   }
@@ -63,63 +85,34 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
     return () => clearTimeout(t);
   }, [result, onResult]);
 
-  // Modo real: cargar el SDK y crear el Wallet Brick en modal
-  useEffect(() => {
-    if (demo || !publicKey || !preferenceId) return;
-
-    async function loadBrick() {
-      if (!window.MercadoPago) {
-        const src = "https://sdk.mercadopago.com/js/v2";
-        await new Promise((resolve, reject) => {
-          if (document.querySelector(`script[src="${src}"]`)) return resolve();
-          const s = document.createElement("script");
-          s.src = src;
-          s.onload = resolve;
-          s.onerror = reject;
-          document.head.appendChild(s);
-        });
-      }
-      if (!mounted.current) return;
-      const mp = new window.MercadoPago(publicKey, { locale: "es-AR" });
-      try {
-        await mp.bricks().create("wallet", brickContainer.current, {
-          initialization: { preferenceId, redirectMode: "modal" },
-          callbacks: {
-            onReady: () => mounted.current && setPhase("ready"),
-            onError: (err) => {
-              if (mounted.current) {
-                setPhase("error");
-                setError(err?.message || "No se pudo iniciar el pago.");
-              }
-            },
-          },
-        });
-        startPolling();
-      } catch (err) {
-        if (mounted.current) {
-          setPhase("error");
-          setError(err?.message || "No se pudo iniciar el pago.");
-        }
-      }
-    }
-
-    setPhase("loading");
-    loadBrick();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo, publicKey, preferenceId, orderId]);
-
   // Demo: simular aprobación o rechazo
   async function handleSimulate(action) {
     setPhase("simulating");
-    setError("");
     try {
       await simulatePayment(orderId, action, demoToken);
       startPolling();
       setPhase("polling");
     } catch (err) {
-      setError(err.message);
       setPhase("demo");
     }
+  }
+
+  // Redirección al checkout de Mercado Pago. Se dispara sola a los 2 s: el
+  // flujo estándar de Checkout Pro es que el cliente pague en el entorno de
+  // MP y vuelva. El botón queda por si el navegador bloquea la navegación.
+  useEffect(() => {
+    if (demo || !checkoutUrl) return;
+    const t = setTimeout(() => {
+      if (mounted.current) goToCheckout();
+    }, 2000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demo, checkoutUrl]);
+
+  function goToCheckout() {
+    if (redirecting) return;
+    setRedirecting(true);
+    window.location.href = checkoutUrl;
   }
 
   if (result) {
@@ -141,7 +134,7 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
         </div>
         <h3 id="payment-title">Pagá tu pedido {orderNumber}</h3>
         <p className="payment-card__sub">
-          Mercado Pago · sin salir de la app
+          {demo ? "MODO DEMO · sin Mercado Pago" : "Mercado Pago · pago seguro"}
         </p>
 
         <div className="payment-body">
@@ -164,20 +157,55 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
           )}
 
           {!demo && (
-            <>
-              <div
-                ref={brickContainer}
-                className={`wallet-brick ${phase === "ready" ? "is-ready" : ""}`}
-              />
-              {phase === "loading" && <p className="hint">Preparando el pago…</p>}
-              {phase === "error" && <p className="form-error">{error}</p>}
-            </>
+            <div className="payment-redirect">
+              {total ? (
+                <p className="payment-redirect__total">
+                  Total a pagar: <strong>{formatPrice(total)}</strong>
+                </p>
+              ) : null}
+              {checkoutUrl ? (
+                <>
+                  <p>
+                    Te llevamos al checkout de <strong>Mercado Pago</strong> para
+                    completar el pago. Volvés acá automáticamente cuando termines.
+                  </p>
+                  <button
+                    className="btn btn--primary btn--block"
+                    onClick={goToCheckout}
+                    disabled={redirecting}
+                  >
+                    {redirecting ? "Abriendo Mercado Pago…" : "💳 Pagar con Mercado Pago"}
+                  </button>
+                </>
+              ) : (
+                <p className="form-error">
+                  No se pudo generar el link de pago. Volvé al checkout e intentá
+                  de nuevo.
+                </p>
+              )}
+            </div>
           )}
         </div>
 
-        {error && <p className="form-error">{error}</p>}
+        {pollError && (
+          <div className="payment-slow" role="alert">
+            <p>
+              {pollError} Si ya completaste el pago, no te preocupes: se confirma
+              solo. Podés cerrar esta ventana y ver el estado desde el seguimiento
+              del pedido.
+            </p>
+            <a
+              className="btn btn--ghost btn--sm"
+              href={waLinkForUnpaidOrder(branch, { orderNumber })}
+              target="_blank"
+              rel="noreferrer"
+            >
+              💬 Escribinos por WhatsApp
+            </a>
+          </div>
+        )}
 
-        {slow && (
+        {slow && !pollError && (
           <div className="payment-slow" role="status">
             <p>
               Esto está tardando más de lo normal. Si ya completaste el pago, esperá
@@ -189,9 +217,16 @@ export default function PaymentModal({ orderId, orderNumber, demo, publicKey, pr
           </div>
         )}
 
-        <button className="btn btn--ghost btn--block" onClick={onCancel}>
-          Cancelar
-        </button>
+        {demo && (
+          <button className="btn btn--ghost btn--block" onClick={onCancel}>
+            Cancelar
+          </button>
+        )}
+        {!demo && (
+          <button className="btn btn--ghost btn--block" onClick={onCancel} disabled={redirecting}>
+            Volver al checkout
+          </button>
+        )}
       </div>
     </div>
   );

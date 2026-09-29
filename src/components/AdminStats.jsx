@@ -88,12 +88,21 @@ export default function AdminStats() {
         <>
           <div className="stats-grid">
             <div className="stat-card stat-card--main">
-              <span className="stat-card__label">Venta Neta Generada</span>
+              <span className="stat-card__label">Venta generada (neta)</span>
               <strong className="stat-card__value">{formatPrice(stats.ventaNeta)}</strong>
+              <span className="stat-card__note">
+                bruto {formatPrice(stats.ventaBruta)} · devuelto {formatPrice(stats.devuelto ?? 0)}
+              </span>
             </div>
             <div className="stat-card">
-              <span className="stat-card__label">Venta Neta · Tandil</span>
+              <span className="stat-card__label">Venta neta · Tandil</span>
               <strong className="stat-card__value">{formatPrice(stats.ventaTandil)}</strong>
+              <span className="stat-card__note">devuelto {formatPrice(stats.devueltoTandil ?? 0)}</span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-card__label">Venta neta · Necochea</span>
+              <strong className="stat-card__value">{formatPrice(stats.ventaNecochea)}</strong>
+              <span className="stat-card__note">devuelto {formatPrice(stats.devueltoNecochea ?? 0)}</span>
             </div>
             <div className="stat-card">
               <span className="stat-card__label">Ticket Promedio</span>

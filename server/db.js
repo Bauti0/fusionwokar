@@ -1,4 +1,6 @@
 import { createClient } from "@libsql/client";
+import { createDb } from "./sqlite.js";
+import { parseRefunds, refundableAmount } from "./refunds.js";
 
 // ============================================================
 // FUSIÓN WOK — Base de datos Turso (libSQL en la nube)
@@ -30,49 +32,10 @@ if (!TURSO_DATABASE_URL) {
 
 const client = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
 
-// Facade sobre @libsql/client que imita la API de node:sqlite.
-function prepare(sql) {
-  return {
-    all: (...args) =>
-      client.execute({ sql, args, rowMode: "object" }).then((res) => res.rows),
-    get: (...args) =>
-      client.execute({ sql, args, rowMode: "object" }).then((res) => res.rows[0]),
-    run: (...args) =>
-      client.execute({ sql, args }).then((res) => ({
-        lastInsertRowid:
-          res.lastInsertRowid == null ? 0 : Number(res.lastInsertRowid),
-        changes: res.rowsAffected,
-      })),
-  };
-}
-
-// Convierte las filas de un ResultSet (arrays) en objetos. client.batch() no
-// acepta rowMode, así que el mapeo se hace acá.
-function rowsToObjects(rs) {
-  const named = [];
-  for (const row of rs.rows) {
-    const obj = {};
-    for (let i = 0; i < rs.columns.length; i++) obj[rs.columns[i]] = row[i];
-    named.push(obj);
-  }
-  return named;
-}
-
-export const db = {
-  prepare,
-  exec: (sql) => client.executeMultiple(sql),
-  // Batch atómico de varias sentencias en UN solo round-trip (importante con
-  // Turso/HTTP). Devuelve un array con { lastInsertRowid, rowsAffected, rows }
-  // y las filas ya convertidas a objetos.
-  batch: (stmts, mode) =>
-    client.batch(stmts, mode).then((results) =>
-      results.map((rs) => ({
-        lastInsertRowid: rs.lastInsertRowid,
-        rowsAffected: rs.rowsAffected,
-        rows: rowsToObjects(rs),
-      }))
-    ),
-};
+// La facade vive en sqlite.js para que los tests puedan usar la misma capa
+// SQL contra un SQLite en memoria sin importar este módulo (que dispara las
+// migraciones contra la base real al cargarse).
+export const db = createDb(client);
 
 export function now() {
   return new Date().toISOString();
@@ -98,6 +61,10 @@ await db.exec(`
     notes TEXT NOT NULL DEFAULT '',
     mp_payment_id TEXT,
     mp_preference_id TEXT,
+    mp_order_id TEXT,
+    refunded_amount INTEGER NOT NULL DEFAULT 0,
+    refunds_json TEXT NOT NULL DEFAULT '[]',
+    coupon_released_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -213,6 +180,18 @@ await ensureColumn("orders", "shipping_km", "shipping_km INTEGER NOT NULL DEFAUL
 // Envío "pendiente": el cálculo automático falló y el pedido se aceptó igual
 // (efectivo/transferencia). El costo se confirma por WhatsApp antes de salir.
 await ensureColumn("orders", "shipping_pending", "shipping_pending INTEGER NOT NULL DEFAULT 0");
+// Mercado Pago: id de la order (Orders API). mp_preference_id queda como
+// histórico de los pedidos creados con la integración anterior.
+await ensureColumn("orders", "mp_order_id", "mp_order_id TEXT");
+// Cupón que tenía este pedido: NULL = todavía lo está sosteniendo (reservado y
+// pendiente, o ya pagado y por eso consumido de verdad). Al liberar pasa a
+// now(), y el contador used_count baja SOLO en esa transición — es lo que hace
+// que liberar sea idempotente por pedido. Ver server/coupons.js.
+await ensureColumn("orders", "coupon_released_at", "coupon_released_at TEXT");
+
+// Dinero devuelto por Mercado Pago (suma) y detalle de cada devolución.
+await ensureColumn("orders", "refunded_amount", "refunded_amount INTEGER NOT NULL DEFAULT 0");
+await ensureColumn("orders", "refunds_json", "refunds_json TEXT NOT NULL DEFAULT '[]'");
 
 // Visitante anónimo por evento (para contar personas, no vistas netas).
 // El índice se crea DESPUÉS de agregar la columna (sino falla en DBs viejas).
@@ -380,6 +359,7 @@ export function toCategory(row) {
 // Convierte una fila de la BD en el objeto público del pedido
 export function toPublicOrder(row) {
   if (!row) return null;
+  const refundedAmount = row.refunded_amount || 0;
   return {
     id: row.id,
     orderNumber: row.order_number,
@@ -404,7 +384,11 @@ export function toPublicOrder(row) {
     scheduledFor: row.scheduled_for || "",
     notes: row.notes,
     source: row.source || "web",
+    mpOrderId: row.mp_order_id || "",
     mpPaymentId: row.mp_payment_id,
+    refundedAmount,
+    refundableAmount: refundableAmount(row),
+    refunds: parseRefunds(row.refunds_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

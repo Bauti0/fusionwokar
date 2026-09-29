@@ -19,17 +19,38 @@ import {
   seedProducts,
   seedCategories,
 } from "./db.js";
-import { createPreference, getPayment, getMpPublicKey, isDemoMode, verifyWebhookSignature } from "./mp.js";
+import {
+  createOrder,
+  getOrder,
+  refundOrder,
+  getPayment,
+  isDemoMode,
+  checkMpCredentials,
+  mpAuthError,
+  MpError,
+  verifyWebhookSignature,
+} from "./mp.js";
 import { MENUS } from "../src/data/menus.js";
 import { enhanceHtml } from "./seo.js";
 import { isOpenAtTime, toWallclock } from "../src/utils/schedule.js";
 import { computeShipping } from "./shipping.js";
+import {
+  applyCoupon,
+  reserveCoupon,
+  releaseOrderCoupon,
+  releaseOrphanReservation,
+  releaseStaleCouponReservations,
+} from "./coupons.js";
+import { applyRefunds, refundableAmount } from "./refunds.js";
+import { refundedQuery, sumRefunded, refundedByBranch, netAmount, buildSalesReport, arDay } from "./reports.js";
+import { validateConfig } from "./config.js";
 import { isValidPhone } from "../src/utils/validation.js";
 
 // ============================================================
 // FUSIÓN WOK — API + servidor de producción
 // Endpoints:
 //   POST  /api/orders                       → crea pedido (WhatsApp o MP)
+//   POST  /api/orders/:id/payment-link      → reintenta generar el link de MP
 //   GET   /api/orders/:id                   → estado público de un pedido (polling)
 //   GET   /api/orders/number/:orderNumber   → tracking del cliente
 //   GET   /api/orders/by-phone/:phone       → pedidos del cliente por teléfono
@@ -46,6 +67,7 @@ import { isValidPhone } from "../src/utils/validation.js";
 //   GET   /api/admin/orders/:id             → detalle
 //   GET   /api/admin/stats                  → estadísticas y embudo (período)
 //   PATCH /api/admin/orders/:id/status      → cambiar estado (devuelve link wa.me)
+//   POST  /api/admin/orders/:id/refund      → devolver dinero (total o parcial)
 //   GET   /api/admin/products               → productos (edición de menú)
 //   POST  /api/admin/products               → crear producto
 //   PUT   /api/admin/products/:id           → editar producto
@@ -81,48 +103,90 @@ const app = express();
 // (DoS global). Con 1 salto confiado, Express lee la X-Forwarded-For real.
 app.set("trust proxy", 1);
 
-// Siembra el menú y las categorías en la BD (solo la primera vez)
-await seedProducts(MENUS);
-await seedCategories(MENUS);
-
 // ---------- validación de configuración (fail-fast en producción) ----------
+// La validación vive en server/config.js (función pura) para poder probarla
+// sin arrancar el server ni tocar la base real. Acá solo se ejecuta: imprime
+// el informe y, si en producción hay algo que va a romper el arranque, corta.
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "fusionwok";
-const DEMO = isDemoMode();
 
-function validateConfig() {
-  const problems = [];
-  let fatal = false;
-  if (!DEMO) {
-    if (!process.env.MP_ACCESS_TOKEN) problems.push("Falta MP_ACCESS_TOKEN");
-    if (!process.env.MP_PUBLIC_KEY) problems.push("Falta MP_PUBLIC_KEY");
-    if (!process.env.MP_WEBHOOK_SECRET) problems.push("Falta MP_WEBHOOK_SECRET (el webhook rechazará pagos)");
-    if (problems.length) fatal = true;
-  }
-  // La contraseña por defecto ("fusionwok") quedó publicada como ejemplo:
-  // en producción (NODE_ENV=production o DEMO_MODE=false) no se permite arrancar.
-  // Ojo: se mira el env EXPLÍCITO, no DEMO resuelto (isDemoMode() devuelve true
-  // cuando faltan credenciales de MP, aunque DEMO_MODE sea false).
-  const weakPassword = !process.env.ADMIN_PASSWORD || ADMIN_PASSWORD === "fusionwok";
-  if (weakPassword) {
-    problems.push('ADMIN_PASSWORD sin configurar o con el valor por defecto ("fusionwok")');
-    if (process.env.NODE_ENV === "production" || process.env.DEMO_MODE === "false") fatal = true;
-  }
-  if (!problems.length) {
-    console.log("✅ Configuración válida");
+function runConfigCheck() {
+  const report = validateConfig(process.env);
+  for (const w of report.warnings) console.warn(`⚠️  ${w}`);
+  if (!report.problems.length) {
+    console.log(report.warnings.length ? "✅ Configuración válida (con advertencias)" : "✅ Configuración válida");
     return;
   }
-  for (const p of problems) console.error(`⚠️  ${p}`);
-  if (fatal) {
+  for (const p of report.problems) console.error(`❌ ${p}`);
+  if (report.fatal) {
     console.error(
-      "❌ Configuración inválida para producción. Revisá el archivo .env antes de arrancar:\n" +
-        "   - Generá una ADMIN_PASSWORD fuerte (16+ caracteres, alfanumérica + símbolos).\n" +
-        "   - Completá las credenciales de Mercado Pago (MP_*)."
+      "\n❌ Configuración inválida: el server NO arranca. Arreglá el .env (o las variables del panel de Render) y volvé a desplegar.\n" +
+        "   Para probar en local sin credenciales: DEMO_MODE=true y NODE_ENV distinto de production."
     );
     process.exit(1);
   }
 }
-validateConfig();
+runConfigCheck();
+
+// Siembra el menú y las categorías en la BD (solo la primera vez).
+// Va DESPUÉS de la validación: si el .env está roto no tiene sentido que
+// escribamos 97 productos en la base antes de descubrirlo.
+await seedProducts(MENUS);
+await seedCategories(MENUS);
+
+// ---------- salud de las credenciales de Mercado Pago ----------
+// MP_ACCESS_TOKEN "estar presente" no significa "ser válido": un token revocado,
+// caducado o sin la policy de Orders pasa la validación de arriba y recién
+// falla cuando un cliente intenta pagar. Se chequea una vez al arrancar para
+// que el operador se entere al deployar y no con el primer pedido del día.
+//
+// NO es fatal: el sitio sigue vivo y los pedidos por efectivo/transferencia/
+// WhatsApp funcionan igual. Solo el pago con MP queda caido hasta que se
+// regenere el token (el proceso no se reinicia solo: Render lo reiniciaría en
+// bucle sin resolver la causa).
+let mpAuthBroken = false;
+
+async function probeMpCredentials() {
+  if (isDemoMode()) return;
+  try {
+    const info = await checkMpCredentials();
+    console.log(`✅ Mercado Pago: credenciales válidas${info.nickname ? ` (${info.nickname})` : ""}`);
+  } catch (err) {
+    if (err instanceof MpError && err.isAuthError) {
+      mpAuthBroken = true;
+      console.error(
+        "❌ Mercado Pago rechazó el MP_ACCESS_TOKEN (" + (err.mpCode || err.status) + ").\n" +
+          "   El checkout con Mercado Pago NO va a funcionar hasta que se regenere el token:\n" +
+          "   Panel de MP → tu app → Credenciales → copiar el Access Token nuevo.\n" +
+          "   Mientras tanto, los pedidos por efectivo/transferencia/WhatsApp siguen funcionando."
+      );
+    } else {
+      console.warn(
+        `⚠️  No pudimos verificar las credenciales de Mercado Pago (${err.message}). ` +
+          "Puede ser una caída puntual de MP: los pagos se reintentarán."
+      );
+    }
+  }
+}
+probeMpCredentials().catch(() => {});
+
+// Crea la order de MP para un pedido ya guardado, o lanza MpError. Si el token
+// quedó marcado como roto se corta acá: es el mismo error que devolvería MP,
+// pero sin gastar una request ni esperar el timeout.
+async function createMpOrderForOrder({ orderNumber, total, description, base }) {
+  if (mpAuthBroken) throw mpAuthError();
+  return createOrder({
+    orderNumber,
+    total,
+    title: `Pedido Fusión Wok ${orderNumber}`,
+    description,
+    backUrls: {
+      success: `${base}/?pago=aprobado&pedido=${orderNumber}`,
+      failure: `${base}/?pago=rechazado&pedido=${orderNumber}`,
+      pending: `${base}/?pago=pendiente&pedido=${orderNumber}`,
+    },
+  });
+}
 
 // CORS: solo orígenes permitidos (mismo origen por defecto)
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
@@ -548,69 +612,6 @@ async function uniqueProductId(branchId, base) {
   return id;
 }
 
-// Valida un cupón contra la BD y calcula el descuento
-async function applyCoupon(code, total) {
-  const clean = String(code || "").trim().toUpperCase();
-  if (!clean) return { error: "Falta el código del cupón" };
-  const row = await db.prepare("SELECT * FROM coupons WHERE code = ?").get(clean);
-  if (!row) return { error: "El cupón no existe" };
-  if (row.active !== 1) return { error: "El cupón ya no está activo" };
-  if (row.max_uses > 0 && row.used_count >= row.max_uses) {
-    return { error: "El cupón ya no tiene usos disponibles" };
-  }
-  if (row.expires_at) {
-    const exp = new Date(row.expires_at);
-    if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) return { error: "El cupón está vencido" };
-  }
-  if (total < row.min_total) return { error: `El cupón requiere un pedido mínimo de $${row.min_total}` };
-  let discount;
-  if (row.type === "percent") discount = Math.round((total * row.value) / 100);
-  else discount = row.value;
-  discount = Math.min(Math.max(discount, 0), total);
-  return { code: row.code, discount };
-}
-
-// Reserva/liberación atómica de un uso de cupón. La reserva usa un UPDATE
-// condicional (no SELECT + UPDATE separados): si dos checkouts simultáneos
-// usan el mismo cupón de un solo uso, solo uno logra reservar. Se reserva
-// ANTES de cualquier await (ej. createPreference de Mercado Pago) y se
-// libera si el pedido nunca llega a crearse.
-async function reserveCoupon(code) {
-  if (!code) return true; // no hay cupón, nada que reservar
-  const result = await db.prepare(`
-    UPDATE coupons SET used_count = used_count + 1, updated_at = ?
-    WHERE code = ? AND active = 1 AND (max_uses = 0 OR used_count < max_uses)
-  `).run(now(), code);
-  return result.changes > 0;
-}
-
-async function releaseCoupon(code) {
-  if (!code) return;
-  await db.prepare("UPDATE coupons SET used_count = MAX(used_count - 1, 0), updated_at = ? WHERE code = ?")
-    .run(now(), code);
-}
-
-// Libera reservas huérfanas de cupones: pedidos Mercado Pago en estados que
-// nunca van a cobrar (pending abandonados hace +30 min, rechazados, cancelados
-// o devueltos). Sin esto, un cupón con límite de usos se quemaba para siempre
-// con pedidos que nunca se pagaron. Es idempotente (releaseCoupon nunca baja
-// de 0) y corre antes de reservar, para que un cupón siempre tenga su cupo real.
-async function releaseStaleCouponReservations() {
-  try {
-    const cutoff = new Date(Date.now() - 30 * 60000).toISOString();
-    const rows = await db
-      .prepare(
-        `SELECT DISTINCT coupon_code AS code FROM orders
-         WHERE coupon_code IS NOT NULL AND coupon_code != ''
-           AND payment_status IN ('pending', 'rejected', 'cancelled', 'refunded')
-           AND created_at < ?`
-      )
-      .all(cutoff);
-    for (const r of rows) await releaseCoupon(r.code);
-  } catch (err) {
-    console.error("releaseStaleCouponReservations:", err.message);
-  }
-}
 
 // Valida y normaliza el cuerpo del pedido (evita manipulación de precios,
 // cantidades negativas, productos inexistentes y pedidos falsos).
@@ -701,7 +702,7 @@ async function validateOrderBody(body) {
   let discount = 0;
   let appliedCoupon = "";
   if (couponCode) {
-    const coupon = await applyCoupon(couponCode, total);
+    const coupon = await applyCoupon(db, couponCode, total);
     if (coupon.error) return { error: coupon.error };
     discount = coupon.discount;
     appliedCoupon = coupon.code;
@@ -723,13 +724,16 @@ async function validateOrderBody(body) {
       }
       // Fallo TRANSITORIO (proveedores caídos) o inesperado:
       //  - Mercado Pago → se bloquea (no se puede cobrar sin saber el costo),
-      //    pero se marca "contactWhatsApp" para que el checkout ofrezca hablar
-      //    con el local en vez de dejar al cliente sin salida.
+      //    pero se marca `code: shipping_unavailable` + contactWhatsApp para que
+      //    el checkout ofrezca hablar con el local en vez de dejar al cliente
+      //    sin salida. El `code` es lo que permite distinguir este fallo del de
+      //    "no se pudo generar el link de pago": ambos son WhatsApp, pero son
+      //    cosas distintas y el mensaje tiene que decirlo.
       //  - Efectivo/transferencia → el pedido pasa igual con envío "pendiente";
       //    el costo se confirma por WhatsApp antes de salir (badge en el panel).
       if (paymentMethod === "mercadopago") {
         const msg = code === "transient" ? err.message : "No pudimos calcular el envío. Escribinos por WhatsApp.";
-        return { error: msg, contactWhatsApp: true };
+        return { error: msg, code: "shipping_unavailable", contactWhatsApp: true };
       }
       shipping = { cost: 0, blocks: 0, supported: true, pending: true };
     }
@@ -823,6 +827,56 @@ setInterval(() => {
 }, 15 * 60 * 1000).unref();
 
 // ---------- pedidos (cliente) ----------
+
+// Traduce un fallo de Mercado Pago a la respuesta que ve el cliente.
+//
+// El pedido YA está guardado cuando se llama esto (por diseño, para que nunca
+// quede una order de pago huérfana sin pedido), así que la respuesta SIEMPRE
+// lleva orderId/orderNumber: el frontend los necesita para mostrarle el número
+// al cliente y para que el link de WhatsApp lo incluya.
+//
+// El `code` es lo que el frontend usa para elegir el mensaje. Antes todo se
+// colgaba de un `contactWhatsApp: true` que significaba dos cosas distintas
+// (no se pudo cotizar el envío / no se pudo generar el link de pago) y el
+// cliente terminaba mostrando "No pudimos calcular el envío" ante un fallo de
+// pago. El `retryable` separa lo determinista de lo que vale la pena reintentar.
+function mpUnavailablePayload(err, { orderId, orderNumber }) {
+  const isAuth = err instanceof MpError && err.isAuthError;
+  const retryable = err instanceof MpError ? err.retryable : true;
+  const base = {
+    orderId,
+    orderNumber,
+    orderCreated: true,
+    contactWhatsApp: true,
+    retryable,
+  };
+  if (isAuth) {
+    // Problema de configuración (token revocado / sin policy): reintentar no
+    // sirve nunca, el local tiene que resolverlo. 503 = servicio no disponible
+    // (no 502: acá el gateway funcionó, lo que falla es el proveedor).
+    return {
+      status: 503,
+      payload: {
+        ...base,
+        code: "mp_unauthorized",
+        error:
+          "Tu pedido quedó registrado pero el pago con Mercado Pago no está disponible en este momento. " +
+          "Escribinos por WhatsApp con tu número de pedido y lo coordinamos.",
+      },
+    };
+  }
+  return {
+    status: 503,
+    payload: {
+      ...base,
+      code: retryable ? "mp_unavailable" : "mp_link_missing",
+      error:
+        "Tu pedido quedó registrado pero no pudimos generar el link de pago. " +
+        "Podés reintentar en un momento o escribirnos por WhatsApp con tu número de pedido.",
+    },
+  };
+}
+
 // Ventana generosa a propósito: en el flujo de Mercado Pago es normal que el
 // cliente cierre el modal y reintente el checkout varias veces. El abuso ya
 // está cubierto por la validación de catálogo/precios server-side.
@@ -831,6 +885,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     const result = await validateOrderBody(req.body);
     if (result.error) {
       const payload = { error: result.error };
+      if (result.code) payload.code = result.code;
       if (result.contactWhatsApp) payload.contactWhatsApp = true;
       return res.status(400).json(payload);
     }
@@ -843,10 +898,10 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     // evita que dos checkouts simultáneos consuman el mismo cupón limitado.
     // Primero se liberan reservas huérfanas de pedidos nunca pagados para que
     // el cupo no se queme con pedidos en pending_payment abandonados.
-    await releaseStaleCouponReservations();
+    await releaseStaleCouponReservations(db);
     let couponReserved = false;
     if (couponCode) {
-      if (!(await reserveCoupon(couponCode))) {
+      if (!(await reserveCoupon(db, couponCode))) {
         return res.status(400).json({ error: "El cupón ya no tiene usos disponibles" });
       }
       couponReserved = true;
@@ -858,14 +913,14 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     // y se asigna en el MISMO batch que el INSERT: atómico y sin carrera (antes
     // se hacía MAX(id)+1, que chocaba con dos pedidos simultáneos). Para MP esto
     // invierte el orden viejo (preferencia antes que pedido): la fila se inserta
-    // primero con un order_number temporal único y la preferencia se crea recién
-    // después, con el número real como external_reference. Si la preferencia
-    // falla, el pedido ya existe y se puede reintentar el link — nunca queda una
-    // preferencia de pago huérfana sin pedido.
+    // primero con un order_number temporal único y la order de MP se crea recién
+    // después, con el número real como external_reference. Si la order falla, el
+    // pedido ya existe y se puede reintentar el link — nunca queda una order de
+    // pago huérfana sin pedido.
     let orderId;
     let orderNumber;
-    let mpPreferenceId = null;
-    let initPoint = null;
+    let mpOrderId = null;
+    let checkoutUrl = null;
     try {
       const tmpNumber = `tmp-${randomBytes(8).toString("hex")}`;
       const stmts = [
@@ -917,45 +972,37 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
       orderId = Number(info.lastInsertRowid);
       orderNumber = formatOrderNumber(orderId);
     } catch (err) {
-      // El pedido no se llegó a crear: devolvemos el uso reservado del cupón
-      if (couponReserved) await releaseCoupon(couponCode);
+      // El pedido no se llegó a crear: devolvemos el uso reservado del cupón.
+      // No hay fila que marcar, y no hace falta: ni el webhook ni el sweep
+      // pueden encontrar un pedido que no existe.
+      if (couponReserved) await releaseOrphanReservation(db, couponCode);
       throw err;
     }
 
-    // Mercado Pago: recién acá se crea la preferencia, con el pedido ya guardado
-    // y su número real como external_reference.
+    // Mercado Pago: recién acá se crea la order, con el pedido ya guardado
+    // y su número real como external_reference (y como clave de idempotencia).
     if (isMp && !demo) {
       try {
-        const pref = await createPreference({
+        const mpOrder = await createMpOrderForOrder({
           orderNumber,
           total,
-          title: `Pedido Fusión Wok ${orderNumber}`,
           description: `${items.length} items · ${branch}`,
-          backUrls: {
-            success: `${requestBaseUrl(req)}/?pago=aprobado&pedido=${orderNumber}`,
-            pending: `${requestBaseUrl(req)}/?pago=pendiente&pedido=${orderNumber}`,
-            failure: `${requestBaseUrl(req)}/?pago=rechazado&pedido=${orderNumber}`,
-          },
-          notificationUrl: `${requestBaseUrl(req)}/api/webhooks/mercadopago`,
+          base: requestBaseUrl(req),
         });
-        mpPreferenceId = pref.id;
-        initPoint = pref.init_point || pref.sandbox_init_point || null;
+        mpOrderId = mpOrder.id;
+        checkoutUrl = mpOrder.checkoutUrl;
       } catch (err) {
-        // La preferencia no se generó y el cliente va a resolver por WhatsApp:
+        // La order no se generó y el cliente va a resolver por WhatsApp:
         // se libera la reserva del cupón (no hay venta real por esta vía).
-        console.error("MP preference falló después de guardar el pedido:", err.message);
-        if (couponReserved) await releaseCoupon(couponCode);
-        return res.status(502).json({
-          error:
-            "Tu pedido quedó registrado pero no se pudo generar el link de pago. Escribinos por WhatsApp con tu número de pedido y lo resolvemos enseguida.",
-          orderId,
-          orderNumber,
-          contactWhatsApp: true,
-        });
+        // El pedido ya está commiteado, así que sí se marca la fila.
+        console.error("MP order falló después de guardar el pedido:", err.message);
+        if (couponReserved) await releaseOrderCoupon(db, orderId, couponCode);
+        const { status, payload } = mpUnavailablePayload(err, { orderId, orderNumber });
+        return res.status(status).json(payload);
       }
       await db
-        .prepare("UPDATE orders SET mp_preference_id = ?, updated_at = ? WHERE id = ?")
-        .run(mpPreferenceId, now(), orderId);
+        .prepare("UPDATE orders SET mp_order_id = ?, updated_at = ? WHERE id = ?")
+        .run(mpOrderId, now(), orderId);
     }
 
     res.json({
@@ -964,9 +1011,9 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
       orderNumber,
       demo,
       demoToken: demo ? demoTokenFor(orderId) : "",
-      publicKey: isMp ? getMpPublicKey() : "",
-      preferenceId: mpPreferenceId || `demo-${orderId}`,
-      initPoint,
+      // Con Orders API el cliente va directo al checkout alojado por MP
+      // (no hay Brick embebido: la única forma de cobrar con Orders es redirigir).
+      checkoutUrl,
       status: isMp ? "pending_payment" : "received",
       total,       // total recalculado server-side (con descuento y envío)
       discount,
@@ -979,6 +1026,194 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     res.status(500).json({ error: "No se pudo crear el pedido" });
   }
 });
+
+// ---------- estado de pago de Mercado Pago (webhook + reconciliación) ----------
+// El veredicto lo da la TRANSACCIÓN (transactions.payments[]), no la order: una
+// order puede quedar "processed" con la transacción ya devuelta.
+function mpOrderPaymentState(mpOrder) {
+  const payment = mpOrder.payments[0];
+  if (!payment) return "pending";
+  if (payment.status === "refunded") return "refunded";
+  if (["failed", "canceled", "expired", "charged_back"].includes(payment.status)) return "rejected";
+  if (payment.status === "processed") return "approved"; // incluye partially_refunded
+  return "pending"; // created | processing | action_required | in_review
+}
+
+// Aplica a la BD el estado real de la order de MP. ÚNICA fuente de verdad para
+// el estado del pago: la usan tanto el webhook como la reconciliación del
+// polling, así una devolución hecha desde el panel de MP (o un contracargo)
+// queda reflejada siempre, y nunca se duplica el evento ni se libera dos veces
+// el cupón (ambos son idempotentes por el estado previo que se mira).
+async function applyMpOrderState(row, mpOrder) {
+  const status = mpOrderPaymentState(mpOrder);
+  // El estado previo se captura DENTRO del patch, que corre sobre la fila
+  // recién leída: si otro request (el panel devolviendo plata, por ejemplo)
+  // escribió entre medio, los eventos y la liberación de cupón se deciden
+  // sobre lo que hay de verdad, no sobre una lectura vieja.
+  let wasApproved = false;
+  let wasFailure = false;
+  let couponCode = row.coupon_code;
+
+  const res = await applyRefunds(db, row.id, {
+    mpRefunds: mpOrder.refunds,
+    patch: (pre) => {
+      wasApproved = pre.payment_status === "approved";
+      wasFailure = pre.payment_status === "rejected";
+      couponCode = pre.coupon_code;
+      return {
+        // No pisar el avance del admin: MP reenvía el webhook varias veces, y
+        // si el admin ya avanzó el pedido no se lo vuelve a "received". Solo
+        // aprueba la primera vez (pending_payment → received).
+        status: status === "approved" && pre.status === "pending_payment" ? "received" : pre.status,
+        payment_status: status,
+        mp_payment_id: mpOrder.payments[0]?.id || pre.mp_payment_id || null,
+      };
+    },
+  });
+  if (!res.ok) {
+    console.error(`applyMpOrderState: no se pudo aplicar al pedido ${row.id} (${res.reason})`);
+    return status;
+  }
+  const orderStatus = res.row.status;
+
+  console.log(
+    `Pedido ${row.order_number} (order ${mpOrder.id}) → payment=${status} status=${orderStatus}`
+  );
+  if (status === "approved" && !wasApproved) await recordEvent("order_created", row.branch);
+  // Si el pago terminó mal se libera el cupón: sin eso el cupo queda quemado
+  // por un pedido que no se cobró. Si en cambio se DEVOLVIÓ, el pedido se
+  // pagó de verdad, así que el cupón se considera consumido.
+  if (status === "rejected" && !wasFailure && couponCode) {
+    await releaseOrderCoupon(db, row.id, couponCode);
+  }
+  return status;
+}
+
+// ---------- reconciliación durante el polling ----------
+// El webhook es el camino normal, pero es un solo punto de falla: si el secret
+// está mal configurado, si la URL no responde o si el cliente cerró la
+// pestaña, el pago aprobado NUNCA se refleja y el pedido queda en "pendiente"
+// para siempre (el polling del front solo lee la BD).
+//
+// Por eso el polling del propio cliente reconcilia contra la API de MP. Con
+// topes para no castigar al proveedor:
+//   - por pedido: 1 consulta cada 20 s (el poll del front es cada 2,5 s)
+//   - global: 1 consulta cada 2 s, así muchos pedidos pendientes a la vez no
+//    generan una ráfaga contra MP
+//   - solo si el pedido tiene mp_order_id, sigue "pending" y ya tiene 10 s
+//     de vida (para darle tiempo al webhook de actuar primero)
+const RECONCILE_COOLDOWN_MS = 20 * 1000;
+const RECONCILE_GLOBAL_MS = 2 * 1000;
+const RECONCILE_MIN_AGE_MS = 10 * 1000;
+const reconciledAt = new Map(); // id pedido → ts de la última consulta a MP
+let lastReconcileAt = 0;
+
+function shouldReconcile(row) {
+  if (isDemoMode() || mpAuthBroken) return false;
+  if (row.payment_method !== "mercadopago") return false;
+  if (!row.mp_order_id) return false;
+  if (row.payment_status !== "pending") return false;
+  const t = Date.now();
+  if (t - new Date(row.created_at).getTime() < RECONCILE_MIN_AGE_MS) return false;
+  if (t - (reconciledAt.get(row.id) || 0) < RECONCILE_COOLDOWN_MS) return false;
+  if (t - lastReconcileAt < RECONCILE_GLOBAL_MS) return false;
+  return true;
+}
+
+// Nunca lanza: si MP falla, el poll sigue devolviendo el estado que ya
+// conocemos (un fallo acá no puede volver 500 el tracking del cliente).
+async function reconcilePendingOrder(row) {
+  reconciledAt.set(row.id, Date.now());
+  lastReconcileAt = Date.now();
+  try {
+    return await applyMpOrderState(row, await getOrder(row.mp_order_id));
+  } catch (err) {
+    if (err instanceof MpError && err.isAuthError) mpAuthBroken = true;
+    console.warn(`Reconciliación MP del pedido ${row.order_number} falló: ${err.message}`);
+    return null;
+  }
+}
+
+// Poda del registro de reconciliación (mismo criterio que el resto de los Maps
+// en memoria: se limpian las entradas viejas para que no crezca sin límite).
+setInterval(() => {
+  const t = Date.now();
+  for (const [k, v] of reconciledAt) if (t - v > 5 * 60 * 1000) reconciledAt.delete(k);
+}, 15 * 60 * 1000).unref();
+
+// Devuelve el pedido ya reconciliado con MP cuando corresponde (o la fila tal
+// cual). El 304 se evalúa DESPUÉS, sobre la fila actualizada: si se evaluara
+// antes, el cliente con `updatedAt` cacheado nunca vería el cambio de estado.
+async function loadPublicOrder(row) {
+  let current = row;
+  if (shouldReconcile(row)) {
+    const status = await reconcilePendingOrder(row);
+    if (status) current = await db.prepare("SELECT * FROM orders WHERE id = ?").get(row.id);
+  }
+  return current;
+}
+
+// Reintento del link de pago para un pedido que ya se guardó pero que quedó
+// sin order de MP (falló la generación del link). Evita que el cliente tenga
+// que reenviar el checkout entero y de paso crear un pedido duplicado.
+app.post(
+  "/api/orders/:id/payment-link",
+  rateLimit({ max: 10, windowMs: 5 * 60 * 1000, name: "paylink" }),
+  async (req, res) => {
+    try {
+      const id = paramId(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+      const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+      if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
+      if (row.payment_method !== "mercadopago") {
+        return res.status(400).json({ code: "not_mp", error: "Este pedido no se paga con Mercado Pago" });
+      }
+      // Solo pedidos a medio pagar, sin link, y recientes: cualquier otra cosa
+      // no es un reintento (o ya tiene link, o el pago se resolvió, o es tan
+      // viejo que ya no tiene sentido cobrarlo online).
+      if (row.payment_status !== "pending" || row.status !== "pending_payment") {
+        return res.status(409).json({ code: "not_retryable", error: "Este pedido ya no está pendiente de pago" });
+      }
+      if (row.mp_order_id) {
+        return res.status(409).json({ code: "not_retryable", error: "Este pedido ya tiene un link de pago" });
+      }
+      if (Date.now() - new Date(row.created_at).getTime() > 24 * 3600 * 1000) {
+        return res.status(409).json({ code: "not_retryable", error: "Pedido muy antiguo para generar un link de pago" });
+      }
+      if (isDemoMode()) {
+        return res.status(409).json({ code: "not_retryable", error: "El link de pago solo existe fuera del modo demo" });
+      }
+
+      let mpOrder;
+      try {
+        mpOrder = await createMpOrderForOrder({
+          orderNumber: row.order_number,
+          total: row.total,
+          description: `${JSON.parse(row.items).length} items · ${row.branch}`,
+          base: requestBaseUrl(req),
+        });
+      } catch (err) {
+        if (err instanceof MpError && err.isAuthError) mpAuthBroken = true;
+        console.error("MP payment-link falló:", err.message);
+        // Mismo contrato que la creación del pedido: el cliente ya tiene el
+        // número de pedido, así que puede caer a WhatsApp o reintentar.
+        const { status, payload } = mpUnavailablePayload(err, {
+          orderId: row.id,
+          orderNumber: row.order_number,
+        });
+        return res.status(status).json(payload);
+      }
+
+      await db
+        .prepare("UPDATE orders SET mp_order_id = ?, updated_at = ? WHERE id = ?")
+        .run(mpOrder.id, now(), row.id);
+      res.json({ ok: true, orderId: row.id, orderNumber: row.order_number, checkoutUrl: mpOrder.checkoutUrl });
+    } catch (err) {
+      console.error("POST /api/orders/:id/payment-link:", err.message);
+      res.status(500).json({ error: "No se pudo generar el link de pago" });
+    }
+  }
+);
 
 // Devuelve true si el cliente ya conoce la última versión del pedido
 // (If-Modified-Since). Permite responder 304 sin serializar el pedido en
@@ -1000,8 +1235,9 @@ app.get("/api/orders/:id", rateLimit({ max: 120, windowMs: 60000, name: "orderge
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
     const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
-    if (isNotModified(req, row)) return res.status(304).end();
-    res.json(toPublicOrderPublic(row));
+    const current = await loadPublicOrder(row);
+    if (isNotModified(req, current)) return res.status(304).end();
+    res.json(toPublicOrderPublic(current));
   } catch (err) {
     console.error("GET /api/orders/:id:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -1015,8 +1251,9 @@ app.get("/api/orders/number/:orderNumber", rateLimit({ max: 120, windowMs: 60000
     if (!/^FW-\d{4,10}$/.test(num)) return res.status(400).json({ error: "Número de pedido inválido" });
     const row = await db.prepare("SELECT * FROM orders WHERE order_number = ?").get(num);
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
-    if (isNotModified(req, row)) return res.status(304).end();
-    res.json(toPublicOrderPublic(row));
+    const current = await loadPublicOrder(row);
+    if (isNotModified(req, current)) return res.status(304).end();
+    res.json(toPublicOrderPublic(current));
   } catch (err) {
     console.error("GET /api/orders/number/:orderNumber:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -1131,7 +1368,7 @@ app.post("/api/coupons/validate", rateLimit({ max: 30, name: "couponvalidate" })
     if (typeof code !== "string" || !code.trim() || !Number.isFinite(n) || n < 0) {
       return res.status(400).json({ error: "Datos inválidos" });
     }
-    const result = await applyCoupon(code, n);
+    const result = await applyCoupon(db, code, n);
     if (result.error) return res.status(400).json({ error: result.error });
     res.json({ ok: true, code: result.code, discount: result.discount, totalAfter: Math.max(n - result.discount, 0) });
   } catch (err) {
@@ -1159,10 +1396,13 @@ app.post("/api/shipping/quote", rateLimit({ max: 30, windowMs: 60000, name: "shi
 });
 
 // ---------- webhook Mercado Pago ----------
+// mpOrderPaymentState, mergeRefunds y applyMpOrderState están definidos más
+// arriba: los usa también la reconciliación del polling (misma fuente de verdad
+// para el estado del pago).
 app.post("/api/webhooks/mercadopago", async (req, res) => {
   try {
     const { type, data } = req.body || {};
-    console.log("Webhook recibido:", JSON.stringify({ type, data }));
+    console.log("Webhook recibido:", JSON.stringify({ type, id: data?.id }));
 
     // Sin MP_WEBHOOK_SECRET configurado la firma no es verificable:
     // verifyWebhookSignature devuelve false y el webhook se rechaza con 400
@@ -1172,6 +1412,28 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
       return res.status(400).json({ error: "Firma inválida" });
     }
 
+    // ---- Orders API (integración actual) ----
+    if (type === "order" && data?.id) {
+      const mpOrderId = String(data.id);
+      // El estado se lee SIEMPRE de la API y no del cuerpo de la notificación:
+      // así una devolución hecha desde el panel de MP (o un contracargo) queda
+      // reflejada aunque la notificación no traiga el detalle completo.
+      const mpOrder = await getOrder(mpOrderId);
+      let row = await db.prepare("SELECT * FROM orders WHERE mp_order_id = ?").get(mpOrderId);
+      if (!row && mpOrder.externalReference) {
+        row = await db
+          .prepare("SELECT * FROM orders WHERE order_number = ?")
+          .get(String(mpOrder.externalReference).toUpperCase());
+      }
+      if (!row) {
+        console.warn("Webhook de order sin pedido local:", mpOrderId);
+        return res.sendStatus(200);
+      }
+      await applyMpOrderState(row, mpOrder);
+      return res.sendStatus(200);
+    }
+
+    // ---- Preferences API (pedidos abiertos antes de migrar a Orders) ----
     if (type === "payment" && data?.id) {
       const paymentId = String(data.id);
       const payment = await getPayment(paymentId);
@@ -1180,23 +1442,20 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
           .prepare("SELECT * FROM orders WHERE order_number = ?")
           .get(payment.external_reference.toUpperCase());
         if (row) {
-          // Mapeo del estado del pago de MP a nuestros estados (approbed/pending/
-          // rejected): cancelled/refunded/charged_back quedan como "rejected" para
+          // Mapeo del estado del pago de MP a nuestros estados (approved/pending/
+          // rejected/refunded): cancelled/charged_back quedan como "rejected" para
           // que no sigan contando como cobradas y no rompan etiquetas/filtros.
           const status =
             payment.status === "approved"
               ? "approved"
-              : ["rejected", "cancelled", "refunded", "charged_back"].includes(payment.status)
-                ? "rejected"
-                : row.payment_status;
-          // No pisar el avance del admin: MP reenvía el webhook varias veces,
-          // y si el admin ya avanzó el pedido a "cocina"/"en camino"/etc. no se
-          // lo vuelve a "received". Solo aprueba la primera vez (pending_payment → received).
+              : payment.status === "refunded"
+                ? "refunded"
+                : ["rejected", "cancelled", "charged_back"].includes(payment.status)
+                  ? "rejected"
+                  : row.payment_status;
           const orderStatus =
             payment.status === "approved" && row.status === "pending_payment" ? "received" : row.status;
 
-          // Idempotencia: solo registrar "order_created" la primera vez que se aprueba,
-          // y liberar el cupón solo al pasar a un estado de fallo (no en reintentos).
           const wasApproved = row.payment_status === "approved";
           const wasFailure = row.payment_status === "rejected";
           await db.prepare(
@@ -1207,7 +1466,7 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
           );
           if (status === "approved" && !wasApproved) await recordEvent("order_created", row.branch);
           if (status === "rejected" && !wasFailure && row.coupon_code) {
-            await releaseCoupon(row.coupon_code);
+            await releaseOrderCoupon(db, row.id, row.coupon_code);
           }
         }
       }
@@ -1257,7 +1516,7 @@ if (isDemoMode()) {
         ).run(approved ? "approved" : "rejected", approved ? "received" : row.status, now(), id);
         if (approved && !wasApproved) await recordEvent("order_created", row.branch);
         // Rechazo simulado: devuelve el uso del cupón igual que el webhook.
-        if (!approved && !wasFailure && row.coupon_code) await releaseCoupon(row.coupon_code);
+        if (!approved && !wasFailure && row.coupon_code) await releaseOrderCoupon(db, row.id, row.coupon_code);
         res.json({ ok: true, orderId: id, paymentStatus: approved ? "approved" : "rejected" });
       } catch (err) {
         console.error("POST /api/payments/demo/:id/:action:", err.message);
@@ -1467,10 +1726,11 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (req, res) => {
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
     // Cancelar desde el panel también devuelve el uso del cupón (como el
     // webhook en rejected): sin esto, un pedido cancelado quemaba el cupo
-    // hasta el sweep diferido de 30 min. Es idempotente (releaseCoupon nunca
-    // baja de 0), así que solo se dispara si realmente se pasa a cancelado.
+    // hasta el sweep diferido de 30 min. releaseOrderCoupon es idempotente
+    // por pedido (marca coupon_released_at), así que el webhook, el sweep y
+    // esta ruta pueden coincidir sin que el contador baje de más.
     if (status === "cancelled" && row.status !== "cancelled" && row.coupon_code) {
-      await releaseCoupon(row.coupon_code);
+      await releaseOrderCoupon(db, row.id, row.coupon_code);
     }
     await db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), id);
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
@@ -1516,6 +1776,130 @@ app.post("/api/admin/orders/:id/shipping", requireAdmin, async (req, res) => {
   }
 });
 
+// Devuelve dinero de un pedido pagado con Mercado Pago (Orders API).
+// Sin `amount` devuelve todo lo que quede; con `amount`, una parte (debe
+// indicar la transacción a devolver). Idempotente en la practice: el monto se
+// valida contra lo ya devuelto, así un doble clic no puede devolver de más.
+app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+    const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (row.payment_method !== "mercadopago") {
+      return res.status(400).json({ error: "Este pedido no se pagó con Mercado Pago" });
+    }
+    // Solo pagos aprobados. Un pedido ya devuelto ("refunded") no se vuelve a
+    // tocar: refunded_amount puede no reflejar lo que devolvió MP en pedidos
+    // viejos, y la app no tiene cómo saberlo → que lo resuelva MP.
+    if (row.payment_status !== "approved") {
+      return res.status(400).json({ error: "Solo se puede devolver dinero de un pedido pagado" });
+    }
+
+    const refundable = refundableAmount(row);
+    if (refundable <= 0) {
+      return res.status(400).json({ error: "Este pedido ya fue devuelto por completo" });
+    }
+
+    // amount opcional: sin él, devolución total de lo que queda.
+    const raw = (req.body || {}).amount;
+    const amount = raw === undefined || raw === null || raw === "" ? refundable : Math.round(Number(raw));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: "Monto a devolver inválido" });
+    }
+    if (amount > refundable) {
+      return res.status(400).json({ error: `El monto supera lo que queda (${refundable})` });
+    }
+    const isFull = amount === refundable;
+
+    // Deja el pedido en "refunded" solo cuando ya no queda nada por devolver.
+    // Se decide adentro del patch, sobre la fila recién leída: si una devolución
+    // concurrente ya completó el total, no lo volvemos a "approved".
+    const markIfFullyRefunded = (pre, { refundedAmount: devuelto }) => ({
+      payment_status: devuelto >= (pre.total || 0) ? "refunded" : pre.payment_status,
+    });
+
+    // Demo: sin credenciales no hay a quién devolverle, pero el flujo del panel
+    // tiene que poder probarse igual. Se anota la devolución y se responde.
+    if (isDemoMode()) {
+      await applyRefunds(db, id, {
+        mpRefunds: [{ id: `demo-${randomBytes(6).toString("hex")}`, amount }],
+        patch: markIfFullyRefunded,
+      });
+      const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+      return res.json({ ok: true, demo: true, order: toPublicOrder(updated) });
+    }
+
+    if (!row.mp_order_id) {
+      return res.status(400).json({ error: "El pedido no tiene order de Mercado Pago" });
+    }
+
+    // Devolución parcial: MP exige el id de la transacción. Normalmente ya está
+    // guardado (lo setea el webhook); si falta, se busca en la order.
+    let transactionId = row.mp_payment_id;
+    if (!isFull && !transactionId) {
+      const mpOrder = await getOrder(row.mp_order_id);
+      transactionId = mpOrder.payments.find((p) => p.id)?.id || null;
+      if (!transactionId) {
+        return res.status(409).json({ error: "Mercado Pago todavía no registró el pago" });
+      }
+    }
+
+    let result;
+    try {
+      // Si el arranque ya detectó que el token no sirve, se corta acá: el
+      // admin ve el error al instante en vez de esperar 15s a un timeout.
+      if (mpAuthBroken) throw mpAuthError();
+      // La clave identifica ESTA devolución: si el admin clica dos veces, la
+      // segunda llega con el mismo `refundedAmount` previo y MP la deduplica
+      // en vez de devolver dos veces. Dos devoluciones del mismo monto en
+      // momentos distintos cambian el monto previo → claves distintas → se
+      // ejecutan de verdad.
+      const idempotencyKey = `ref-${row.id}-${row.refunded_amount || 0}-${amount}-${isFull ? "full" : "partial"}`;
+      result = await refundOrder(
+        row.mp_order_id,
+        isFull ? { idempotencyKey } : { transactionId, amount, idempotencyKey }
+      );
+    } catch (err) {
+      // Si el token fue rechazado se marca: el resto de los pedidos con MP
+      // fallan igual y no tiene sentido seguir golpeando la API.
+      if (err instanceof MpError && err.isAuthError) mpAuthBroken = true;
+      console.error("MP refund falló:", err.message);
+      // El mensaje crudo de MP ("At least one policy returned UNAUTHORIZED")
+      // no le dice nada al admin: se traduce a la causa real. Antes además
+      // siempre respondía 502, incluso cuando el problema eran las credenciales.
+      const auth = err instanceof MpError && err.isAuthError;
+      res.status(auth ? 503 : 502).json({
+        code: auth ? "mp_unauthorized" : "mp_refund_failed",
+        retryable: !(err instanceof MpError) || err.retryable,
+        error: auth
+          ? "No se pudo devolver el dinero: las credenciales de Mercado Pago están rechazadas. " +
+            "Revisá el MP_ACCESS_TOKEN y reintentá."
+          : `Mercado Pago rechazó la devolución: ${err.message}`,
+      });
+      // Sin este return la ejecución seguía con `result` sin asignar (la
+      // llamada a MP falló): `result.refunds` reventaba, el catch externo
+      // intentaba responder OTRA vez y el admin recibía un 500 por
+      // ERR_HTTP_HEADERS_SENT en vez de este mensaje.
+      return;
+    }
+
+    // Red de seguridad: si MP respondió sin el detalle del reembolso, se anota
+    // uno local para que el historial del panel no quede vacío.
+    const reportadas = result.refunds || [];
+    const mpRefunds = reportadas.some((r) => (r.amount || 0) === amount)
+      ? reportadas
+      : [...reportadas, { id: result.id || `mp-${Date.now()}`, amount, at: now() }];
+    await applyRefunds(db, row.id, { mpRefunds, patch: markIfFullyRefunded });
+
+    const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    res.json({ ok: true, order: toPublicOrder(updated) });
+  } catch (err) {
+    console.error("POST /api/admin/orders/:id/refund:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
 // ---------- estadísticas (panel admin) ----------
 // "Venta neta" = total de pedidos confirmados/pagados (payment_status approved
 // y status distinto de cancelled), evitando cancelados y pagos rechazados.
@@ -1525,20 +1909,9 @@ function safeIso(value, fallback) {
   return isNaN(d.getTime()) ? fallback : d.toISOString();
 }
 
-// Fecha YYYY-MM-DD en la zona del local (Argentina, UTC-3 fijo) para el
-// agrupado diario de ventas. Antes se usaba la fecha UTC del created_at: los
-// pedidos de 21:00–03:00 AR caían en el día equivocado. Node 20+ trae ICU.
-const AR_DAY_FORMAT = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/Argentina/Buenos_Aires",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-function arDate(iso) {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return String(iso || "").slice(0, 10);
-  return AR_DAY_FORMAT.format(d);
-}
+// Fecha YYYY-MM-DD en la zona del local: vive en reports.js (arDay) para poder
+// probar la agrupacion por dia sin arrancar el server ni depender del huso de
+// la maquina donde corren los tests.
 
 app.get("/api/admin/stats", requireAdmin, async (req, res) => {
   try {
@@ -1570,6 +1943,8 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
            AND created_at >= ? AND created_at <= ?`,
           args: [fromIso, toIso],
         },
+        // Lo devuelto va en el MISMO batch (sigue siendo un solo round-trip).
+        refundedQuery({ fromIso, toIso }),
       ],
       "read"
     );
@@ -1577,15 +1952,25 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
     const eventRows = results[1].rows;
     const visitantes = Number((results[2].rows[0] || {}).n || 0);
     const confirmedItems = results[3].rows;
+    const devueltoPorLocal = refundedByBranch(results[4].rows);
+    const devuelto = devueltoPorLocal.total;
+    const devueltoTandil = devueltoPorLocal.byBranch.get("tandil") || 0;
+    const devueltoNecochea = devueltoPorLocal.byBranch.get("necochea") || 0;
 
-    let ventaNeta = 0;
-    let ventaNecochea = 0;
-    let ventaTandil = 0;
+    let ventaBruta = 0;
+    let ventaNecocheaBruta = 0;
+    let ventaTandilBruta = 0;
     for (const o of confirmed) {
-      ventaNeta += o.total;
-      if (o.branch === "necochea") ventaNecochea += o.total;
-      if (o.branch === "tandil") ventaTandil += o.total;
+      ventaBruta += o.total;
+      if (o.branch === "necochea") ventaNecocheaBruta += o.total;
+      if (o.branch === "tandil") ventaTandilBruta += o.total;
     }
+    // Lo que se muestra en el panel es la venta NETA (lo vendido menos lo
+    // devuelto). Lo devuelto va aparte, y también por local, para que se vea
+    // de qué sucursal salió cada número y no solo el agregado.
+    const ventaNeta = netAmount(ventaBruta, devuelto);
+    const ventaTandil = netAmount(ventaTandilBruta, devueltoTandil);
+    const ventaNecochea = netAmount(ventaNecocheaBruta, devueltoNecochea);
     const pedidos = confirmed.length;
     const ticketPromedio = pedidos > 0 ? Math.round(ventaNeta / pedidos) : 0;
 
@@ -1623,9 +2008,15 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
 
     res.json({
       period: { from: fromIso, to: toIso },
+      ventaBruta,
       ventaNeta,
-      ventaNecochea,
       ventaTandil,
+      ventaNecochea,
+      ventaTandilBruta,
+      ventaNecocheaBruta,
+      devuelto,
+      devueltoTandil,
+      devueltoNecochea,
       ticketPromedio,
       pedidos,
       checkouts,
@@ -1719,31 +2110,18 @@ app.get("/api/admin/sales", requireAdmin, async (req, res) => {
 
     const rows = await db.prepare(`SELECT payment_method, total, created_at FROM orders ${where}`).all(...params);
 
-    let total = 0;
-    const byMethod = {}; // method -> { count, total }
-    const byDay = new Map(); // YYYY-MM-DD -> { date, count, total }
-    for (const r of rows) {
-      total += r.total;
-      const m = byMethod[r.payment_method] || { method: r.payment_method, count: 0, total: 0 };
-      m.count += 1;
-      m.total += r.total;
-      byMethod[r.payment_method] = m;
+    // Lo devuelto va por afuera de la consulta de arriba, que filtra
+    // 'approved': si no, una devolución total (payment_status 'refunded')
+    // quedaría invisible. Ver server/reports.js.
+    const rq = refundedQuery({ fromIso, toIso, branch });
+    const devuelto = sumRefunded(await db.prepare(rq.sql).all(...rq.args));
 
-      const day = arDate(r.created_at);
-      const d = byDay.get(day) || { date: day, count: 0, total: 0 };
-      d.count += 1;
-      d.total += r.total;
-      byDay.set(day, d);
-    }
+    // El panel muestra `net` (bruto - devuelto) como titular, igual que
+    // /api/admin/stats. `total` sigue siendo el bruto: es lo que suman los
+    // desgloses por método y por día.
+    const report = buildSalesReport({ rows, refunded: devuelto, dayOf: arDay });
 
-    res.json({
-      period: { from: fromIso, to: toIso },
-      total,
-      count: rows.length,
-      average: rows.length > 0 ? Math.round(total / rows.length) : 0,
-      byMethod: Object.values(byMethod).sort((a, b) => b.total - a.total),
-      byDay: Array.from(byDay.values()).sort((a, b) => a.date.localeCompare(b.date)),
-    });
+    res.json({ period: { from: fromIso, to: toIso }, ...report });
   } catch (err) {
     console.error("GET /api/admin/sales:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2686,7 +3064,9 @@ function indexTemplate() {
 }
 
 // CSP: solo en páginas HTML (ruta SEO). Scripts permitidos: assets propios
-// ('self'), el SDK de Mercado Pago y el JSON-LD inline con nonce por request.
+// ('self') y el JSON-LD inline con nonce por request. Con la Orders API el
+// pago ocurre en el checkout alojado por Mercado Pago (el navegador se va a
+// mercadopago.com), así que ya no hace falta cargar ningún script de MP.
 // Sin 'unsafe-inline' para scripts: cualquier script inline inyectado queda
 // bloqueado. Estilos inline (React) sí se permiten (style-src 'unsafe-inline').
 // El ticket de impresión abre una ventana about:blank SIN <script> (solo un
@@ -2694,12 +3074,11 @@ function indexTemplate() {
 function buildCsp(nonce) {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' https://sdk.mercadopago.com https://http2.mlstatic.com`,
+    `script-src 'self' 'nonce-${nonce}'`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
-    "img-src 'self' data: blob: https://*.mercadopago.com https://http2.mlstatic.com",
-    "connect-src 'self' https://*.mercadopago.com https://http2.mlstatic.com",
-    "frame-src https://*.mercadopago.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

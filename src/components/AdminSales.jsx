@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { adminSales, adminCashRegister, adminOpenCashRegister, adminCloseCashRegister } from "../api.js";
 import { BRANCH_LIST } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
-import { periodRange } from "../utils/dates.js";
+import { periodRange, dayShort } from "../utils/dates.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import DateRangePicker from "./ui/DateRangePicker.jsx";
 
@@ -68,8 +68,11 @@ export default function AdminSales() {
         <>
           <div className="stats-grid">
             <div className="stat-card stat-card--main">
-              <span className="stat-card__label">Total vendido</span>
-              <strong className="stat-card__value">{formatPrice(sales.total)}</strong>
+              <span className="stat-card__label">Venta generada (neta)</span>
+              <strong className="stat-card__value">{formatPrice(sales.net)}</strong>
+              <span className="stat-card__note">
+                bruto {formatPrice(sales.total)} · devuelto {formatPrice(sales.devuelto ?? 0)}
+              </span>
             </div>
             <div className="stat-card">
               <span className="stat-card__label">Ticket promedio</span>
@@ -83,6 +86,7 @@ export default function AdminSales() {
 
           <div className="payment-breakdown">
             <h4>Por método de pago</h4>
+            <p className="hint">Suma bruta por método, sin descontar las devoluciones.</p>
             {sales.byMethod.length === 0 ? (
               <p className="hint">No hay ventas en este período.</p>
             ) : (
