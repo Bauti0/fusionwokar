@@ -1,4 +1,5 @@
 import { formatPrice } from "../utils/format.js";
+import { IconRepeat } from "./ui/icons.jsx";
 
 // ============================================================
 // Historial de pedidos del cliente
@@ -43,8 +44,8 @@ export default function OrderHistory({ history, branch, onRepeat, onBack, onMenu
                 <span>{order.paymentMethod}</span>
               </div>
               <div className="cart-item__line">
-                <button className="btn btn--dark" onClick={() => onRepeat(order)}>
-                  🔁 Repetir pedido
+                <button className="btn btn--outline" onClick={() => onRepeat(order)}>
+                  <IconRepeat style={{ width: 18, height: 18 }} /> Repetir pedido
                 </button>
                 <button className="btn btn--ghost" onClick={onBack}>
                   Volver

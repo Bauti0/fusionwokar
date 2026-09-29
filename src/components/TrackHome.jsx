@@ -82,7 +82,7 @@ export default function TrackHome() {
               />
             </div>
             {error && <div className="form-error">{error}</div>}
-            <button className="btn btn--dark btn--block" type="submit" disabled={busy}>
+            <button className="btn btn--primary btn--block" type="submit" disabled={busy}>
               {busy ? "Buscando…" : "Ver mis pedidos"}
             </button>
           </form>
