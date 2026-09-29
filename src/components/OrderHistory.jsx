@@ -30,6 +30,7 @@ export default function OrderHistory({ history, branch, onRepeat, onBack, onMenu
                     month: "short",
                     hour: "2-digit",
                     minute: "2-digit",
+                    hour12: false,
                   })}
                 </span>
                 <span className="order-card__total">{formatPrice(order.total)}</span>

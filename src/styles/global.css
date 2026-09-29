@@ -204,8 +204,8 @@ a { color: var(--color-primary); }
   padding: 14px 15px; background: var(--color-surface); outline: none;
   transition: border-color 0.15s var(--ease), background 0.15s var(--ease), box-shadow 0.15s var(--ease);
 }
-.field input:focus { border-color: var(--color-primary); background: #fff; box-shadow: 0 0 0 4px rgba(229,52,46,.1); }
-.field input::placeholder { color: #a8a29e; }
+.field input:focus { border-color: var(--color-primary); background: var(--color-surface-hi, #ffffff); box-shadow: var(--ring-soft, 0 0 0 4px rgba(229,52,46,.1)); }
+.field input::placeholder { color: var(--color-text-mute, #a8a29e); }
 .landing__actions { display: grid; gap: 10px; margin-top: 20px; }
 /* Datos del cliente ya guardados (no se vuelven a pedir) */
 .landing__saved {
@@ -218,9 +218,81 @@ a { color: var(--color-primary); }
 .landing__footer { margin-top: 18px; font-size: 12px; color: var(--color-text-soft); }
 
 /* ============================================================
+   Tema oscuro de la tienda
+   ------------------------------------------------------------
+   Se declara sobre .app y no sobre :root a propósito. .app sólo
+   la montan StoreApp, TrackHome y TrackOrder, así que la
+   portada, el admin y la impresión quedan fuera y conservan el
+   tema claro sin tocar una línea de los suyos.
+
+   Los valores salen del menú ya oscurecido para que toda la
+   tienda comparta paleta. Contraste verificado con la fórmula
+   WCAG 2.x: el peor par es --color-text-mute sobre superficie,
+   4.91:1, y el mínimo exigido es 4.5:1.
+
+   --color-primary, --color-primary-dark y --color-success NO se
+   redefinen: se usan también como fondo sólido, y ponerlos claros
+   rompería los Toast y los checks. Para texto sobre fondo tenue
+   existen --color-danger-text y --color-success-text.
+   ============================================================ */
+.app {
+  color-scheme: dark;
+  --color-bg: #111111;
+  --color-surface: #1a1a1a;
+  --color-surface-hi: #242424;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-hi: rgba(255, 255, 255, 0.22);
+  --color-text: #ffffff;
+  --color-text-soft: rgba(255, 255, 255, 0.62);
+  --color-text-mute: rgba(255, 255, 255, 0.5);
+  --color-primary-soft: rgba(229, 52, 46, 0.14);
+  --color-danger-text: #ff8a84;
+  --color-success-soft: rgba(63, 191, 114, 0.12);
+  --color-success-border: rgba(63, 191, 114, 0.35);
+  --color-success-text: #3fbf72;
+  --color-warn-soft: rgba(240, 180, 41, 0.12);
+  --color-warn-border: rgba(240, 180, 41, 0.32);
+  --color-warn-text: #f0b429;
+  --color-price: #ff6259;
+  --ring-soft: 0 0 0 4px rgba(229, 52, 46, 0.28);
+}
+
+/* Evita el destello blanco en el overscroll mobile y en las páginas
+   más cortas que la ventana (seguimiento). El selector :has() acota
+   el fondo a la tienda: el admin no monta .app ni .menu-skeleton,
+   así que su html/body siguen claros. La portada tampoco los monta
+   y queda exactamente como está. Donde no haya soporte para :has()
+   la regla se descarta sola y el comportamiento es el de hoy. */
+html:has(.app),
+html:has(.menu-skeleton),
+body:has(.app),
+body:has(.menu-skeleton) { background: var(--color-secondary); }
+
+/* El skeleton del menú se renderiza fuera de .app mientras carga el
+   catálogo. Hereda su fondo del :root para que no destellee entre la
+   portada y el menú, sin duplicar el hex. */
+.menu-skeleton { color-scheme: dark; }
+
+/* Autofill de Chrome: sin esto mete fondo blanco o amarillo y deja
+   un cuadro claro dentro de un input oscuro. Usa el token de
+   superficie para no quedar pegado a un hex. */
+.app input:-webkit-autofill,
+.app input:-webkit-autofill:hover,
+.app input:-webkit-autofill:focus,
+.app textarea:-webkit-autofill,
+.app textarea:-webkit-autofill:hover,
+.app textarea:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-text);
+  caret-color: var(--color-text);
+  -webkit-box-shadow: 0 0 0 1000px var(--color-surface) inset;
+  box-shadow: 0 0 0 1000px var(--color-surface) inset;
+  transition: background-color 6000000s 0s, color 6000000s 0s;
+}
+
+/* ============================================================
    App shell (después de elegir sucursal)
    ============================================================ */
-.app { min-height: 100dvh; display: flex; flex-direction: column; background: var(--color-bg); }
+.app { min-height: 100dvh; display: flex; flex-direction: column; background: var(--color-bg); color: var(--color-text); }
 .app-header {
   position: sticky; top: 0; z-index: 50; height: var(--header-h);
   background: var(--color-secondary); color: #fff;
@@ -233,7 +305,7 @@ a { color: var(--color-primary); }
   transition: transform .2s var(--ease);
 }
 .app-header__logo:hover { transform: scale(1.05); }
-.app-header__logo img { width: 100%; height: 100%; object-fit: cover; background: #fff; }
+.app-header__logo img { width: 100%; height: 100%; object-fit: cover; background: var(--color-surface, #fff); }
 .app-header__brand { display: flex; flex-direction: column; line-height: 1.15; flex: 1; min-width: 0; }
 .app-header__brand strong { font-size: 15px; letter-spacing: 0.3px; white-space: nowrap; }
 .app-header__brand .branch-chip {
@@ -273,203 +345,257 @@ a { color: var(--color-primary); }
 /* ============================================================
    Menú
    ============================================================ */
-.menu { flex: 1; padding-bottom: 104px; }
+/* El menú se pone negro con el resto de la app: usa el mismo token
+   que la Landing, el header y la barra del carrito (#111), así que
+   no queda costura entre las cuatro pantallas. Sobre este fondo los
+   grises de texto suben porque el blanco al 45% sólo daba 4.4:1. */
+.menu {
+  flex: 1;
+  padding-bottom: 104px;
+  background: var(--color-secondary);
+}
 
-/* Banner de sucursal (a todo el ancho) */
+/* Banner de sucursal (a todo el ancho).
+   Sin resplandor rojo ni motivo decorativo: la banda oscura se
+   sostiene sola con el título en Archivo Black. El filete de
+   abajo separa la banda del contenido; el rojo queda reservado
+   para el precio y la acción de agregar. */
 .menu__banner {
   position: relative; overflow: hidden;
-  background: linear-gradient(160deg, #171717 0%, var(--color-secondary) 72%);
+  background: linear-gradient(160deg, #1a1a1a 0%, var(--color-secondary) 72%);
   color: #fff;
 }
-.menu__banner::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(55% 95% at 100% -10%, rgba(229,52,46,.30), transparent 62%);
-}
 .menu__banner::before {
-  content: ""; position: absolute; left: 20%; right: 20%; bottom: 0; height: 3px;
-  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
+  content: ""; position: absolute; left: 16px; right: 16px; bottom: 0; height: 1px;
+  background: rgba(255,255,255,.18);
 }
-.menu__banner-motif { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: .7; }
 .menu__banner-inner {
   position: relative; z-index: 1;
-  max-width: var(--content-max); margin: 0 auto; padding: 26px 20px 28px;
+  padding: 22px 16px 20px;
 }
-.menu__branch {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
-  color: rgba(255,255,255,0.72);
+.menu__banner-top {
+  display: flex; align-items: baseline; justify-content: space-between;
+  flex-wrap: wrap; gap: 6px 32px;
 }
 .menu__banner h1 {
-  font-family: var(--font-display); font-size: 28px; line-height: 1.04;
-  text-transform: uppercase; margin: 10px 0 8px; letter-spacing: .5px;
+  font-family: var(--font-display); font-size: 26px; line-height: 1.05;
+  text-transform: uppercase; margin: 0; letter-spacing: .5px; color: #fff;
 }
-.menu__banner h1 span { color: var(--color-primary); }
 .menu__address {
   display: flex; align-items: center; gap: 6px; margin: 0;
-  color: rgba(255,255,255,0.82); font-size: 14px;
+  color: rgba(255,255,255,.58); font-size: 13px; line-height: 1.4;
 }
-.menu__address svg { width: 15px; height: 15px; flex-shrink: 0; opacity: .8; }
-.menu__hours {
-  display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; font-size: 12.5px;
-  background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 999px; padding: 6px 13px; color: #fff;
+.menu__address svg { width: 14px; height: 14px; flex-shrink: 0; opacity: .75; }
+.menu__meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 18px;
+  margin: 11px 0 0; font-size: 13px; color: rgba(255,255,255,.58);
 }
-.menu__hours-icon { width: 13px; height: 13px; flex-shrink: 0; }
+.menu__branch { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.menu__hours { display: inline-flex; align-items: center; gap: 6px; }
+.menu__hours-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: .7; }
 .menu__closed {
-  display: flex; align-items: center; gap: 7px; margin-top: 12px; font-size: 12.5px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
   background: rgba(255,193,7,.14); border: 1px solid rgba(255,193,7,.35);
-  border-radius: 999px; padding: 6px 13px; color: #ffd75e; font-weight: 600;
+  border-radius: 999px; padding: 3px 10px; color: #ffd75e;
 }
-.menu__closed svg { width: 13px; height: 13px; flex-shrink: 0; }
+.menu__closed svg { width: 12px; height: 12px; flex-shrink: 0; }
+/* Aviso de envío: línea chica y apagada al pie, con filete propio.
+   No se recorta con ellipsis: la parte que dice "ingresá tu
+   dirección" es la llamada a la acción y tiene que leerse entera. */
+/* La línea divisoria la aporta .menu__banner::before al pie del banner.
+   El filete propio de acá quedaba pegado a aquel y se leía como una
+   sola línea doble; el margen alcanza para separar el bloque. */
 .menu__delivery {
-  display: flex; align-items: center; gap: 7px; margin-top: 12px; font-size: 12.5px;
-  color: rgba(255,255,255,0.85);
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 12px 0 0;
+  color: rgba(255,255,255,.5); font-size: 12px; line-height: 1.45;
 }
-.menu__delivery svg { width: 15px; height: 15px; flex-shrink: 0; opacity: .85; }
+.menu__delivery svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; opacity: .7; }
 
 /* Buscador + chips de categorías (sticky, a todo el ancho) */
 .menu__sticky {
   position: sticky; top: var(--header-h); z-index: 40;
-  background: linear-gradient(180deg, rgba(255,255,255,.98) 72%, rgba(255,255,255,.96));
-  backdrop-filter: blur(6px); padding-bottom: 4px;
+  background: rgba(17,17,17,.88);
+  backdrop-filter: blur(12px); padding-bottom: 2px;
 }
-.menu__search { padding: 12px 16px 6px; }
-.menu__search-field { position: relative; max-width: var(--content-max); margin: 0 auto; }
+.menu__search { padding: 12px 16px 4px; }
+.menu__search-field { position: relative; }
 .menu__search-icon {
   position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
-  width: 16px; height: 16px; color: #a8a29e; pointer-events: none;
+  width: 16px; height: 16px; color: rgba(255,255,255,.4); pointer-events: none;
 }
 .menu__search input {
-  width: 100%; border: 2px solid var(--color-border); border-radius: 999px;
-  padding: 12px 18px 12px 42px; background: var(--color-surface); outline: none;
-  transition: border-color .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease);
+  width: 100%; border: 1.5px solid rgba(255,255,255,.12); border-radius: 999px;
+  padding: 11px 18px 11px 42px; background: #1a1a1a; color: #fff; outline: none;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
 }
-.menu__search input:focus { border-color: var(--color-primary); background: #fff; box-shadow: 0 0 0 4px rgba(229,52,46,.1); }
-.menu__search input::placeholder { color: #a8a29e; }
+/* Anillo de foco blanco: el --ring global es rojo y el rojo está
+   reservado para precio y agregar. Sobre negro el blanco se ve más. */
+.menu__search input:focus { border-color: rgba(255,255,255,.5); box-shadow: 0 0 0 3px rgba(255,255,255,.14); }
+.menu__search input::placeholder { color: rgba(255,255,255,.35); }
 .menu__cats {
   display: flex; gap: 8px; padding: 8px 16px 10px; overflow-x: auto;
   scrollbar-width: none; -webkit-overflow-scrolling: touch;
-  max-width: var(--content-max); margin: 0 auto;
 }
 .menu__cats::-webkit-scrollbar { display: none; }
-.menu__cats-wrap { position: relative; max-width: var(--content-max); margin: 0 auto; }
+.menu__cats-wrap { position: relative; }
 .menu__cats-wrap::after {
   content: ""; position: absolute; top: 8px; bottom: 10px; right: 0;
   width: 44px; pointer-events: none; opacity: 0; transition: opacity .2s var(--ease);
-  background: linear-gradient(to left, var(--color-bg), rgba(255,255,255,0));
+  background: linear-gradient(to left, #111, rgba(17,17,17,0));
 }
 .menu__cats-wrap.is-clipped-right::after { opacity: 1; }
+/* Chips en sentence case (el nombre llega en mayúsculas del panel).
+   Ni el chip activo ni su contador usan rojo: es un dato, no una
+   acción, y el rojo queda para el precio y el botón de agregar. */
 .cat-chip {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px;
-  border: 1.5px solid var(--color-border); background: var(--color-bg);
-  border-radius: 999px; padding: 9px 15px; font-size: 13.5px; font-weight: 700; color: var(--color-text);
-  transition: border-color .18s var(--ease), background .18s var(--ease), color .18s var(--ease), transform .15s var(--ease);
+  border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05);
+  border-radius: 999px; padding: 7px 13px; font-size: 13.5px; font-weight: 600; color: rgba(255,255,255,.72);
+  transition: border-color .18s var(--ease), background .18s var(--ease), color .18s var(--ease);
 }
-.cat-chip:hover { border-color: #cfcbc5; }
-.cat-chip.is-active { background: var(--color-secondary); border-color: var(--color-secondary); color: #fff; }
+.cat-chip:hover { border-color: rgba(255,255,255,.3); background: rgba(255,255,255,.09); color: #fff; }
+.cat-chip.is-active { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.32); color: #fff; }
 .cat-chip__count {
-  font-size: 11px; font-weight: 800; min-width: 20px; height: 20px; padding: 0 5px;
-  border-radius: 999px; background: var(--color-surface); color: var(--color-text-soft);
+  font-size: 11px; font-weight: 700; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px; background: rgba(255,255,255,.1); color: rgba(255,255,255,.7);
   display: inline-flex; align-items: center; justify-content: center;
 }
-.cat-chip.is-active .cat-chip__count { background: var(--color-primary); color: #fff; }
+.cat-chip.is-active .cat-chip__count { background: rgba(255,255,255,.22); color: #fff; }
 
 /* Contenido */
-.menu__content { padding: 0 16px 24px; max-width: var(--content-max); margin: 0 auto; width: 100%; }
-.menu__hint { font-size: 12px; color: var(--color-text-soft); padding: 14px 0 4px; }
-.menu__results { display: grid; grid-template-columns: 1fr; gap: 12px; }
-.category { padding-top: 6px; }
-.category__head {
-  display: flex; align-items: center; gap: 10px;
-  padding: 16px 0 14px;
-}
-.category__icon {
-  flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--color-primary-soft); color: var(--color-primary);
-}
-.category__icon svg { width: 19px; height: 19px; }
+.menu__content { padding: 0 16px 24px; }
+.menu__hint { font-size: 12px; color: rgba(255,255,255,.5); padding: 14px 0 4px; }
+.menu__results { display: grid; grid-template-columns: 1fr; gap: 10px 18px; align-items: start; }
+.category { padding-top: 4px; }
+/* Sin ícono: era el mismo bowl en las diez categorías, no decía
+   nada. El contador va pegado al título en vez de empujado al
+   extremo derecho por un margin-left:auto. */
+.category__head { display: flex; align-items: baseline; gap: 10px; padding: 18px 0 10px; }
 .category__name {
-  font-family: var(--font-display); font-size: 20px; text-transform: uppercase;
-  letter-spacing: .3px; line-height: 1.2; margin: 0;
+  font-family: var(--font-display); font-size: 19px; line-height: 1.2; margin: 0;
+  color: #fff;
 }
-.category__count { font-size: 12.5px; color: var(--color-text-soft); margin-left: auto; white-space: nowrap; }
+.category__count { font-size: 12.5px; color: rgba(255,255,255,.5); white-space: nowrap; }
 .category__body { animation: fadeSlide .2s var(--ease) both; }
-.category__products { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.category__products { display: grid; grid-template-columns: 1fr; gap: 10px 18px; align-items: start; }
 @keyframes fadeSlide { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
-.subcategory { margin: 6px 0 2px; }
+.subcategory { margin: 16px 0 0; }
 .subcategory__name {
-  font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;
-  color: var(--color-text-soft); display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; font-weight: 800; color: rgba(255,255,255,.55);
+  display: flex; align-items: center; gap: 10px;
 }
-.subcategory__name::after { content: ""; flex: 1; height: 1px; background: var(--color-border); }
+.subcategory__name::after { content: ""; flex: 1; height: 1px; background: rgba(255,255,255,.1); }
 
-/* Tarjeta de producto */
-.product {
-  position: relative; display: flex; align-items: flex-start; gap: 12px;
-  padding: 14px; background: var(--color-surface); border: 1px solid var(--color-border);
-  border-radius: var(--radius); transition: border-color .15s var(--ease), box-shadow .15s var(--ease), transform .15s var(--ease);
+/* Tarjeta de producto — dos estados de naturaleza distinta, no dos
+   variantes de la misma caja. Ambos son caja, pero la foto decide
+   cómo se compone:
+    - product--with-image: la foto ES la tarjeta. Sangra a todo el
+      ancho de la caja, la imagen manda y el texto va al lado
+      (desktop) o abajo (mobile).
+    - product--no-image: caja tipográfica, sin imagen que justifique
+      un marco alrededor.
+   Sobre el negro la caja es apenas más clara (#1a1a1a) con un pelo
+   de blanco al 9%: define el recorte sin delatar la caja, el mismo
+   recurso que usa la píldora del carrito.
+   Sin sombra y sin hover que se levanta: el único movimiento es la
+   respuesta a agregar al carrito. */
+.product--with-image {
+  display: grid; grid-template-columns: 1fr auto;
+  grid-template-areas: "media media" "info add";
+  gap: 10px 14px;
+  background: #1a1a1a;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: var(--radius);
+  padding: 12px;
+  overflow: hidden;
 }
-.product:hover { border-color: #d9d5cf; box-shadow: var(--shadow-sm); transform: translateY(-1px); }
-.product__media {
-  flex-shrink: 0; width: 64px; height: 64px; border-radius: var(--radius-sm);
-  overflow: hidden; background: #fff; position: relative;
+.product--with-image .product__media {
+  grid-area: media;
+  margin: -13px -13px 10px; width: calc(100% + 26px);
+  height: 150px; border-radius: 0;
+  overflow: hidden; background: #141414;
 }
-.product__media--blank {
-  background: linear-gradient(135deg, var(--color-primary-soft), var(--color-border));
+.product--with-image .product__info { grid-area: info; }
+.product--with-image .product__add { grid-area: add; }
+
+.product--no-image {
+  display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: center;
+  padding: 13px 14px;
+  background: #1a1a1a;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: var(--radius);
 }
-.product__media img { width: 100%; height: 100%; object-fit: cover; transition: transform .4s var(--ease); }
-.product:hover .product__media img { transform: scale(1.06); }
+
+.product__media img { width: 100%; height: 100%; object-fit: cover; }
+.product__info { min-width: 0; }
 .product__cat {
-  display: block; font-size: 11px; font-weight: 800; text-transform: uppercase;
-  letter-spacing: .8px; color: var(--color-primary); margin-bottom: 3px;
+  display: block; font-size: 12px; font-weight: 600; color: rgba(255,255,255,.5); margin-bottom: 2px;
 }
-.product__info { flex: 1; min-width: 0; padding-right: 54px; }
-.product__name { font-weight: 700; font-size: 15.5px; margin: 0; line-height: 1.3; }
-.product__desc { margin: 4px 0 0; font-size: 13.5px; color: var(--color-text-soft); line-height: 1.45; }
-.product__foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
-.product__price { font-weight: 800; font-size: 15px; color: var(--color-primary); white-space: nowrap; }
+.product__name { font-weight: 700; font-size: 15.5px; margin: 0; line-height: 1.3; color: #fff; }
+.product__desc {
+  margin: 4px 0 0; font-size: 13.5px; color: rgba(255,255,255,.58); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.product__foot { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+/* El rojo de marca (#e5342e) sobre #1a1a1a da 4.0:1 y no llega al
+   4.5:1 de WCAG para texto normal. Este tinte del mismo rojo da
+   5.6:1 sin cambiar el tono de la marca. */
+.product__price { font-weight: 800; font-size: 15px; color: #ff6259; white-space: nowrap; }
+/* Etiquetas informativas, no marcas de acción: sin rojo, sin
+   mayúsculas, sin tracking. "Personalizar" es un dato sobre el
+   plato; el botón de agregar es la acción. */
 .product__badge {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 10.5px; font-weight: 800; letter-spacing: .3px;
-  text-transform: uppercase; background: var(--color-primary-soft); color: var(--color-primary-dark);
-  border: 1px solid rgba(229,52,46,.22); border-radius: 999px; padding: 3px 9px 3px 7px;
+  font-size: 11px; font-weight: 600; color: rgba(255,255,255,.6);
+  border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 2px 8px 2px 6px;
 }
 .product__badge svg { width: 11px; height: 11px; }
 .product__top {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 10.5px; font-weight: 800; letter-spacing: .4px;
-  text-transform: uppercase; color: #fff; border-radius: 999px; padding: 3px 9px 3px 7px;
-  background: linear-gradient(90deg, var(--color-primary), #ff6b5e);
-  box-shadow: 0 2px 8px rgba(229,52,46,.3); margin-bottom: 4px; animation: pop .3s var(--ease);
+  font-size: 11px; font-weight: 700; color: #fff;
+  background: rgba(255,255,255,.12); border-radius: 999px; padding: 2px 9px 2px 7px;
+  margin-bottom: 6px;
 }
+/* Agregar es la única acción de la pantalla, así que es lo único
+   rojo sólido: círculo lleno con el + en blanco, tomando el mismo
+   gradiente que el CTA del carrito para que las dos acciones de la
+   app se lean como la misma familia. */
 .product__add {
-  position: absolute; right: 12px; bottom: 12px;
   width: 44px; height: 44px; flex-shrink: 0; border-radius: 50%;
-  border: none; background: var(--color-secondary); color: #fff;
+  border: none; color: #fff;
+  background: linear-gradient(180deg, #f0524b, var(--color-primary) 60%, var(--color-primary-dark));
+  box-shadow: 0 4px 12px rgba(229,52,46,.32);
   display: inline-flex; align-items: center; justify-content: center;
-  transition: background 0.18s var(--ease), transform .15s var(--ease), box-shadow .18s var(--ease);
+  transition: filter .16s var(--ease), transform .12s var(--ease), box-shadow .16s var(--ease);
 }
-.product__add .plus { font-size: 20px; font-weight: 700; line-height: 1; }
-.product__add:hover { background: var(--color-primary); box-shadow: 0 4px 12px rgba(229,52,46,.35); }
-.product__add:active { transform: scale(0.88); }
-.product__add.is-added { background: var(--color-success); }
-.product--unavailable { opacity: 0.55; }
-.product--unavailable:hover { transform: none; box-shadow: none; }
-.product--unavailable .product__add { pointer-events: none; background: var(--color-border); color: var(--color-text-soft); }
+.product__add .plus { font-size: 19px; font-weight: 600; line-height: 1; margin-top: -2px; }
+.product__add:hover { filter: brightness(1.1); box-shadow: 0 6px 16px rgba(229,52,46,.42); }
+.product__add:active { transform: scale(.88); }
+/* Confirmación: blanco con el check oscuro. Un flash de alto
+   contraste dice "agregado" sin inventar un color de estado nuevo. */
+.product__add.is-added {
+  background: #fff; color: #111; box-shadow: 0 0 0 3px rgba(255,255,255,.14);
+}
+.product--unavailable { opacity: .5; }
+.product--unavailable .product__add {
+  pointer-events: none; background: rgba(255,255,255,.1); color: rgba(255,255,255,.35); box-shadow: none;
+}
 .product__unavailable-tag {
-  position: absolute; top: 10px; right: 10px; font-size: 10px; font-weight: 800; text-transform: uppercase;
-  letter-spacing: .4px; background: var(--color-secondary); color: #fff; border-radius: 999px; padding: 3px 9px;
+  display: inline-block; font-size: 11px; font-weight: 700; color: rgba(255,255,255,.55);
+  border: 1px solid rgba(255,255,255,.16); border-radius: 999px; padding: 1px 8px; margin-bottom: 6px;
 }
 .empty-state { text-align: center; padding: 48px 20px; color: var(--color-text-soft); }
 .empty-state .big { font-size: 44px; margin-bottom: 10px; display: block; animation: pop .35s var(--ease); }
-.empty-state__icon { width: 52px; height: 52px; margin: 0 auto 14px; color: var(--color-border); display: block; animation: pop .35s var(--ease); }
+.empty-state__icon { width: 52px; height: 52px; margin: 0 auto 14px; color: var(--color-border-hi, var(--color-border)); display: block; animation: pop .35s var(--ease); }
 .empty-state p { margin: 0 0 18px; }
 
-/* Producto con imagen destacada (grilla más ancha en la tienda) */
-.product--with-image { flex-direction: column; }
-.product--with-image .product__media { width: 100%; height: 132px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; margin: -14px -14px 0; width: calc(100% + 28px); }
-.product--with-image .product__info { width: 100%; padding-right: 42px; padding-top: 10px; }
+/* El estado sin foto no tiene elemento de imagen: no hay caja
+   vacía que disimular. (.empty-state es compartido con CartView,
+   OrderHistory y AdminPanel, así que el color base no se toca acá;
+   sólo se sube dentro del menú, donde si no el gris #66615e sobre
+   negro quedaba ilegible.) */
+.menu .empty-state { color: rgba(255,255,255,.55); }
 
 /* ============================================================
    Carrito — barra fija
@@ -522,9 +648,9 @@ a { color: var(--color-primary); }
 .qty button:hover { background: var(--color-secondary); color: #fff; }
 .qty span { min-width: 36px; text-align: center; font-weight: 800; font-size: 14px; }
 .cart-item__price { margin-left: auto; font-weight: 800; font-size: 14.5px; text-align: right; }
-.cart-item__remove { border: none; background: none; color: var(--color-primary); font-size: 13px; font-weight: 700; padding: 4px 0; }
+.cart-item__remove { border: none; background: none; color: var(--color-danger-text, var(--color-primary)); font-size: 13px; font-weight: 700; padding: 4px 0; }
 .cart-item__remove:hover { text-decoration: underline; }
-.summary { background: var(--color-surface); border-radius: var(--radius); padding: 18px; margin: 20px 0; box-shadow: inset 0 1px 0 rgba(255,255,255,.6); }
+.summary { background: var(--color-surface); border-radius: var(--radius); padding: 18px; margin: 20px 0; }
 .summary__row { display: flex; justify-content: space-between; font-size: 14.5px; padding: 4px 0; }
 .summary__row--total { font-weight: 800; font-size: 18px; border-top: 1px solid var(--color-border); margin-top: 8px; padding-top: 12px; }
 
@@ -535,8 +661,16 @@ a { color: var(--color-primary); }
   border-radius: var(--radius); padding: 15px 12px; text-align: center; font-weight: 700; font-size: 15px;
   transition: border-color .18s var(--ease), background .18s var(--ease), color .18s var(--ease), box-shadow .18s var(--ease), transform .15s var(--ease);
 }
-.segment button:hover { border-color: #cfcbc5; transform: translateY(-1px); }
-.segment button.is-active { border-color: var(--color-secondary); background: var(--color-secondary); color: #fff; box-shadow: 0 8px 18px rgba(17,17,17,.22); transform: translateY(-1px); }
+.segment button:hover { border-color: var(--color-border-hi, #cfcbc5); transform: translateY(-1px); }
+/* El estado activo se rellenaba con --color-secondary (#111), que en
+   claro leía como una pastilla negra sobre fondo claro pero en oscuro
+   quedaba del mismo color que la página. Se unifica con la elección de
+   .pay-option y .option: tinte rojo y borde de marca. Acotado a .app
+   porque el checkout es el único que usa .segment. */
+.app .segment button.is-active {
+  border-color: var(--color-primary); background: var(--color-primary-soft); color: var(--color-text);
+  box-shadow: 0 0 0 3px rgba(229,52,46,.1); transform: translateY(-1px);
+}
 .checkout-section { margin: 24px 0 6px; }
 .checkout-section h3 {
   font-family: var(--font-display); font-size: 14px; text-transform: uppercase;
@@ -550,8 +684,8 @@ a { color: var(--color-primary); }
 }
 .hours-note { font-size: 13px; color: var(--color-text-soft); background: var(--color-surface); border-radius: var(--radius-sm); padding: 11px 14px; margin: 8px 0 0; border: 1px solid var(--color-border); }
 .hours-note--warn {
-  color: #8a6d1a; background: rgba(255,193,7,.08);
-  border-color: rgba(255,193,7,.4);
+  color: var(--color-warn-text, #8a6d1a); background: var(--color-warn-soft, rgba(255,193,7,.08));
+  border-color: var(--color-warn-border, rgba(255,193,7,.4));
 }
 
 /* Aviso de envío a confirmar (cálculo automático caído) en el checkout */
@@ -562,7 +696,7 @@ a { color: var(--color-primary); }
   border-radius: var(--radius-sm); padding: 11px 14px; margin-bottom: 12px;
 }
 .checkout-note--error {
-  color: var(--color-primary-dark); background: var(--color-primary-soft);
+  color: var(--color-danger-text, var(--color-primary-dark)); background: var(--color-primary-soft);
   border-color: rgba(229,52,46,.25); border-left-color: var(--color-primary);
 }
 .checkout-note a { align-self: flex-start; }
@@ -584,8 +718,8 @@ a { color: var(--color-primary); }
   margin-bottom: 8px; text-align: left;
   transition: border-color .18s var(--ease), background .18s var(--ease), box-shadow .18s var(--ease), transform .15s var(--ease);
 }
-.pay-option:hover { border-color: #cfcbc5; transform: translateY(-1px); }
-.pay-option.is-active { border-color: var(--color-primary); background: #fff; box-shadow: 0 0 0 3px rgba(229,52,46,0.1); }
+.pay-option:hover { border-color: var(--color-border-hi, #cfcbc5); transform: translateY(-1px); }
+.pay-option.is-active { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: 0 0 0 3px rgba(229,52,46,0.1); }
 .pay-option__icon {
   width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -597,7 +731,7 @@ a { color: var(--color-primary); }
 .pay-option__hint { font-weight: 400; font-size: 12px; color: var(--color-text-soft); }
 /* Carrito: bottom-sheet sobre el menú */
 .drawer { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; justify-content: flex-end; }
-.drawer__backdrop { position: absolute; inset: 0; background: rgba(17,17,17,0.55); animation: fadeIn .18s var(--ease); }
+.drawer__backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.7); animation: fadeIn .18s var(--ease); }
 .drawer__sheet {
   position: relative; width: 100%; max-width: 560px; margin: 0 auto;
   background: var(--color-bg); border-radius: 24px 24px 0 0; max-height: 86dvh;
@@ -614,6 +748,20 @@ a { color: var(--color-primary); }
 .drawer__close:hover { border-color: var(--color-primary); color: var(--color-primary); }
 .drawer__body { overflow-y: auto; padding: 6px 18px 12px; overscroll-behavior: contain; flex: 1; }
 .drawer__footer { padding: 12px 18px 18px; border-top: 1px solid var(--color-border); display: grid; gap: 8px; }
+
+/* El bloque del admin, más abajo en este archivo, reutiliza estos mismos
+   nombres de clase y gana por orden: el carrito del cliente hereda su
+   .drawer__sheet y su overlay. Se re-declara acá con especificidad .app
+   para que gane la tienda sin tocar una línea del admin, que nunca monta
+   .app. Sobre negro hacen falta las dos correcciones: la hoja caía en
+   --color-bg y quedaba del mismo color que la página, y la sombra del
+   admin es negra sobre negro. */
+.app .drawer__backdrop { background: rgba(0, 0, 0, 0.7); }
+.app .drawer__sheet { background: var(--color-surface); box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.55); }
+.app .drawer__footer { background: var(--color-surface-hi); }
+/* El control de cantidad usaba --color-bg: en claro era una pastilla
+   blanca sobre la hoja crema, en negro quedaba invisible al lado. */
+.app .qty { background: var(--color-surface-hi); }
 
 .pay-option__copy { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pay-option__label { font-weight: 700; font-size: 15px; }
@@ -638,8 +786,8 @@ a { color: var(--color-primary); }
 .coupon-input input:focus { border-color: var(--color-primary); }
 .coupon-applied {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  background: #eaf7ef; border: 1px solid #bfe6cd; border-radius: var(--radius-sm);
-  padding: 12px 14px; font-size: 14px; color: var(--color-success);
+  background: var(--color-success-soft, #eaf7ef); border: 1px solid var(--color-success-border, #bfe6cd); border-radius: var(--radius-sm);
+  padding: 12px 14px; font-size: 14px; color: var(--color-success-text, var(--color-success));
 }
 
 /* Historial */
@@ -667,7 +815,7 @@ a { color: var(--color-primary); }
 /* ============================================================
    Modal de personalización
    ============================================================ */
-.modal-overlay { position: fixed; inset: 0; background: rgba(17,17,17,0.65); z-index: 100; display: flex; align-items: flex-end; justify-content: center; backdrop-filter: blur(3px); }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 100; display: flex; align-items: flex-end; justify-content: center; backdrop-filter: blur(3px); }
 .modal {
   background: var(--color-bg); border-radius: 24px 24px 0 0; width: 100%; max-width: 560px;
   max-height: 88dvh; overflow-y: auto; padding: 24px 20px 28px; animation: slideUp 0.24s var(--ease);
@@ -676,14 +824,26 @@ a { color: var(--color-primary); }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .modal__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 4px; }
+/* Misma razón que la hoja del carrito: sobre negro, un panel en
+   --color-bg no se separa de la página. El bloque del admin no pisa
+   este color (sólo define el scrollbar) y usa otra clase de overlay
+   (.modal-backdrop), así que alcanza con acotar a .app. */
+.app .modal { background: var(--color-surface); box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.55); }
 .modal__name { font-family: var(--font-display); font-size: 21px; text-transform: uppercase; margin: 0; line-height: 1.2; }
-.modal__price { font-weight: 800; font-size: 18px; color: var(--color-primary); white-space: nowrap; }
+.modal__price { font-weight: 800; font-size: 18px; color: var(--color-price, var(--color-primary)); white-space: nowrap; }
+/* El botón de cerrar iba en --color-surface, el mismo color de la hoja
+   del modal, así que en oscuro quedaba invisible. Se apoya en la
+   superficie alta; fuera de .app sigue siendo la clara de siempre. */
+.app .modal__close { background: var(--color-surface-hi); }
+/* Las filas de opción se hunden contra la hoja del modal, igual que en
+   claro la crema se hundía contra el blanco. */
+.app .option { background: var(--color-bg); }
 .modal__close { border: none; background: var(--color-surface); width: 36px; height: 36px; border-radius: 50%; font-size: 16px; flex-shrink: 0; transition: background .15s var(--ease), transform .15s var(--ease); }
 .modal__close:hover { background: var(--color-border); transform: rotate(90deg); }
 .modal__desc { font-size: 13.5px; color: var(--color-text-soft); margin: 0 0 18px; }
 .option-group { margin-bottom: 18px; }
 .option-group__label { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-.option-group__label .required { color: var(--color-primary); font-size: 11px; }
+.option-group__label .required { color: var(--color-danger-text, var(--color-primary)); font-size: 11px; }
 .option-group__sub { font-size: 11.5px; font-weight: 700; color: var(--color-text-soft); margin: 10px 0 4px; }
 .option {
   display: flex; align-items: center; gap: 10px; width: 100%;
@@ -691,12 +851,12 @@ a { color: var(--color-primary); }
   border-radius: var(--radius-sm); padding: 13px 14px; font-size: 15px; margin-bottom: 8px; text-align: left;
   transition: border-color .15s var(--ease), background .15s var(--ease), box-shadow .15s var(--ease), transform .15s var(--ease);
 }
-.option:hover { border-color: #cfcbc5; transform: translateY(-1px); }
-.option.is-selected { border-color: var(--color-primary); background: #fff; box-shadow: 0 0 0 3px rgba(229,52,46,0.1); }
+.option:hover { border-color: var(--color-border-hi, #cfcbc5); transform: translateY(-1px); }
+.option.is-selected { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: 0 0 0 3px rgba(229,52,46,0.1); }
 .option .box {
   width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--color-border);
   flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
-  background: #fff; font-size: 12px; color: transparent;
+  background: var(--color-surface, #fff); font-size: 12px; color: transparent;
   transition: background .15s var(--ease), border-color .15s var(--ease);
 }
 .option.is-selected .box { border-color: var(--color-primary); background: var(--color-primary); color: #fff; }
@@ -707,8 +867,8 @@ a { color: var(--color-primary); }
   padding: 13px 14px; background: var(--color-surface); outline: none; resize: vertical;
   transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
 }
-.field textarea:focus { border-color: var(--color-primary); background: #fff; box-shadow: 0 0 0 4px rgba(229,52,46,.1); }
-.field textarea::placeholder { color: #a8a29e; }
+.field textarea:focus { border-color: var(--color-primary); background: var(--color-surface-hi, #ffffff); box-shadow: var(--ring-soft, 0 0 0 4px rgba(229,52,46,.1)); }
+.field textarea::placeholder { color: var(--color-text-mute, #a8a29e); }
 .modal__actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
 .qty--modal { background: var(--color-surface); }
 .modal__cta { flex: 1; }
@@ -717,7 +877,8 @@ a { color: var(--color-primary); }
 .toast {
   position: fixed; left: 50%; bottom: 96px; z-index: 300;
   transform: translateX(-50%);
-  background: var(--color-secondary); color: #fff;
+  background: var(--color-surface-hi, var(--color-secondary)); color: #fff;
+  border: 1px solid var(--color-border, transparent);
   border-radius: 999px; padding: 12px 20px; max-width: calc(100vw - 32px);
   display: flex; align-items: center; gap: 10px;
   font-size: 14px; font-weight: 600;
@@ -736,7 +897,7 @@ a { color: var(--color-primary); }
 .toast--error .toast__icon { background: rgba(255,255,255,0.2); }
 
 /* Toast / error */
-.form-error { background: var(--color-primary-soft); color: var(--color-primary-dark); border-radius: var(--radius-sm); padding: 11px 14px; font-size: 13.5px; font-weight: 600; margin-top: 10px; border: 1px solid rgba(229,52,46,.25); animation: fadeSlide .2s var(--ease) both; }
+.form-error { background: var(--color-primary-soft); color: var(--color-danger-text, var(--color-primary-dark)); border-radius: var(--radius-sm); padding: 11px 14px; font-size: 13.5px; font-weight: 600; margin-top: 10px; border: 1px solid rgba(229,52,46,.25); animation: fadeSlide .2s var(--ease) both; }
 
 @media (min-width: 720px) {
   .modal-overlay { align-items: center; padding: 20px; }
@@ -764,7 +925,16 @@ a { color: var(--color-primary); }
 /* Skeleton loading (menú) */
 .skeleton { background: linear-gradient(90deg, var(--color-surface) 25%, #f0ede8 40%, var(--color-surface) 60%); background-size: 300% 100%; animation: shimmer 1.2s infinite linear; border-radius: var(--radius-sm); }
 @keyframes shimmer { from { background-position: 130% 0; } to { background-position: -30% 0; } }
-.menu-skeleton { padding: 0 16px 100px; max-width: 560px; margin: 0 auto; }
+/* El skeleton se monta antes que el menú: mismo fondo para que la
+   página no destelle de blanco al negro al cargar. El shimmer
+   claro que trae .skeleton sobre negro sería un fogonazo, así que
+   acá se reescribe el degradado. Estas clases .sk-* sólo existen
+   dentro de MenuSkeleton.jsx, ningún otro efecto los hereda. */
+.menu-skeleton { padding: 0 16px 100px; max-width: 560px; margin: 0 auto; background: var(--color-secondary); }
+.menu-skeleton .skeleton {
+  background: linear-gradient(90deg, #1a1a1a 25%, #262626 40%, #1a1a1a 60%);
+  background-size: 300% 100%;
+}
 .menu-skeleton .sk-banner { height: 150px; border-radius: 0 0 24px 24px; margin: 0 -16px; }
 .menu-skeleton .sk-search { height: 48px; border-radius: 999px; margin: 14px 0 10px; }
 .menu-skeleton .sk-chips { display: flex; gap: 8px; margin-bottom: 18px; }
@@ -776,7 +946,7 @@ a { color: var(--color-primary); }
 .menu-skeleton .sk-cat-title { height: 20px; width: 40%; }
 .menu-skeleton .sk-card {
   display: flex; gap: 12px; padding: 14px; margin-bottom: 12px;
-  border: 1px solid var(--color-border); border-radius: var(--radius); background: var(--color-surface);
+  border: 1px solid rgba(255,255,255,.09); border-radius: var(--radius); background: #1a1a1a;
 }
 .menu-skeleton .sk-card-media { width: 64px; height: 64px; border-radius: var(--radius-sm); flex-shrink: 0; }
 .menu-skeleton .sk-card-body { flex: 1; display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
@@ -824,7 +994,7 @@ a { color: var(--color-primary); }
 .payment-slow {
   display: flex; flex-direction: column; align-items: center; gap: 12px;
   text-align: center; margin: 0 0 14px;
-  background: #fff7e6; border: 1px solid #f0d9a8; color: #8a6d1a;
+  background: var(--color-warn-soft, #fff7e6); border: 1px solid var(--color-warn-border, #f0d9a8); color: var(--color-warn-text, #8a6d1a);
   border-radius: var(--radius-sm); padding: 14px 16px; font-size: 13.5px;
   animation: fadeSlide .25s var(--ease) both;
 }
@@ -857,15 +1027,16 @@ a { color: var(--color-primary); }
 .track-steps { display: flex; justify-content: space-between; margin-top: 18px; gap: 4px; }
 .track-step { flex: 1; text-align: center; position: relative; }
 .track-step__dot {
-  width: 34px; height: 34px; border-radius: 50%; background: var(--color-surface);
-  border: 2px solid var(--color-border); display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%; background: var(--color-surface-hi, var(--color-surface));
+  border: 2px solid var(--color-border-hi, var(--color-border)); display: flex; align-items: center; justify-content: center;
   font-size: 15px; margin: 0 auto 6px;
 }
 .track-step.is-done .track-step__dot { background: var(--color-primary); border-color: var(--color-primary); }
 .track-step__label { font-size: 10.5px; color: var(--color-text-soft); font-weight: 600; line-height: 1.2; display: block; }
-.track-step.is-done .track-step__label { color: var(--color-primary); }
+.track-step.is-done .track-step__label { color: var(--color-danger-text, var(--color-primary)); }
 .track-cancelled {
-  background: var(--color-surface); border-radius: var(--radius-sm);
+  background: var(--color-primary-soft, var(--color-surface)); border-radius: var(--radius-sm);
+  border: 1px solid rgba(229,52,46,.25); border-left: 3px solid var(--color-primary);
   padding: 12px 14px; margin-top: 14px; font-size: 14px; color: var(--color-text-soft);
 }
 .track-line { margin: 6px 0; font-size: 14.5px; }
@@ -875,7 +1046,7 @@ a { color: var(--color-primary); }
 .track-check {
   display: flex; align-items: center; gap: 12px;
   border: 1px solid var(--color-border); border-radius: var(--radius-sm);
-  padding: 13px 14px; background: var(--color-bg);
+  padding: 13px 14px; background: var(--color-surface);
   transition: border-color .2s var(--ease), background .2s var(--ease);
 }
 .track-check__mark {
@@ -886,9 +1057,9 @@ a { color: var(--color-primary); }
   transition: background .2s var(--ease), border-color .2s var(--ease), color .2s var(--ease);
 }
 .track-check__label { font-size: 15px; font-weight: 600; }
-.track-check.is-done { border-color: #bfe6cd; background: #f2faf4; }
-.track-check.is-done .track-check__mark { border-color: var(--color-success); background: var(--color-success); color: #fff; animation: pop .3s var(--ease); }
-.track-check.is-done .track-check__label { color: var(--color-success); }
+.track-check.is-done { border-color: var(--color-success-border, #bfe6cd); background: var(--color-success-soft, #f2faf4); }
+.track-check.is-done .track-check__mark { border-color: var(--color-success-border, var(--color-success)); background: var(--color-success-soft, var(--color-success)); color: var(--color-success-text, #fff); animation: pop .3s var(--ease); }
+.track-check.is-done .track-check__label { color: var(--color-success-text, var(--color-success)); }
 
 /* Mis pedidos (TrackHome) */
 .my-orders { display: grid; gap: 10px; }
@@ -1456,9 +1627,10 @@ a { color: var(--color-primary); }
 
 /* ============================================================
    Desktop — la web ocupa toda la página
-   El header, el banner y la barra de carrito se extienden a lo
-   ancho; el contenido interno se centra con un máximo cómodo
-   y los productos se muestran en grilla.
+   El menú no se estira: mantiene el gutter de 16px del header y
+   compensa el ancho sobrante con más columnas, no con tarjetas
+   más anchas. Cada tarjeta toma su alto natural (align-items:
+   start) para que la mezcla de platos con y sin foto respire.
    ============================================================ */
 @media (min-width: 720px) {
   .container { max-width: 720px; }
@@ -1468,21 +1640,47 @@ a { color: var(--color-primary); }
     padding-right: max(20px, calc((100% - 720px) / 2 + 20px));
   }
   .category__products,
-  .menu__results { grid-template-columns: 1fr 1fr; gap: 14px; }
-  .category__products .product,
-  .menu__results .product {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: 16px;
-    height: 100%;
+  .menu__results { grid-template-columns: 1fr 1fr; }
+}
+
+/* La foto recién pasa al costado cuando la columna da para el
+   texto: a 2 columnas de 375px (tablet) quedaban 113px de nombre y
+   descripción al lado de una foto de 160, ilegible. Por debajo de
+   1024px la foto va arriba, a todo el ancho de la tarjeta. */
+@media (min-width: 1024px) {
+  .product--with-image {
+    grid-template-columns: 148px 1fr auto;
+    grid-template-areas: "media info add";
+    align-items: center; gap: 16px;
   }
-  .category__products .product:last-child,
-  .menu__results .product:last-child { border-bottom: 1px solid var(--color-border); }
+  .product--with-image .product__media {
+    margin: 0; width: 148px; height: 148px; border-radius: var(--radius-sm);
+  }
+}
+
+@media (min-width: 1440px) {
+  .category__products,
+  .menu__results { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (min-width: 1920px) {
+  .category__products,
+  .menu__results { grid-template-columns: repeat(4, 1fr); }
 }
 
 /* Mobile: banner con esquinas redondeadas abajo */
 @media (max-width: 719px) {
   .menu__banner { border-radius: 0 0 24px 24px; }
+}
+
+/* Movimiento reducido — sólo dentro del menú. El resto de la app
+   (landing, panel, modales) conserva sus animaciones. */
+@media (prefers-reduced-motion: reduce) {
+  .app *,
+  .menu *,
+  .cat-chip,
+  .category__body,
+  .product { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
 /* ============================================================

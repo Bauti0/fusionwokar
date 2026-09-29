@@ -67,7 +67,7 @@ export function closedLabel(branchId, now = new Date()) {
   const next = nextOpening(branchId, now);
   if (!next) return null;
   const sameDay = next.toDateString() === now.toDateString();
-  const time = next.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+  const time = next.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
   if (sameDay) return `Cerrado ahora · Abrimos hoy a las ${time}`;
   const day = next.toLocaleDateString("es-AR", { weekday: "long" });
   return `Cerrado ahora · Abrimos ${day} a las ${time}`;

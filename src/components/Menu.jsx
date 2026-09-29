@@ -2,16 +2,51 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import ProductCard from "./ProductCard.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
 import { closedLabel } from "../utils/schedule.js";
-import { IconBowlSteam, IconSearch, IconClock, IconEmptySearch, HeroMotif } from "./ui/icons.jsx";
+import { IconSearch, IconClock, IconEmptySearch } from "./ui/icons.jsx";
 
 // ============================================================
 // Vista de menú de una sucursal
-// - Banner con sucursal, dirección y horarios
+// - Banner compacto con sucursal, dirección y horarios
 // - Búsqueda por nombre de producto
 // - Categorías como tabs (chips sticky) con subgrupos
 // memo: el catálogo no se re-renderiza cuando el carrito cambia
 // (el estado del carrito vive en StoreApp, no aquí).
 // ============================================================
+
+// Los nombres de categoría y de subgrupo llegan del panel en
+// MAYÚSCULAS ("PROMOS Y COMBOS 晋升", "APTO (SIN TACC) ノータック").
+// El menú se lee mejor en sentence case, así que se reescriben
+// sólo las letras ASCII: el coreano, el chino y los emojis de
+// decoración quedan intactos. El separador con espacio entre un
+// emoji y la palabra evita "🔥NOVEDAD" pegado.
+function sentenceCase(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/(\p{Extended_Pictographic})(?=\p{L})/gu, "$1 ")
+    .replace(/\p{L}/u, (c) => c.toUpperCase());
+}
+
+// La API puede devolver varios grupos sin nombre seguidos (un grupo
+// por producto, que es como nacen cuando se cargan desde el panel).
+// Cada grupo abría su propia grilla, así que en desktop cada plato
+// caía solo en la columna 1 y la mitad derecha quedaba vacía. Los
+// grupos sin nombre consecutivos se fusionan en una sola grilla; los
+// que tienen nombre siguen separando con su título.
+function mergeGroupRuns(groups) {
+  const runs = [];
+  for (const group of groups) {
+    const last = runs[runs.length - 1];
+    if (group.name) {
+      runs.push({ name: group.name, products: group.products.slice() });
+    } else if (last && !last.name) {
+      last.products = last.products.concat(group.products);
+    } else {
+      runs.push({ name: null, products: group.products.slice() });
+    }
+  }
+  return runs;
+}
+
 const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
   const [query, setQuery] = useState("");
   const [customizing, setCustomizing] = useState(null);
@@ -65,49 +100,51 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
   }, [onAdd]);
 
   const topIds = menu.topProductIds || [];
+  const closed = closedLabel(branch.id);
 
   return (
     <div className="menu">
       <div className="menu__banner">
-        <HeroMotif className="menu__banner-motif" />
         <div className="menu__banner-inner">
-          <span className="menu__branch">
-            <span className="branch-dot" style={{ background: branch.accentColor }} aria-hidden="true" />
-            {branch.name}
-          </span>
-          <h1>
-            Nuestro <span>menú</span>
-          </h1>
-          <p className="menu__address">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 21s-7-5.1-7-11a7 7 0 1 1 14 0c0 5.9-7 11-7 11z" />
-              <circle cx="12" cy="10" r="2.5" />
-            </svg>
-            {branch.address}
-          </p>
-          <span className="menu__hours">
-            <IconClock className="menu__hours-icon" />
-            {branch.hours[orderMode]}
-          </span>
-          {closedLabel(branch.id) && (
-            <span className="menu__closed">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 7v5l3 2" />
-              </svg>
-              {closedLabel(branch.id)}
+          <div className="menu__banner-top">
+            <h1>Nuestro menú</h1>
+          </div>
+          <p className="menu__meta">
+            <span className="menu__branch">
+              <span className="branch-dot" style={{ background: branch.accentColor }} aria-hidden="true" />
+              {branch.name}
             </span>
-          )}
+            <span className="menu__hours">
+              <IconClock className="menu__hours-icon" />
+              {branch.hours[orderMode]}
+            </span>
+            {closed && (
+              <span className="menu__closed">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" />
+                </svg>
+                {closed}
+              </span>
+            )}
+            <span className="menu__address">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 21s-7-5.1-7-11a7 7 0 1 1 14 0c0 5.9-7 11-7 11z" />
+                <circle cx="12" cy="10" r="2.5" />
+              </svg>
+              {branch.address}
+            </span>
+          </p>
           {branch.deliveryInfo && (
-            <span className="menu__delivery">
+            <p className="menu__delivery">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M3 7h11v8H3z" />
                 <path d="M14 10h4l3 3v2h-7" />
                 <circle cx="7" cy="17" r="1.6" />
                 <circle cx="17" cy="17" r="1.6" />
               </svg>
-              {branch.deliveryInfo}
-            </span>
+              <span>{branch.deliveryInfo}</span>
+            </p>
           )}
         </div>
       </div>
@@ -134,7 +171,7 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
                   aria-pressed={activeCat === cat.id}
                   onClick={() => setActiveCat(cat.id)}
                 >
-                  {cat.name}
+                  {sentenceCase(cat.name)}
                   <span className="cat-chip__count">{countProducts(cat)}</span>
                 </button>
               ))}
@@ -152,20 +189,19 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
             .map((cat) => (
               <section className="category" key={cat.id}>
                 <div className="category__head">
-                  <span className="category__icon"><IconBowlSteam /></span>
-                  <h2 className="category__name">{cat.name}</h2>
+                  <h2 className="category__name">{sentenceCase(cat.name)}</h2>
                   <span className="category__count">{countProducts(cat)} platos</span>
                 </div>
                 <div className="category__body">
-                  {cat.groups.map((group, gi) => (
-                    <div className="category__group" key={gi}>
-                      {group.name && (
+                  {mergeGroupRuns(cat.groups).map((run, ri) => (
+                    <div className="category__group" key={ri}>
+                      {run.name && (
                         <div className="subcategory">
-                          <span className="subcategory__name">{group.name}</span>
+                          <span className="subcategory__name">{sentenceCase(run.name)}</span>
                         </div>
                       )}
                       <div className="category__products">
-                        {group.products.map((product) => (
+                        {run.products.map((product) => (
                           <ProductCard
                             key={product.id}
                             product={product}
@@ -206,7 +242,7 @@ function SearchResults({ menu, search, onAdd, onCustomize }) {
     for (const group of cat.groups) {
       for (const product of group.products) {
         if (product.name.toLowerCase().includes(search)) {
-          results.push({ ...product, categoryName: cat.name });
+          results.push({ ...product, categoryName: sentenceCase(cat.name) });
         }
       }
     }

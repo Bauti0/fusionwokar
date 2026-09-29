@@ -5,6 +5,14 @@ import { IconSparkle } from "./ui/icons.jsx";
 
 // ============================================================
 // Tarjeta de producto
+// Dos estados deliberadamente distintos entre sí:
+// - con foto (product--with-image): la imagen ES la tarjeta.
+// - sin foto (product--no-image): no hay caja que explicar, es
+//   una línea de menú tipográfico cerrada por un filete.
+// Antes los dos Estados eran la misma caja y el que no tenía foto
+// llevaba un cuadrado con degradado que se leía como un error. Hoy
+// 6 de cada 10 platos no tienen foto, así que ese estado es el
+// mayoritario y tiene que verse elegido, no un placeholder.
 // Muestra nombre, descripción y precio. Si el producto tiene
 // extras/variantes abre el modal de personalización; si no,
 // "Agregar" lo manda directo al carrito (con feedback visual).
@@ -18,10 +26,10 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   const [imgFailed, setImgFailed] = useState(false);
   const timer = useRef(null);
 
-  // Si la foto no carga (archivo borrado, ruta rota…) caemos al mismo estado
-  // visual que los productos sin foto: el div "product__media--blank". El
-  // estado persiste para no volver a intentar la misma imagen rota en cada
-  // re-render (React podría re-montar el <img> con el mismo src).
+  // Si la foto no carga (archivo borrado, ruta rota…) se cae al
+  // estado sin foto. El estado persiste para no volver a intentar
+  // la misma imagen rota en cada re-render (React podría re-montar
+  // el <img> con el mismo src).
   const hasImage = !!product.image && !imgFailed;
 
   function flash() {
@@ -41,15 +49,14 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   }
 
   return (
-    <div className={`product ${unavailable ? "product--unavailable" : ""} ${hasImage ? "product--with-image" : ""}`}>
-      {hasImage ? (
+    <div className={`product ${hasImage ? "product--with-image" : "product--no-image"} ${unavailable ? "product--unavailable" : ""}`}>
+      {hasImage && (
         <div className="product__media">
-          <img src={product.image} alt={product.name} width="132" height="132" loading="lazy" onError={() => setImgFailed(true)} />
+          <img src={product.image} alt={product.name} width="160" height="160" loading="lazy" onError={() => setImgFailed(true)} />
         </div>
-      ) : (
-        <div className="product__media product__media--blank" aria-hidden="true" />
       )}
       <div className="product__info">
+        {unavailable && <span className="product__unavailable-tag">Agotado</span>}
         {categoryName && <span className="product__cat">{categoryName}</span>}
         {isTop && <span className="product__top">🔥 Más pedido</span>}
         <h4 className="product__name">{product.name}</h4>
@@ -71,7 +78,6 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
       >
         <span className="plus">{added ? "✓" : "+"}</span>
       </button>
-      {unavailable && <span className="product__unavailable-tag">Agotado</span>}
     </div>
   );
 });

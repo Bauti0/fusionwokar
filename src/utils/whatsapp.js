@@ -45,7 +45,7 @@ export function buildOrderMessage({ branch, order, customer, orderMode, paymentM
   totals += `*Total: ${formatPrice(Math.max(total - (discount || 0) + shippingCost, 0))}*`;
   if (scheduledFor) {
     try {
-      totals += `\n🕒 *Programado para:* ${new Date(scheduledFor).toLocaleString("es-AR")}`;
+      totals += `\n🕒 *Programado para:* ${new Date(scheduledFor).toLocaleString("es-AR", { hour12: false })}`;
     } catch {
       /* fecha inválida: se omite */
     }
