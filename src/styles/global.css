@@ -398,16 +398,18 @@ body:has(.menu-skeleton) { background: var(--color-secondary); }
   font-family: var(--font-display); font-size: 26px; line-height: 1.05;
   text-transform: uppercase; margin: 0; letter-spacing: .5px; color: #fff;
 }
+.menu__title-accent { color: var(--color-primary); }
 .menu__address {
   display: flex; align-items: center; gap: 6px; margin: 0;
-  color: rgba(255,255,255,.58); font-size: 13px; line-height: 1.4;
+  color: rgba(255,255,255,.65); font-size: 13px; line-height: 1.4;
 }
 .menu__address svg { width: 14px; height: 14px; flex-shrink: 0; opacity: .75; }
 .menu__meta {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px 18px;
-  margin: 11px 0 0; font-size: 13px; color: rgba(255,255,255,.58);
+  margin: 11px 0 0; font-size: 13px; color: rgba(255,255,255,.65);
 }
-.menu__branch { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.menu__branch { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; }
+.menu__branch .branch-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-primary); flex-shrink: 0; }
 .menu__hours { display: inline-flex; align-items: center; gap: 6px; }
 .menu__hours-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: .7; }
 .menu__closed {
@@ -425,7 +427,7 @@ body:has(.menu-skeleton) { background: var(--color-secondary); }
 .menu__delivery {
   display: flex; align-items: flex-start; gap: 8px;
   margin: 12px 0 0;
-  color: rgba(255,255,255,.5); font-size: 12px; line-height: 1.45;
+  color: rgba(255,255,255,.65); font-size: 13px; line-height: 1.45;
 }
 .menu__delivery svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; opacity: .7; }
 
@@ -808,7 +810,7 @@ body:has(.menu-skeleton) { background: var(--color-secondary); }
 }
 
 /* Historial */
-.order-card { border: 1px solid var(--color-border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; box-shadow: var(--shadow-sm); transition: box-shadow .18s var(--ease), transform .18s var(--ease); }
+.order-card { border: 1px solid rgba(255,255,255,0.18); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; box-shadow: var(--shadow-sm); transition: box-shadow .18s var(--ease), transform .18s var(--ease); }
 .order-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
 .order-card__head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 .order-card__date { font-size: 12px; color: var(--color-text-soft); }

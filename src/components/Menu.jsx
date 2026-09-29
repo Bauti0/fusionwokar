@@ -107,11 +107,11 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
       <div className="menu__banner">
         <div className="menu__banner-inner">
           <div className="menu__banner-top">
-            <h1>Nuestro menú</h1>
+            <h1>Nuestro <span className="menu__title-accent">menú</span></h1>
           </div>
           <p className="menu__meta">
             <span className="menu__branch">
-              <span className="branch-dot" style={{ background: branch.accentColor }} aria-hidden="true" />
+              <span className="branch-dot" aria-hidden="true" />
               {branch.name}
             </span>
             <span className="menu__hours">
