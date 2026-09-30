@@ -7,6 +7,8 @@ import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
 // Estas páginas viven fuera de StoreApp (no hay carrito activo),
 // así que usamos la última sucursal conocida solo para mostrar
 // el mismo header de marca, y mandamos todas las acciones a "/".
+// El ícono de reloj (Mis pedidos) navega a /track, que redirige
+// a la tienda con vista my-orders (state).
 // ============================================================
 export default function TrackHeader() {
   const navigate = useNavigate();
@@ -25,7 +27,7 @@ export default function TrackHeader() {
       branch={branch}
       cartCount={0}
       onHome={() => navigate("/")}
-      onHistory={() => navigate("/")}
+      onHistory={() => navigate("/track")}
       onCart={() => navigate("/")}
     />
   );

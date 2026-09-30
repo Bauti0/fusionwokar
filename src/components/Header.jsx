@@ -1,11 +1,12 @@
 import { Link } from "react-router-dom";
 import { BRAND } from "../data/branches.js";
 import Tooltip from "./ui/Tooltip.jsx";
+import { IconClock } from "./ui/icons.jsx";
 
 // ============================================================
 // Header de la app (una vez elegida la sucursal)
 // Logo + nombre, chip de sucursal clicable (cambia de sucursal),
-// acceso a "Seguir mi pedido", historial y carrito.
+// acceso a "Mis pedidos" (ícono de reloj) y carrito.
 // ============================================================
 export default function Header({ branch, cartCount, onHistory, onCart, onHome, onChangeBranch }) {
   return (
@@ -45,20 +46,9 @@ export default function Header({ branch, cartCount, onHistory, onCart, onHome, o
       </div>
 
       <div className="app-header__actions">
-        <Tooltip label="Seguir mi pedido">
-          <Link className="icon-btn" to="/track" aria-label="Seguir mi pedido">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 21s-7-5.1-7-11a7 7 0 1 1 14 0c0 5.9-7 11-7 11z" />
-              <circle cx="12" cy="10" r="2.5" />
-            </svg>
-          </Link>
-        </Tooltip>
         <Tooltip label="Mis pedidos">
           <button className="icon-btn" onClick={onHistory} aria-label="Mis pedidos">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 7v5l3 3" />
-            </svg>
+            <IconClock style={{ width: 20, height: 20 }} />
           </button>
         </Tooltip>
         <Tooltip label="Ver carrito">

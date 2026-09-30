@@ -1,4 +1,5 @@
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { BRANCHES, BRAND } from "../data/branches.js";
 import { getMenu as getStaticMenu } from "../data/menus.js";
 import useCart from "../hooks/useCart.js";
@@ -17,7 +18,7 @@ import { Link } from "react-router-dom";
 // se cargan bajo demanda para no inflar el bundle inicial de la tienda.
 const CartView = lazy(() => import("./CartView.jsx"));
 const Checkout = lazy(() => import("./Checkout.jsx"));
-const OrderHistory = lazy(() => import("./OrderHistory.jsx"));
+const MyOrders = lazy(() => import("./MyOrders.jsx"));
 const PaymentModal = lazy(() => import("./PaymentModal.jsx"));
 const PaymentResult = lazy(() => import("./PaymentResult.jsx"));
 
@@ -25,7 +26,7 @@ const VIEWS = {
   landing: "landing",
   menu: "menu",
   checkout: "checkout",
-  history: "history",
+  myOrders: "myOrders",
   success: "success",
   payment: "payment",
   paymentResult: "paymentResult",
@@ -78,10 +79,18 @@ function describeOrderError(err) {
 //   (crea el pedido en el backend y redirige al checkout de MP)
 // ============================================================
 export default function StoreApp() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [branchId, setBranchId] = useState(() => localStorage.getItem("fw.lastBranch") || "");
-  const [view, setView] = useState(() =>
-    localStorage.getItem("fw.lastBranch") ? VIEWS.menu : VIEWS.landing
-  );
+  const [view, setView] = useState(() => {
+    // Si venimos de /track con state, abrir my-orders una sola vez
+    if (location.state?.view === "my-orders") {
+      // Limpiar el state para que una recarga no reabra Mis pedidos
+      navigate(location.pathname, { replace: true, state: null });
+      return VIEWS.myOrders;
+    }
+    return localStorage.getItem("fw.lastBranch") ? VIEWS.menu : VIEWS.landing;
+  });
   const [customer, setCustomer] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("fw.customer") || "null");
@@ -303,6 +312,8 @@ export default function StoreApp() {
         serverDiscount = res.discount || 0;
         serverCoupon = res.couponCode || "";
         serverScheduled = res.scheduledFor || serverScheduled;
+        // Completar el orderNumber en el historial local (attachOrderNumber)
+        cart.attachOrderNumber(record.id, orderNumber);
       } catch {
         // El pedido igual se arma por WhatsApp. Si el server no validó el cupón,
         // se usa el descuento ya validado en el cliente para que el mensaje no
@@ -339,11 +350,10 @@ export default function StoreApp() {
       // aprobó. Si quedó rechazado/pendiente el carrito se conserva para que
       // el cliente pueda reintentar sin perder su pedido.
       if (fullOrder?.paymentStatus === "approved") {
-        cart.placeOrder({
-          orderMode: fullOrder.orderMode,
-          paymentMethod: fullOrder.paymentMethod,
-          address: fullOrder.address,
-        });
+        cart.placeOrderWithNumber(
+          { orderMode: fullOrder.orderMode, paymentMethod: fullOrder.paymentMethod, address: fullOrder.address },
+          fullOrder.orderNumber
+        );
         cart.clearCart();
       }
       setLastOrder(fullOrder);
@@ -408,10 +418,10 @@ export default function StoreApp() {
     [cart]
   );
 
-  // Sin sucursal elegida → portada. Si se pidió cambiar de sucursal
-  // (chip del header) → portada conservando la sucursal preseleccionada.
-  // Con sucursal pero menú cargando → skeleton.
-  if (!branch || view === VIEWS.landing) {
+  // my-orders puede abrirse SIN sucursal (solo búsquedas).
+  // El resto de vistas requieren sucursal.
+  const needsBranch = view !== VIEWS.myOrders;
+  if (needsBranch && (!branch || view === VIEWS.landing)) {
     return (
       <Landing
         onStart={handleLandingStart}
@@ -420,7 +430,7 @@ export default function StoreApp() {
       />
     );
   }
-  if (!menu) {
+  if (needsBranch && !menu) {
     return <MenuSkeleton />;
   }
 
@@ -430,7 +440,7 @@ export default function StoreApp() {
         branch={branch}
         cartCount={cart.count}
         onCart={() => setCartOpen(true)}
-        onHistory={() => setView(VIEWS.history)}
+        onHistory={() => setView(VIEWS.myOrders)}
         onHome={goHome}
         onChangeBranch={handleChangeBranch}
       />
@@ -469,13 +479,11 @@ export default function StoreApp() {
         />
       )}
 
-      {view === VIEWS.history && (
-        <OrderHistory
-          history={cart.history}
+      {view === VIEWS.myOrders && (
+        <MyOrders
+          cart={cart}
           branch={branch}
-          onRepeat={handleRepeat}
-          onBack={() => setView(VIEWS.menu)}
-          onMenu={() => setView(VIEWS.menu)}
+          onBack={() => setView(branch ? VIEWS.menu : VIEWS.landing)}
         />
       )}
 

@@ -119,6 +119,32 @@ export default function useCart(branchId) {
     [items, total]
   );
 
+  // Completa el orderNumber del último registro local (id) cuando el servidor responde.
+  // Se usa en el flujo efectivo/transferencia: placeOrder corre ANTES de createOrder;
+  // si el servidor falla, el pedido igual sale por WhatsApp y queda en historial.
+  const attachOrderNumber = useCallback((recordId, orderNumber) => {
+    setHistory((prev) =>
+      prev.map((r) => (r.id === recordId ? { ...r, orderNumber } : r))
+    );
+  }, []);
+
+  // Guarda un pedido del flujo Mercado Pago (ya tiene orderNumber del servidor)
+  const placeOrderWithNumber = useCallback(
+    (orderMeta, orderNumber) => {
+      const record = {
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        date: new Date().toISOString(),
+        items: items.map(({ key, ...rest }) => rest),
+        total,
+        orderNumber,
+        ...orderMeta,
+      };
+      setHistory((prev) => [record, ...prev].slice(0, 30));
+      return record;
+    },
+    [items, total]
+  );
+
   // Repite un pedido anterior (vuelve a cargar sus items al carrito).
   // Suma sobre lo que ya haya en el carrito en vez de reemplazarlo:
   // las líneas idénticas se fusionan (misma key) y el resto se agrega.
@@ -159,6 +185,8 @@ export default function useCart(branchId) {
     count,
     history,
     placeOrder,
+    attachOrderNumber,
+    placeOrderWithNumber,
     repeatOrder,
   };
 }

@@ -7,7 +7,7 @@ import { track } from "./utils/tracking.js";
 // ============================================================
 // FUSIÓN WOK — Router
 //  /                     → tienda (menú, carrito, checkout, pago)
-//  /track                → buscar pedido por número / mis pedidos
+//  /track                → redirige a tienda con vista my-orders (state)
 //  /track/:orderNumber   → seguimiento del pedido
 //  /admin                → panel de gestión (login + pedidos)
 //
@@ -18,7 +18,6 @@ import { track } from "./utils/tracking.js";
 const AdminLogin = lazy(() => import("./components/AdminLogin.jsx"));
 const AdminPanel = lazy(() => import("./components/AdminPanel.jsx"));
 const TrackOrder = lazy(() => import("./components/TrackOrder.jsx"));
-const TrackHome = lazy(() => import("./components/TrackHome.jsx"));
 
 function PageFallback() {
   return (
@@ -69,7 +68,9 @@ export default function App() {
     <Suspense fallback={<PageFallback />}>
       <Routes>
         <Route path="/" element={<StoreApp />} />
-        <Route path="/track" element={<TrackHome />} />
+        <Route
+          path="/track"
+          element={<Navigate to="/" state={{ view: "my-orders" }} replace />} />
         <Route path="/track/:orderNumber" element={<TrackOrder />} />
         <Route
           path="/admin"
