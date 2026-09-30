@@ -171,7 +171,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "" })
           <input
             type="search"
             className="admin-search"
-            placeholder="🔎 Buscar producto…"
+            placeholder="Buscar producto…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />

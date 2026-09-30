@@ -21,6 +21,7 @@ import Dropdown from "./ui/Dropdown.jsx";
 import PromptModal from "./ui/PromptModal.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 import Tooltip from "./ui/Tooltip.jsx";
+import { IconPlus, IconEdit, IconTrash } from "./ui/icons.jsx";
 
 // ============================================================
 // AdminProducts — edición del menú desde el panel
@@ -358,13 +359,13 @@ export default function AdminProducts() {
           <input
             type="search"
             className="admin-search"
-            placeholder="🔎 Buscar producto…"
+            placeholder="Buscar producto…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <button className="btn btn--ghost btn--sm" onClick={openAddCategory}>➕ Categoría</button>
+          <button className="btn btn--ghost btn--sm" onClick={openAddCategory}><IconPlus style={{ width: 13, height: 13 }} /> Categoría</button>
         </div>
-        <button className="btn btn--primary btn--sm" onClick={() => openAdd()}>➕ Agregar producto</button>
+        <button className="btn btn--primary btn--sm" onClick={() => openAdd()}><IconPlus style={{ width: 13, height: 13 }} /> Agregar producto</button>
       </div>
 
       {error && <div className="form-error">{error}</div>}
@@ -414,8 +415,8 @@ export default function AdminProducts() {
                   <Tooltip label="Mover abajo">
                     <button className="btn btn--ghost btn--sm" onClick={() => handleMoveCategory(cat, "down")} aria-label={`Mover categoría ${cat.name} abajo`}>↓</button>
                   </Tooltip>
-                  <button className="btn btn--ghost btn--sm" onClick={() => openRenameCategory(cat)} aria-label={`Renombrar categoría ${cat.name}`}>✏️</button>
-                  <button className="btn btn--danger btn--sm" onClick={() => handleDeleteCategory(cat)} aria-label={`Eliminar categoría ${cat.name}`}>🗑️</button>
+                  <button className="btn btn--ghost btn--sm" onClick={() => openRenameCategory(cat)} aria-label={`Renombrar categoría ${cat.name}`}><IconEdit style={{ width: 13, height: 13 }} /></button>
+                  <button className="btn btn--danger btn--sm" onClick={() => handleDeleteCategory(cat)} aria-label={`Eliminar categoría ${cat.name}`}><IconTrash style={{ width: 13, height: 13 }} /></button>
                 </div>
               </div>
               {cat.groups.map((group, gi) => (
@@ -424,8 +425,8 @@ export default function AdminProducts() {
                     <span className="admin-group__name">{group.name || "Sin grupo"}</span>
                     {group.name && (
                       <span className="admin-group__actions">
-                        <button className="btn btn--ghost btn--sm" onClick={() => openRenameGroup(group, cat)}>✏️ Renombrar</button>
-                        <button className="btn btn--danger btn--sm" onClick={() => handleDeleteGroup(group, cat)}>🗑️ Eliminar grupo</button>
+                        <button className="btn btn--ghost btn--sm" onClick={() => openRenameGroup(group, cat)}><IconEdit style={{ width: 13, height: 13 }} /> Renombrar</button>
+                        <button className="btn btn--danger btn--sm" onClick={() => handleDeleteGroup(group, cat)}><IconTrash style={{ width: 13, height: 13 }} /> Eliminar grupo</button>
                       </span>
                     )}
                   </div>
@@ -471,7 +472,7 @@ export default function AdminProducts() {
                         <Tooltip label="Mover abajo">
                           <button className="btn btn--ghost btn--sm" onClick={() => handleMoveProduct(p, "down")} aria-label={`Mover ${p.name} abajo`}>↓</button>
                         </Tooltip>
-                        <button className="btn btn--ghost btn--sm" onClick={() => openEdit(p)}>✏️ Editar</button>
+                        <button className="btn btn--ghost btn--sm" onClick={() => openEdit(p)}><IconEdit style={{ width: 13, height: 13 }} /> Editar</button>
                         <button
                           className="btn btn--ghost btn--sm"
                           onClick={() => handleToggle(p)}
@@ -479,7 +480,7 @@ export default function AdminProducts() {
                         >
                           {p.available ? "🙈 Ocultar" : "👁️ Mostrar"}
                         </button>
-                        <button className="btn btn--danger btn--sm" onClick={() => handleDelete(p)}>🗑️ Eliminar</button>
+                        <button className="btn btn--danger btn--sm" onClick={() => handleDelete(p)}><IconTrash style={{ width: 13, height: 13 }} /> Eliminar</button>
                       </div>
                     </div>
                   ))}
@@ -590,7 +591,7 @@ export default function AdminProducts() {
                   className="btn btn--ghost btn--sm"
                   onClick={() => setNewCategory((v) => !v)}
                 >
-                  {newCategory ? "Usar categoría existente" : "➕ Nueva categoría"}
+                  {newCategory ? "Usar categoría existente" : <><IconPlus style={{ width: 13, height: 13 }} /> Nueva categoría</>}
                 </button>
               </div>
 

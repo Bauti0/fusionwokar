@@ -21,7 +21,7 @@ import {
 import { formatPrice } from "../utils/format.js";
 import { playNewOrderChime } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
-import { IconEmptySearch } from "./ui/icons.jsx";
+import { IconEmptySearch, IconRepeat, IconPlus } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
@@ -108,7 +108,7 @@ export default function AdminPanel({ onLogout }) {
   const [status, setStatus] = useState("");
   const [payment, setPayment] = useState("");
   const [search, setSearch] = useState("");
-  const [includePending, setIncludePending] = useState(false);
+  const [includePending, setIncludePending] = useState(true);
   const [printOrder, setPrintOrder] = useState(null);
   const [printComanda, setPrintComanda] = useState(null);
   const [hasMore, setHasMore] = useState(false);
@@ -492,14 +492,14 @@ export default function AdminPanel({ onLogout }) {
               className="btn btn--primary btn--sm"
               onClick={() => setSection("new-order")}
             >
-              ➕ Nuevo pedido
+              <IconPlus style={{ width: 14, height: 14 }} /> Nuevo pedido
             </button>
           </div>
         </div>
         <div className="admin-filters">
           <input
             type="search"
-            placeholder="🔎 Buscar por número, nombre o teléfono…"
+            placeholder="Buscar por número, nombre o teléfono…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="admin-search"
@@ -611,7 +611,7 @@ const renderOrder = (o) => {
                             rehacerPedido(o);
                           }}
                         >
-                          🔁 Rehacer
+                          <IconRepeat style={{ width: 14, height: 14 }} /> Rehacer
                         </button>
                       </div>
                     </div>

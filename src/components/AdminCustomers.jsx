@@ -51,7 +51,7 @@ export default function AdminCustomers() {
           <input
             type="search"
             className="admin-search"
-            placeholder="🔎 Buscar por nombre o teléfono…"
+            placeholder="Buscar por nombre o teléfono…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />

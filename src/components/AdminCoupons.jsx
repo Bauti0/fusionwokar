@@ -11,6 +11,7 @@ import useDialogA11y from "../hooks/useDialogA11y.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
+import { IconPlus, IconEdit, IconTrash } from "./ui/icons.jsx";
 
 // ============================================================
 // AdminCoupons — cupones de descuento
@@ -111,7 +112,7 @@ export default function AdminCoupons() {
       <div className="admin-products__toolbar">
         <h3>🏷️ Cupones de descuento</h3>
         <button className="btn btn--primary btn--sm" onClick={() => { setCreating(true); setError(""); }}>
-          ➕ Crear cupón
+          <IconPlus style={{ width: 13, height: 13 }} /> Crear cupón
         </button>
       </div>
 
@@ -140,11 +141,11 @@ export default function AdminCoupons() {
                   className="btn btn--ghost btn--sm"
                   onClick={() => { setForm({ code: c.code, type: c.type, value: c.value, minTotal: c.minTotal || "", maxUses: c.maxUses || "", expiresAt: c.expiresAt || "" }); setEditing(c.id); setCreating(true); setError(""); }}
                   aria-label={`Editar cupón ${c.code}`}
-                >✏️</button>
+                ><IconEdit style={{ width: 13, height: 13 }} /></button>
                 <button className="btn btn--ghost btn--sm" onClick={() => handleToggle(c)}>
                   {c.active ? "🙈 Desactivar" : "👁️ Activar"}
                 </button>
-                <button className="btn btn--danger btn--sm" onClick={() => handleDelete(c)} aria-label={`Eliminar cupón ${c.code}`}>🗑️</button>
+                <button className="btn btn--danger btn--sm" onClick={() => handleDelete(c)} aria-label={`Eliminar cupón ${c.code}`}><IconTrash style={{ width: 13, height: 13 }} /></button>
               </div>
             </div>
           ))}

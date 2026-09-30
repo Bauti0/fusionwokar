@@ -274,6 +274,23 @@ a { color: var(--color-primary); }
 }
 .app .btn--ghost:hover { background: var(--color-surface-hi); }
 
+/* Admin: mismos overrides que .app para btn--dark y btn--ghost */
+.admin .btn--dark,
+.admin-login .btn--dark {
+  background: var(--color-surface-hi);
+  color: var(--color-text);
+  border: 2px solid var(--color-border-hi);
+}
+.admin .btn--dark:hover,
+.admin-login .btn--dark:hover { background: #2f2f2f; }
+.admin .btn--ghost,
+.admin-login .btn--ghost {
+  background: var(--color-surface);
+  border: 2px solid var(--color-border-hi);
+}
+.admin .btn--ghost:hover,
+.admin-login .btn--ghost:hover { background: var(--color-surface-hi); }
+
 /* Evita el destello blanco en el overscroll mobile y en las páginas
    más cortas que la ventana (seguimiento). El selector :has() acota
    el fondo a la tienda: el admin no monta .app ni .menu-skeleton,
@@ -284,6 +301,12 @@ html:has(.app),
 html:has(.menu-skeleton),
 body:has(.app),
 body:has(.menu-skeleton) { background: var(--color-secondary); }
+
+/* Fondo oscuro cuando el panel de admin está montado (incluye login) */
+html:has(.admin),
+html:has(.admin-login),
+body:has(.admin),
+body:has(.admin-login) { background: var(--color-secondary); }
 
 /* El skeleton del menú se renderiza fuera de .app mientras carga el
    catálogo. Hereda su fondo del :root para que no destellee entre la
@@ -305,6 +328,814 @@ body:has(.menu-skeleton) { background: var(--color-secondary); }
   box-shadow: 0 0 0 1000px var(--color-surface) inset;
   transition: background-color 6000000s 0s, color 6000000s 0s;
 }
+
+/* ============================================================
+   Admin Panel — Tema oscuro
+   Los tokens se declaran bajo .admin y .admin-login para no
+   afectar a la tienda (.app) ni a la portada (:root). Mismas
+   claves que .app para reutilizar componentes compartidos.
+   ============================================================ */
+.admin,
+.admin-login {
+  color-scheme: dark;
+  --color-bg: #111111;
+  --color-surface: #1a1a1a;
+  --color-surface-hi: #242424;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-hi: rgba(255, 255, 255, 0.22);
+  --color-text: #ffffff;
+  --color-text-soft: rgba(255, 255, 255, 0.62);
+  --color-text-mute: rgba(255, 255, 255, 0.5);
+  --color-primary-soft: rgba(229, 52, 46, 0.14);
+  --color-danger-text: #ff8a84;
+  --color-success-soft: rgba(63, 191, 114, 0.12);
+  --color-success-border: rgba(63, 191, 114, 0.35);
+  --color-success-text: #3fbf72;
+  --color-warn-soft: rgba(240, 180, 41, 0.12);
+  --color-warn-border: rgba(240, 180, 41, 0.32);
+  --color-warn-text: #f0b429;
+  --color-price: #ff6259;
+  --ring-soft: 0 0 0 4px rgba(229, 52, 46, 0.28);
+  --color-border-control: rgba(255, 255, 255, 0.38);
+}
+
+/* Autofill de Chrome en admin: usa la superficie del admin */
+.admin input:-webkit-autofill,
+.admin input:-webkit-autofill:hover,
+.admin input:-webkit-autofill:focus,
+.admin textarea:-webkit-autofill,
+.admin textarea:-webkit-autofill:hover,
+.admin textarea:-webkit-autofill:focus,
+.admin-login input:-webkit-autofill,
+.admin-login input:-webkit-autofill:hover,
+.admin-login input:-webkit-autofill:focus,
+.admin-login textarea:-webkit-autofill,
+.admin-login textarea:-webkit-autofill:hover,
+.admin-login textarea:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-text);
+  caret-color: var(--color-text);
+  -webkit-box-shadow: 0 0 0 1000px var(--color-surface) inset;
+  box-shadow: 0 0 0 1000px var(--color-surface) inset;
+  transition: background-color 6000000s 0s, color 6000000s 0s;
+}
+
+/* ============================================================
+   Admin: overrides de componentes compartidos (.btn, .field, .modal,
+   .drawer, .segment, .pay-option, .option, .dropdown, .daterange,
+   .switch, .tooltip, .qty, .badge, .form-error)
+   No se tocan las reglas .app ni :root.
+   ============================================================ */
+
+/* Base del admin: color y fondo propios (evita heredar color oscuro del body) */
+.admin,
+.admin-login {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* Field / inputs */
+.admin .field input,
+.admin .field textarea,
+.admin-login .field input,
+.admin-login .field textarea {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .field input:focus,
+.admin .field textarea:focus,
+.admin-login .field input:focus,
+.admin-login .field textarea:focus {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  box-shadow: var(--ring-soft);
+}
+.admin .field input::placeholder,
+.admin .field textarea::placeholder,
+.admin-login .field input::placeholder,
+.admin-login .field textarea::placeholder {
+  color: var(--color-text-mute);
+}
+
+/* Modal / modal-backdrop */
+.admin .modal-backdrop {
+  background: rgba(0, 0, 0, 0.7);
+}
+.admin .modal {
+  background: var(--color-surface);
+  box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.55);
+}
+.admin .modal__close {
+  background: var(--color-surface-hi);
+}
+
+/* Drawer (carrito bottom-sheet) */
+.admin .drawer__backdrop { background: rgba(0, 0, 0, 0.7); }
+.admin .drawer__sheet { background: var(--color-surface); box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.55); }
+.admin .drawer__footer { background: var(--color-surface-hi); }
+
+/* Segment (checkout / new-order) */
+.admin .segment button {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+}
+.admin .segment button:hover { border-color: var(--color-border-hi); }
+.admin .segment button.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+  box-shadow: 0 0 0 3px rgba(229, 52, 46, 0.1);
+}
+
+/* Pay option (checkout) */
+.admin .pay-option {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+}
+.admin .pay-option:hover { border-color: var(--color-border-hi); }
+.admin .pay-option.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: 0 0 0 3px rgba(229, 52, 46, 0.1);
+}
+.admin .pay-option__icon {
+  background: var(--color-surface);
+  color: var(--color-primary);
+}
+
+/* Option (customize modal) */
+.admin .option {
+  border-color: var(--color-border-control);
+  background: var(--color-bg);
+}
+.admin .option:hover { border-color: var(--color-border-hi); }
+.admin .option.is-selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: 0 0 0 3px rgba(229, 52, 46, 0.1);
+}
+.admin .option .box {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+}
+.admin .option.is-selected .box {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+/* Dropdown */
+.admin .dropdown__trigger {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .dropdown__trigger:focus-visible {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(229, 52, 46, 0.15);
+}
+.admin .dropdown__trigger.is-placeholder .dropdown__label { color: var(--color-text-mute); }
+.admin .dropdown__panel {
+  background: #191919;
+  border-color: #2f2f2f;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.4);
+}
+.admin .dropdown__option {
+  color: #fff;
+}
+.admin .dropdown__option.is-active { background: rgba(255, 255, 255, 0.08); }
+.admin .dropdown__option.is-selected { color: #ff7a6b; }
+.admin .dropdown__check { color: var(--color-primary); }
+
+/* DateRangePicker / DateTimePicker */
+.admin .daterange__panel,
+.admin .dtp__panel {
+  background: #191919;
+  border-color: #2f2f2f;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.4);
+}
+.admin .daterange__title,
+.admin .dtp__title { color: #fff; }
+.admin .daterange__nav,
+.admin .dtp__nav {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+.admin .daterange__nav:hover,
+.admin .dtp__nav:hover { background: var(--color-primary); }
+.admin .daterange__dow { color: #7a756f; }
+.admin .daterange__day { color: #f1efec; }
+.admin .daterange__day.is-weekend { color: #cdc8c2; }
+.admin .daterange__day.is-outside-month { color: #8c867f; }
+.admin .daterange__day:hover::before,
+.admin .daterange__day:focus-visible::before {
+  background: rgba(255, 255, 255, 0.09);
+}
+.admin .daterange__day.is-today:not(.is-edge):not(.is-selected)::after {
+  border-color: var(--color-primary);
+  background: rgba(229, 52, 46, 0.14);
+}
+.admin .daterange__day.is-in-range::before { background: rgba(229, 52, 46, 0.2); }
+.admin .daterange__day.is-in-range:hover::before { background: rgba(229, 52, 46, 0.28); }
+.admin .daterange__day.is-preview::before { background: rgba(229, 52, 46, 0.1); }
+.admin .daterange__day.is-preview:hover::before { background: rgba(229, 52, 46, 0.16); }
+.admin .daterange__day.is-edge { color: #fff; font-weight: 700; }
+.admin .daterange__day.is-edge::before { background: var(--color-primary); }
+.admin .daterange__day.is-selected { color: #fff; font-weight: 700; }
+.admin .daterange__day.is-selected::before { background: var(--color-primary); }
+.admin .daterange__day.is-disabled { color: #57524c; }
+.admin .daterange__quick-btn {
+  border-color: #3a3a3a;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+.admin .daterange__quick-btn:hover {
+  border-color: var(--color-primary);
+  background: rgba(229, 52, 46, 0.18);
+}
+
+/* Switch */
+.admin .switch__track {
+  background: var(--color-border);
+}
+.admin .switch__track--on { background: var(--color-primary); }
+.admin .switch__thumb { background: #fff; }
+
+/* Tooltip */
+.admin .tooltip {
+  background: var(--color-secondary);
+  color: #fff;
+}
+.admin .tooltip::after { border-top-color: var(--color-secondary); }
+.admin .tooltip--bottom::after { border-bottom-color: var(--color-secondary); }
+
+/* Qty stepper */
+.admin .qty { background: var(--color-surface-hi); }
+.admin .qty button {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .qty button:hover { background: var(--color-secondary); color: #fff; }
+
+/* Badge */
+.admin .badge {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.admin .badge--branch { background: var(--color-secondary); color: #fff; border-color: var(--color-secondary); }
+.admin .badge--pay-approved { background: var(--color-success-soft); color: var(--color-success-text); border-color: var(--color-success-border); }
+.admin .badge--pay-pending { background: var(--color-warn-soft); color: var(--color-warn-text); border-color: var(--color-warn-border); }
+.admin .badge--pay-rejected { background: var(--color-primary-soft); color: var(--color-danger-text); border-color: rgba(229,52,46,.25); }
+.admin .badge--pay-refunded { background: rgba(74,79,196,.15); color: #a5a8f0; border-color: rgba(74,79,196,.3); }
+.admin .badge--shipping-pending { background: var(--color-warn-soft); color: var(--color-warn-text); border-color: var(--color-warn-border); }
+
+/* Form error */
+.admin .form-error,
+.admin-login .form-error {
+  background: var(--color-primary-soft);
+  color: var(--color-danger-text);
+  border-color: rgba(229, 52, 46, 0.25);
+}
+
+/* Scrollbars */
+.admin .modal,
+.admin .dropdown__panel {
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+.admin .modal::-webkit-scrollbar,
+.admin .dropdown__panel::-webkit-scrollbar { width: 6px; height: 6px; }
+.admin .modal::-webkit-scrollbar-track,
+.admin .dropdown__panel::-webkit-scrollbar-track { background: transparent; }
+.admin .modal::-webkit-scrollbar-thumb,
+.admin .dropdown__panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+}
+.admin .modal::-webkit-scrollbar-thumb:hover,
+.admin .dropdown__panel::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.4); }
+
+/* ============================================================
+   Admin Panel — Estilos específicos por sección (tema oscuro)
+   ============================================================ */
+
+/* Login */
+.admin-login__card {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--color-border);
+}
+.admin-login__logo {
+  border: 2px solid var(--color-border);
+  box-shadow: 0 0 0 4px rgba(229, 52, 46, 0.12);
+}
+
+/* Admin shell */
+.admin {
+  min-height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.admin__header {
+  background: var(--color-secondary);
+  color: #fff;
+  border-bottom: 1px solid var(--color-border);
+}
+.admin__actions .btn {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.admin__actions .btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* Admin nav */
+.admin-nav {
+  border-bottom: 1px solid var(--color-border);
+  padding: 14px 16px 4px;
+}
+.admin-nav__btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin-nav__btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-surface-hi);
+}
+.admin-nav__btn.is-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.admin-nav__btn.is-active .admin-nav__badge {
+  background: #fff;
+  color: var(--color-primary);
+}
+
+/* Admin orders head / toolbar */
+.admin-orders-head {
+  border-bottom: 1px solid var(--color-border);
+  padding: 16px 0 12px;
+}
+.admin-day {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+.admin-day__label {
+  background: var(--color-bg);
+  color: var(--color-text-soft);
+}
+.admin-day__sep { color: var(--color-border); }
+.admin-day__total { color: var(--color-price); }
+.live-clock { color: var(--color-text-soft); }
+.admin-orders-toolbar { padding-top: 4px; }
+
+/* Admin filters */
+.admin-filters {
+  border-bottom: 1px solid var(--color-border);
+  padding: 16px 0 12px;
+}
+.admin-search {
+  border-color: var(--color-border-control) !important;
+  background: var(--color-surface) !important;
+  color: var(--color-text) !important;
+}
+.admin-search:focus { border-color: var(--color-primary) !important; }
+.admin .dropdown__trigger {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+}
+
+/* Admin orders list */
+.admin-order {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+.admin-order:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+}
+.admin-order.is-unseen {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(229, 52, 46, 0.1);
+}
+.admin-order.is-cancelled,
+.admin-order.is-rejected {
+  opacity: 0.6;
+}
+.admin-order__dot { background: var(--color-primary); }
+.admin-order__num { color: var(--color-text); }
+.admin-order__time { color: var(--color-text-soft); }
+.admin-order__name { color: var(--color-text); }
+.admin-order__bottom .badge { border-color: var(--color-border); }
+.admin-order__total { color: var(--color-price); }
+.admin-order__redo {
+  background: var(--color-surface);
+  border-color: var(--color-border-hi);
+  color: var(--color-text);
+}
+.admin-order__redo:hover {
+  background: var(--color-surface-hi);
+  border-color: var(--color-primary);
+}
+
+/* Admin empty states */
+.admin-empty {
+  color: var(--color-text-soft);
+}
+.admin-empty--icon .empty-state__icon { color: var(--color-border-hi); }
+.admin-empty--icon strong { color: var(--color-text); }
+
+/* Admin order detail modal */
+.admin .modal__head { border-bottom: 1px solid var(--color-border); padding-bottom: 12px; margin-bottom: 16px; }
+.admin .modal__name { color: var(--color-text); }
+.admin .modal__price { color: var(--color-price); }
+.admin .detail-block h4 { color: var(--color-text-soft); }
+.admin .detail-block p { color: var(--color-text); }
+.admin .detail-note {
+  background: var(--color-primary-soft);
+  color: var(--color-danger-text);
+  border-color: rgba(229, 52, 46, 0.25);
+}
+.admin .shipping-confirm {
+  border-color: var(--color-border);
+}
+.admin .shipping-confirm__fields input {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .shipping-confirm__fields input:focus {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  box-shadow: var(--ring-soft);
+}
+
+/* Refunds */
+.admin .refunds { border-color: var(--color-border); }
+.admin .refunds__row { color: var(--color-text-soft); }
+.admin .refunds__total { color: var(--color-text); }
+.admin .refund-box { border-color: var(--color-border); }
+.admin .refund-box__note { color: var(--color-text-soft); }
+.admin .refund-box__row input {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .refund-box__row input:focus {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  box-shadow: var(--ring-soft);
+}
+
+/* Status actions */
+.admin .status-btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .status-btn:hover { border-color: var(--color-border-hi); }
+.admin .status-btn.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+  box-shadow: 0 0 0 3px rgba(229, 52, 46, 0.1);
+}
+.admin .status-btn--danger.is-active {
+  border-color: var(--color-primary);
+  color: var(--color-danger-text);
+}
+
+/* Modal footer */
+.admin .modal__footer { border-top: 1px solid var(--color-border); padding-top: 16px; margin-top: 16px; }
+
+/* ConfirmModal / PromptModal in admin */
+.admin .confirm-modal,
+.admin .prompt-modal {
+  background: var(--color-surface);
+}
+.admin .confirm-modal__icon {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.admin .confirm-modal--default .confirm-modal__icon {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text);
+}
+.admin .confirm-modal__message { color: var(--color-text-soft); }
+
+/* Admin Stats */
+.admin .admin-stats {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+.admin .period-btn {
+  border-color: var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.admin .period-btn:hover {
+  border-color: var(--color-border-hi);
+  background: var(--color-surface-hi);
+}
+.admin .period-btn.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+.admin .stat-card {
+  border-color: var(--color-border);
+  background: var(--color-bg);
+}
+.admin .stat-card--main {
+  background: #111111;
+  border-color: #111111;
+  color: #fff;
+}
+.admin .stat-card__label { color: var(--color-text-soft); }
+.admin .stat-card--main .stat-card__label { color: rgba(255, 255, 255, 0.75); }
+.admin .stat-card__note { color: var(--color-text-soft); }
+.admin .stat-card--main .stat-card__note { color: rgba(255, 255, 255, 0.75); }
+.admin .stat-card__value { color: var(--color-text); }
+.admin .top-products__col h4 { color: var(--color-text); }
+.admin .top-products__list li {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.admin .top-products__name { color: var(--color-text); }
+.admin .top-products__qty { color: var(--color-price); }
+.admin .funnel h4 { color: var(--color-text); }
+.admin .funnel__num {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.admin .funnel__name { color: var(--color-text); }
+.admin .funnel__count { color: var(--color-price); }
+.admin .funnel__bar { background: var(--color-surface); }
+.admin .funnel__fill { background: linear-gradient(90deg, var(--color-primary), var(--color-price)); }
+.admin .funnel__conv { color: var(--color-text-soft); }
+
+/* Admin Products */
+.admin .admin-products__toolbar {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+}
+.admin .admin-products__controls .admin-search {
+  border-color: var(--color-border-control) !important;
+  background: var(--color-surface) !important;
+  color: var(--color-text) !important;
+}
+.admin .admin-products__controls .admin-search:focus {
+  border-color: var(--color-primary) !important;
+}
+.admin .admin-cat {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+.admin .admin-cat__name { color: var(--color-primary); }
+.admin .admin-cat__head {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+.admin .admin-group__name { color: var(--color-text-soft); }
+.admin .admin-product {
+  border-color: var(--color-border);
+}
+.admin .admin-product.is-hidden { opacity: 0.55; }
+.admin .admin-product__info { color: var(--color-text); }
+.admin .admin-product__title strong { color: var(--color-text); }
+.admin .admin-product__price { color: var(--color-text-soft); }
+.admin .admin-product__actions .btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .admin-product__actions .btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.admin .admin-product__actions .btn--danger {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+.admin .admin-product__actions .btn--danger:hover {
+  filter: brightness(0.94);
+}
+.admin .admin-product__preview {
+  border-color: var(--color-border);
+}
+.admin .admin-products .modal__body .field {
+  margin: 0;
+}
+
+/* Admin Coupons */
+.admin .admin-coupons .admin-products__toolbar {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+}
+.admin .admin-coupons .admin-products__toolbar h3 { color: var(--color-text); }
+.admin .coupon-card {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.admin .coupon-card.is-hidden { opacity: 0.55; }
+.admin .coupon-card__code { color: var(--color-primary); }
+.admin .coupon-card__value { color: var(--color-text); }
+.admin .coupon-card__meta { color: var(--color-text-soft); }
+.admin .coupon-card__actions .btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .coupon-card__actions .btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.admin .coupon-card__actions .btn--danger {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+/* Admin Customers */
+.admin .admin-customers .admin-products__toolbar {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+}
+.admin .customer-card {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+.admin .customer-card__name { color: var(--color-text); }
+.admin .customer-card__phone { color: var(--color-text-soft); }
+.admin .customer-card__address { color: var(--color-text-soft); }
+.admin .customer-card__meta .badge {
+  background: var(--color-bg);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.admin .customer-card__meta .badge--vip {
+  background: var(--color-warn-soft);
+  color: var(--color-warn-text);
+  border-color: var(--color-warn-border);
+}
+.admin .customer-card__submeta { color: var(--color-text-soft); }
+.admin .customer-card__submeta strong { color: var(--color-text); }
+
+/* Admin Sales */
+.admin .admin-sales .admin-stats__head {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+}
+.admin .admin-sales .admin-stats__head h3 { color: var(--color-text); }
+.admin .admin-sales .admin-products__controls .dropdown__trigger {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .payment-breakdown h4 { color: var(--color-text); }
+.admin .payment-breakdown__row {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.admin .payment-breakdown__count { color: var(--color-text-soft); }
+.admin .payment-breakdown__row strong { color: var(--color-price); }
+.admin .sales-chart h4 { color: var(--color-text); }
+.admin .sales-chart__bar { background: var(--color-surface); }
+.admin .sales-chart__fill { background: linear-gradient(90deg, var(--color-primary), var(--color-price)); }
+.admin .sales-chart__day { color: var(--color-text-soft); }
+
+/* Cash Register */
+.admin .cash-register {
+  border-color: var(--color-border);
+}
+.admin .cash-register h4 { color: var(--color-text); }
+.admin .cash-register__row { color: var(--color-text); }
+.admin .cash-register__row strong { color: var(--color-text); }
+.admin .cash-register__row--highlight {
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+}
+.admin .cash-register__close-actions .btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .cash-register__close-actions .btn:hover {
+  border-color: var(--color-border-hi);
+}
+.admin .cash-register__close-actions .btn--primary {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+.admin .cash-register__result {
+  border-radius: var(--radius-sm);
+}
+.admin .cash-register__result.is-ok,
+.admin .cash-register__result.is-over {
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+}
+.admin .cash-register__result.is-under {
+  background: var(--color-primary-soft);
+  color: var(--color-danger-text);
+}
+.admin .cash-register__history h5 { color: var(--color-text-soft); }
+.admin .cash-register__hrow { color: var(--color-text-soft); }
+.admin .cash-register__hrow strong { color: var(--color-text); }
+.admin .cash-register__hrow .is-over { color: var(--color-success-text); }
+.admin .cash-register__hrow .is-under { color: var(--color-danger-text); }
+
+/* Admin New Order */
+.admin .admin-new-order__success {
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+}
+.admin .admin-products__controls .admin-search {
+  border-color: var(--color-border-control) !important;
+  background: var(--color-surface) !important;
+  color: var(--color-text) !important;
+}
+.admin .admin-products__controls .admin-search:focus {
+  border-color: var(--color-primary) !important;
+}
+.admin .new-order__product {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.admin .new-order__product:hover { border-color: var(--color-primary); }
+.admin .new-order__product-name { color: var(--color-text); }
+.admin .new-order__product-price { color: var(--color-price); }
+.admin .new-order__form {
+  border-color: var(--color-border);
+}
+.admin .new-order__cart-item { border-color: var(--color-border); }
+.admin .new-order__cart-info { color: var(--color-text); }
+.admin .new-order__cart-extras { color: var(--color-text-soft); }
+.admin .new-order__total { color: var(--color-text); }
+.admin .new-order__total strong { color: var(--color-price); }
+.admin .qty-stepper button {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .qty-stepper button:hover {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  color: var(--color-primary);
+}
+.admin .segment button {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .segment button:hover { border-color: var(--color-border-hi); }
+.admin .segment button.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+  box-shadow: 0 0 0 3px rgba(229, 52, 46, 0.1);
+}
+.admin .field label { color: var(--color-text-soft); }
+.admin .field input,
+.admin .field textarea {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.admin .field input:focus,
+.admin .field textarea:focus {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  box-shadow: var(--ring-soft);
+}
+.admin .field input::placeholder,
+.admin .field textarea::placeholder { color: var(--color-text-mute); }
+.admin .admin-new-order .btn--primary { width: 100%; }
+
+/* CustomizeModal in admin */
+.admin .modal .product__price { color: var(--color-price); }
+.admin .modal .product__desc { color: var(--color-text-soft); }
+.admin .modal .option-group__label { color: var(--color-text); }
+.admin .modal .option-group__sub { color: var(--color-text-soft); }
+.admin .modal .option .opt-label { color: var(--color-text); }
+.admin .modal .option .opt-price { color: var(--color-price); }
 
 /* ============================================================
    App shell (después de elegir sucursal)
@@ -1923,4 +2754,105 @@ body:has(.menu-skeleton) { background: var(--color-secondary); }
   .stat-card { padding: 16px 18px; }
   .stat-card__value { font-size: 24px; }
   .customer-list, .coupons-list { grid-template-columns: 1fr 1fr; }
+}
+
+/* ============================================================
+   Admin — Corrección final de jerarquía de fondos (tema oscuro)
+   ------------------------------------------------------------
+   Va al final del archivo a propósito: en el tema claro original
+   :root bg = blanco y surface = crema, así que la regla base
+   `.admin { background: var(--color-surface) }` ponía la página
+   en crema y las tarjetas (bg) en blanco. Con los tokens .admin
+   (bg = #111 página, surface = #1a1a1a tarjeta) el significado se
+   invierte, y como esa regla base viene con la misma especificidad
+   y después de los overrides, ganaba y la página quedaba gris
+   mientras las secciones quedaban negras (rectángulos flotantes).
+
+   Acá se fija la jerarquía definitiva:
+     página      → --color-bg      #111111  (cubre 100dvh)
+     header      → --color-secondary #111111
+     nav/toolbar → transparente (heredan la página)
+     tarjetas/controles → --color-surface #1a1a1a + borde sutil
+     hundidos (inputs, label del día, stat-card dentro del panel
+     de estadísticas) → --color-bg #111111
+   ============================================================ */
+.admin,
+.admin-login { background: var(--color-bg); }
+
+/* Tarjetas y controles que el tema claro pintaba con bg (blanco):
+   en oscuro tienen que elevarse a surface o se funden con la página */
+.admin .admin-nav__btn,
+.admin .admin-search,
+.admin .dropdown__trigger,
+.admin .admin-order,
+.admin .status-btn,
+.admin .admin-cat,
+.admin .coupon-card,
+.admin .customer-card,
+.admin .qty-stepper button,
+.admin .admin-day {
+  background: var(--color-surface);
+}
+.admin .admin-nav__btn.is-active,
+.admin .status-btn.is-active,
+.admin .status-btn--danger.is-active {
+  background: var(--color-primary-soft);
+}
+.admin .admin-nav__btn.is-active { background: var(--color-primary); color: #fff; }
+
+/* Refund input focus: la regla original usa fondo blanco puro */
+.admin .refund-box__row input:focus { background: var(--color-surface-hi); }
+
+/* Label dentro del chip del día: hundido un paso respecto del chip */
+.admin .admin-day__label { background: var(--color-bg); }
+
+/* Sidebar desktop: sin panel propio, hereda la página */
+@media (min-width: 1024px) {
+  .admin .admin-nav { background: transparent; }
+}
+
+/* Sombra del hover de tarjetas de pedido: la original (6% negro)
+   es invisible sobre negro */
+.admin .admin-order:hover { box-shadow: var(--shadow-sm); }
+
+/* Ventas: NO tiene panel contenedor como Estadísticas, así que
+   las tarjetas y los chips de período caen directo sobre la página
+   (#111). Van elevados a surface; la tarjeta principal sigue en
+   #111 a propósito (banner oscuro de énfasis, separada por borde).
+   payment-breakdown__row y cash-register ya van en surface. */
+.admin .admin-sales .stat-card {
+  background: var(--color-surface);
+}
+.admin .admin-sales .stat-card--main {
+  background: var(--color-bg);
+  border-color: var(--color-border-hi);
+}
+.admin .admin-sales .period-btn { background: var(--color-surface); }
+.admin .admin-sales .period-btn.is-active { background: var(--color-primary); color: #fff; }
+
+/* "Eliminar" repetido en cada fila (productos, cupones, categorías
+   y grupos) compite en rojo sólido con la acción principal y el item
+   activo del menú: pasa a contorno. El relleno rojo queda sólo para
+   la confirmación dentro del modal. */
+.admin .admin-product__actions .btn--danger,
+.admin .admin-cat__actions .btn--danger,
+.admin .admin-group__actions .btn--danger,
+.admin .coupon-card__actions .btn--danger {
+  background: transparent;
+  border: 2px solid var(--color-danger-text);
+  color: var(--color-danger-text);
+}
+.admin .admin-product__actions .btn--danger:hover,
+.admin .admin-cat__actions .btn--danger:hover,
+.admin .admin-group__actions .btn--danger:hover,
+.admin .coupon-card__actions .btn--danger:hover {
+  background: var(--color-primary-soft);
+  filter: none;
+}
+
+/* Clientes: la línea "Última compra… Ticket promedio…" se cortaba
+   con el emoji en el medio; va en dos líneas ordenadas. */
+.admin .customer-card__submeta {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: 4px; font-size: 12.5px;
 }
