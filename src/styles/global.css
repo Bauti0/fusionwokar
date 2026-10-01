@@ -775,22 +775,106 @@ body:has(.admin-login) { background: var(--color-secondary); }
   box-shadow: var(--ring-soft);
 }
 
-/* Refunds */
-.admin .refunds { border-color: var(--color-border); }
-.admin .refunds__row { color: var(--color-text-soft); }
-.admin .refunds__total { color: var(--color-text); }
-.admin .refund-box { border-color: var(--color-border); }
-.admin .refund-box__note { color: var(--color-text-soft); }
-.admin .refund-box__row input {
-  border-color: var(--color-border-control);
+/* Refunds: tarjeta de pago, historial, barra de progreso y acciones.
+   Los colores van bajo .pay-card / .refund-box para ganarle a
+   .admin .detail-block p (0,2,1), que dejaba muertos a varios overrides. */
+.admin .pay-card {
   background: var(--color-surface);
-  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px;
 }
-.admin .refund-box__row input:focus {
+.admin .pay-card .pay-card__meta { font-size: 12.5px; color: var(--color-text-mute); }
+
+/* Historial */
+.admin .refunds { border-color: var(--color-border); }
+.admin .pay-card .refunds__row { color: var(--color-text-soft); }
+.admin .refunds__bar {
+  height: 6px; margin-top: 8px;
+  border-radius: 999px; background: var(--color-surface-hi);
+  overflow: hidden;
+}
+.admin .refunds__bar-fill {
+  display: block; height: 100%; border-radius: 999px;
+  background: var(--color-primary);
+  width: var(--refunds-pct, 0%);
+}
+
+/* Caja de devolución */
+.admin .refund-box { border-color: var(--color-border); }
+.admin .pay-card .refund-box__note { color: var(--color-text-soft); }
+.admin .refund-box__note strong { color: var(--color-text); font-weight: 700; }
+.admin .refund-box__field {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  border: 2px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  padding: 0 12px;
+  transition: border-color .15s var(--ease), background .15s var(--ease), box-shadow .15s var(--ease);
+}
+.admin .refund-box__field:focus-within {
   border-color: var(--color-primary);
   background: var(--color-surface-hi);
   box-shadow: var(--ring-soft);
 }
+.admin .refund-box__prefix { color: var(--color-text-soft); font-weight: 700; }
+.admin .refund-box__field input {
+  flex: 1; min-width: 0; border: 0; padding: 10px 0;
+  background: transparent; color: var(--color-text); outline: none;
+}
+.admin .refund-box__field input:focus { background: transparent; box-shadow: none; }
+.admin .pay-card .refund-box__help {
+  margin: 4px 0 10px;
+  font-size: 12.5px; color: var(--color-text-mute);
+}
+
+/* "Devolver todo": destructivo a contorno (borde marca + texto danger) */
+.admin .refund-box__btn-full {
+  background: var(--color-surface);
+  color: var(--color-danger-text);
+  border: 2px solid var(--color-primary);
+}
+.admin .refund-box__btn-full:hover { background: var(--color-primary-soft); }
+
+/* Devuelto por completo: confirmación sobria en verde */
+.admin .pay-card .refund-done {
+  display: flex; align-items: center; gap: 8px;
+  margin: 10px 0 2px; padding: 10px 12px;
+  background: var(--color-success-soft);
+  border: 1px solid var(--color-success-border);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px !important;
+  color: var(--color-success-text);
+}
+
+/* Botón que abre el modal de devoluciones */
+.admin .refund-open { border-color: var(--color-border-control); background: var(--color-surface); }
+.admin .refund-open:hover { border-color: var(--color-primary); background: var(--color-surface-hi); }
+.admin .refund-open__label { color: var(--color-primary); }
+.admin .refund-open__hint { color: var(--color-text-mute); }
+
+/* Modal de devoluciones */
+.admin .refund-modal__lead { color: var(--color-text-soft); }
+.admin .refund-modal__lead strong { color: var(--color-text); }
+.admin .refund-modal__field {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
+}
+.admin .refund-modal__field:focus-within {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  box-shadow: var(--ring-soft);
+}
+.admin .refund-modal__prefix { color: var(--color-text-soft); }
+.admin .refund-modal__field input { color: var(--color-text); }
+
+/* Modal de confirmación: monto en grande + cierre pendiente */
+.admin .confirm-refund__amount {
+  display: block; margin: 2px 0 6px;
+  font-family: var(--font-display); font-size: 26px; line-height: 1.1;
+  color: var(--color-text);
+}
+.admin .confirm-refund__line { display: block; }
 
 /* Status actions */
 .admin .status-btn {
@@ -2367,7 +2451,68 @@ body:has(.admin-login) { background: var(--color-secondary); }
   display: flex; justify-content: space-between; gap: 10px;
   font-size: 13px !important; color: var(--color-text-soft);
 }
-.refunds__total { margin-top: 4px !important; font-weight: 700; color: #4a4fc4 !important; }
+.refunds__total { margin-top: 4px !important; font-weight: 700; color: var(--color-text); }
+.refunds__arrow { color: var(--color-text-soft); }
+.refunds__amount { font-weight: 600; color: var(--color-text); }
+.refunds__date { font-variant-numeric: tabular-nums; }
+
+/* Botón que abre el modal de devoluciones */
+.refund-open {
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  width: 100%; margin-top: 12px; padding: 12px 14px;
+  border: 1px dashed var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-bg); text-align: left; cursor: pointer;
+  transition: border-color .15s var(--ease), background .15s var(--ease);
+}
+.refund-open:hover { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.refund-open__label { font-size: 14px; font-weight: 700; color: var(--color-primary); }
+.refund-open__hint { font-size: 13px; color: var(--color-text-soft); }
+
+/* Modal de devoluciones */
+.refund-modal { max-width: 420px; }
+.refund-modal__lead { margin: 0 0 14px; font-size: 14.5px; color: var(--color-text-soft); }
+.refund-modal__lead strong { color: var(--color-text); font-weight: 700; }
+.refund-modal__field {
+  display: flex; align-items: center; gap: 8px;
+  border: 2px solid var(--color-border); border-radius: var(--radius-sm);
+  padding: 0 12px; background: var(--color-surface);
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.refund-modal__field:focus-within {
+  border-color: var(--color-primary); box-shadow: 0 0 0 4px rgba(229,52,46,.1);
+}
+.refund-modal__prefix { color: var(--color-text-soft); font-weight: 700; }
+/* El input dentro del contenedor NO lleva borde propio: solo el wrapper */
+.refund-modal .field .refund-modal__field input,
+.refund-modal .refund-modal__field input {
+  flex: 1; min-width: 0;
+  border: 0; background: transparent; outline: none; box-shadow: none;
+  padding: 12px 0; font-size: 16px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.refund-modal .field .refund-modal__field input:focus,
+.refund-modal .field .refund-modal__field input:focus-visible {
+  border: 0; box-shadow: none; outline: none; background: transparent;
+}
+
+/* Botones del modal de devoluciones: borde rojo, sin fondo relleno */
+.refund-modal__btn-partial,
+.refund-modal__btn-full {
+  background: transparent;
+  color: var(--color-primary);
+  border: 2px solid var(--color-primary);
+}
+.refund-modal__btn-partial:hover,
+.refund-modal__btn-full:hover {
+  background: var(--color-primary-soft);
+  filter: none;
+}
+
+/* Footer del modal: botones separados */
+.refund-modal .modal__footer {
+  display: flex; flex-direction: column; gap: 10px;
+}
+
 .refund-box { margin-top: 10px; border-top: 1px dashed var(--color-border); padding-top: 10px; }
 .refund-box__note { font-size: 13.5px !important; color: var(--color-text-soft); }
 .refund-box__row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin: 8px 0; }
@@ -2400,6 +2545,10 @@ body:has(.admin-login) { background: var(--color-secondary); }
 /* Edición de productos (menú) desde el panel */
 .btn--danger { background: var(--color-primary); color: #fff; }
 .btn--danger:hover { filter: brightness(0.94); }
+/* Variante outline del mismo rojo (fondo transparente, borde y texto):
+   solo para "⛔ Desactivar" en cuentas de sucursal (AdminUsers). */
+.btn--danger-outline { background: transparent; border: 1px solid var(--color-primary); color: var(--color-primary); }
+.btn--danger-outline:hover { background: rgba(229, 52, 46, 0.1); }
 .admin-products { padding: 14px 0 24px; }
 .admin-products__toolbar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
 .admin-products__controls { display: flex; flex-direction: column; gap: 10px; flex: 1; }
@@ -2799,9 +2948,6 @@ body:has(.admin-login) { background: var(--color-secondary); }
   background: var(--color-primary-soft);
 }
 .admin .admin-nav__btn.is-active { background: var(--color-primary); color: #fff; }
-
-/* Refund input focus: la regla original usa fondo blanco puro */
-.admin .refund-box__row input:focus { background: var(--color-surface-hi); }
 
 /* Label dentro del chip del día: hundido un paso respecto del chip */
 .admin .admin-day__label { background: var(--color-bg); }

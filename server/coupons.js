@@ -23,12 +23,45 @@ function now() {
   return new Date().toISOString();
 }
 
-// Valida un cupón contra la BD y calcula el descuento.
-export async function applyCoupon(db, code, total) {
+// Resuelve la fila de un cupón para una sucursal: el local de ESA
+// sucursal o el global (branch = ''). Con la unicidad GLOBAL del código
+// (opción 2 del dueño) solo puede haber una fila por código, pero el
+// orden lo deja explícito por si algún día se relaja: el local gana al
+// global. Sin `branch`, busca solo por código (comportamiento original).
+export async function findCouponRow(db, code, branch) {
+  const clean = String(code || "").trim().toUpperCase();
+  if (!clean) return null;
+  if (branch) {
+    return await db
+      .prepare(
+        "SELECT * FROM coupons WHERE code = ? AND (branch = ? OR branch = '') ORDER BY branch != '' DESC LIMIT 1"
+      )
+      .get(clean, branch);
+  }
+  return await db.prepare("SELECT * FROM coupons WHERE code = ?").get(clean);
+}
+
+// Valida un cupón contra la BD y calcula el descuento. `branch` es la
+// sucursal del PEDIDO (nunca algo que mande el cliente por su cuenta):
+// un cupón local de otra sucursal no aplica.
+export async function applyCoupon(db, code, total, branch) {
   const clean = String(code || "").trim().toUpperCase();
   if (!clean) return { error: "Falta el código del cupón" };
-  const row = await db.prepare("SELECT * FROM coupons WHERE code = ?").get(clean);
-  if (!row) return { error: "El cupón no existe" };
+  let row;
+  if (branch) {
+    row = await findCouponRow(db, clean, branch);
+    if (!row) {
+      // Distinguir "no existe" de "existe pero es de otra sucursal":
+      // el cliente tiene que saber si tipeó mal o si el cupón simplemente
+      // no vale acá (sin revelar de cuál sucursal es).
+      const exists = await db.prepare("SELECT 1 FROM coupons WHERE code = ?").get(clean);
+      if (exists) return { error: "Este cupón no es válido para esta sucursal" };
+      return { error: "El cupón no existe" };
+    }
+  } else {
+    row = await db.prepare("SELECT * FROM coupons WHERE code = ?").get(clean);
+    if (!row) return { error: "El cupón no existe" };
+  }
   if (row.active !== 1) return { error: "El cupón ya no está activo" };
   if (row.max_uses > 0 && row.used_count >= row.max_uses) {
     return { error: "El cupón ya no tiene usos disponibles" };
@@ -49,9 +82,20 @@ export async function applyCoupon(db, code, total) {
 // condicional (no SELECT + UPDATE separados): si dos checkouts simultáneos
 // usan el mismo cupón de un solo uso, solo uno logra reservar. Se reserva
 // ANTES de cualquier await (ej. createOrder de Mercado Pago) y se
-// libera si el pedido nunca llega a crearse.
-export async function reserveCoupon(db, code) {
+// libera si el pedido nunca llega a crearse. Con `branch`, la fila tiene
+// que valer para esa sucursal (local de ella o global).
+export async function reserveCoupon(db, code, branch) {
   if (!code) return true; // no hay cupón, nada que reservar
+  if (branch) {
+    const result = await db
+      .prepare(`
+        UPDATE coupons SET used_count = used_count + 1, updated_at = ?
+        WHERE code = ? AND (branch = ? OR branch = '') AND active = 1
+          AND (max_uses = 0 OR used_count < max_uses)
+      `)
+      .run(now(), code, branch);
+    return result.changes > 0;
+  }
   const result = await db
     .prepare(`
       UPDATE coupons SET used_count = used_count + 1, updated_at = ?
@@ -76,7 +120,12 @@ export async function reserveCoupon(db, code) {
 // precondicion en la primitiva evita que un call site futuro reintroduzca
 // esta misma clase de bug (o que un cambio de criterio en el webhook la
 // reintroduzca sin que nadie se entere).
-export async function releaseOrderCoupon(db, orderId, code) {
+//
+// Con `branch` (la sucursal del PEDIDO), el contador se baja SOLO de la
+// fila resuelta por findCouponRow: si el cupón no vale para esa sucursal,
+// no había reserva de esa fila que devolver. Sin `branch`, se baja por
+// código (comportamiento original, pedidos viejos).
+export async function releaseOrderCoupon(db, orderId, code, branch) {
   if (!orderId || !code) return false;
   const marked = await db
     .prepare(
@@ -86,17 +135,39 @@ export async function releaseOrderCoupon(db, orderId, code) {
     )
     .run(now(), orderId, code);
   if (marked.changes === 0) return false;
-  await db
-    .prepare("UPDATE coupons SET used_count = MAX(used_count - 1, 0), updated_at = ? WHERE code = ?")
-    .run(now(), code);
+  if (branch) {
+    const row = await findCouponRow(db, code, branch);
+    if (row) {
+      // Por código, no por id: la unicidad del código es GLOBAL (opción 2
+      // del dueño), así que es la misma fila — y no depende de la clave
+      // primaria que use el esquema.
+      await db
+        .prepare("UPDATE coupons SET used_count = MAX(used_count - 1, 0), updated_at = ? WHERE code = ?")
+        .run(now(), row.code);
+    }
+  } else {
+    await db
+      .prepare("UPDATE coupons SET used_count = MAX(used_count - 1, 0), updated_at = ? WHERE code = ?")
+      .run(now(), code);
+  }
   return true;
 }
 
 // Libera una reserva SIN fila de pedido: el INSERT del pedido falló y no
 // quedó nada que marcar (ver createOrder). No hay webhook ni sweep que
 // puedan volver a liberarla, porque los dos buscan pedidos en la tabla.
-export async function releaseOrphanReservation(db, code) {
+// Con `branch`, baja SOLO la fila resuelta (igual que releaseOrderCoupon).
+export async function releaseOrphanReservation(db, code, branch) {
   if (!code) return false;
+  if (branch) {
+    const row = await findCouponRow(db, code, branch);
+    if (row) {
+      await db
+        .prepare("UPDATE coupons SET used_count = MAX(used_count - 1, 0), updated_at = ? WHERE code = ?")
+        .run(now(), row.code);
+    }
+    return true;
+  }
   await db
     .prepare("UPDATE coupons SET used_count = MAX(used_count - 1, 0), updated_at = ? WHERE code = ?")
     .run(now(), code);
@@ -123,14 +194,14 @@ export async function releaseStaleCouponReservations(db) {
     const cutoff = new Date(Date.now() - 30 * 60000).toISOString();
     const rows = await db
       .prepare(
-        `SELECT id, coupon_code AS code FROM orders
+        `SELECT id, coupon_code AS code, branch FROM orders
          WHERE coupon_code IS NOT NULL AND coupon_code != ''
            AND coupon_released_at IS NULL
            AND payment_status IN ('pending', 'rejected', 'cancelled')
            AND created_at < ?`
       )
       .all(cutoff);
-    for (const r of rows) await releaseOrderCoupon(db, r.id, r.code);
+    for (const r of rows) await releaseOrderCoupon(db, r.id, r.code, r.branch);
   } catch (err) {
     // No debe tumbar la creación de un pedido: el sweep es una corrección
     // opportunista y un fallo acá se paga con el cupón quemado, no con la

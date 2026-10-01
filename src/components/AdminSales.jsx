@@ -18,8 +18,12 @@ const PAYMENT_LABELS = { efectivo: "💰 Efectivo", mercadopago: "💳 Mercado P
 // ============================================================
 // AdminSales — ventas por período + arqueo de caja
 // ============================================================
-export default function AdminSales() {
-  const [branch, setBranch] = useState(BRANCH_LIST[0]?.id || "");
+export default function AdminSales({ me }) {
+  const isBranchAdmin = me?.role === "branch_admin";
+  // El admin de sucursal opera SIEMPRE su caja: sin dropdown (el
+  // server de todos modos filtra por la sesión).
+  const [branchSel, setBranchSel] = useState(BRANCH_LIST[0]?.id || "");
+  const branch = isBranchAdmin ? me.branch : branchSel;
   const [period, setPeriod] = useState("30d");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -53,7 +57,11 @@ export default function AdminSales() {
       </div>
 
       <div className="admin-products__controls" style={{ marginBottom: 14 }}>
-        <Dropdown value={branch} onChange={setBranch} options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))} />
+        {isBranchAdmin ? (
+          <span className="badge badge--branch">{BRANCH_LIST.find((b) => b.id === branch)?.name}</span>
+        ) : (
+          <Dropdown value={branch} onChange={setBranchSel} options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))} />
+        )}
       </div>
 
       {period === "custom" && (

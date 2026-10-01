@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getMenu, adminCreateManualOrder } from "../api.js";
 import { BRANCH_LIST } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
@@ -17,7 +17,7 @@ const PAYMENT_OPTIONS = [
 // Reusa el mismo menú/precios/validación que el checkout online,
 // así los pedidos cargados acá también entran en las estadísticas.
 // ============================================================
-export default function AdminNewOrder({ onBack, onCreated, initialBranch = "" }) {
+export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", fixedBranch = "", repeatOrder = null }) {
   const BRANCH_KEY = "fw.admin.lastNewOrderBranch";
 
   function rememberedBranch() {
@@ -29,13 +29,27 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "" })
     }
   }
 
+  // fixedBranch: el admin de sucursal carga pedidos SIEMPRE en la
+  // suya (el server lo fuerza igual); no hay selector.
+  // Con "Rehacer", el superadmin arranca en la sucursal del pedido
+  // original para que la precarga se arme contra el menú correcto;
+  // después puede cambiarla desde el dropdown.
   const [branchId, setBranchId] = useState(() => {
+    if (fixedBranch && BRANCH_LIST.some((b) => b.id === fixedBranch)) return fixedBranch;
+    if (repeatOrder?.branch && BRANCH_LIST.some((b) => b.id === repeatOrder.branch)) return repeatOrder.branch;
     if (BRANCH_LIST.some((b) => b.id === initialBranch)) return initialBranch;
     return rememberedBranch() || BRANCH_LIST[0]?.id || "";
   });
 
   function changeBranch(v) {
+    if (v === branchId) return;
     setBranchId(v);
+    // El carrito se armó contra el menú de la sucursal anterior: al cambiar,
+    // se vacía para no mezclar productos/precios de otra carta.
+    if (cart.length > 0) {
+      setCart([]);
+      setCartCleared("Se vació el carrito porque cambiaste de sucursal.");
+    }
     try {
       localStorage.setItem(BRANCH_KEY, v);
     } catch {}
@@ -55,6 +69,11 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "" })
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(null);
+  // Avisos del "Rehacer" del panel: items del pedido original que ya no
+  // están en el menú actual, y el vaciado del carrito al cambiar sucursal.
+  const [prefillSkipped, setPrefillSkipped] = useState([]);
+  const [cartCleared, setCartCleared] = useState("");
+  const prefillDoneRef = useRef(false);
 
   useEffect(() => {
     getMenu(branchId).then(setMenu).catch(() => setMenu(null));
@@ -82,7 +101,57 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "" })
     return flatProducts.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 30);
   }, [flatProducts, search]);
 
+  // "Rehacer" del panel: cuando el menú de la sucursal terminó de cargar,
+  // vuelca los items del pedido original al carrito. Corre UNA sola vez
+  // (guard por ref) y nunca pisa lo que el admin ya editó. Se matchea por
+  // productId contra el menú ACTUAL: si un producto (o extra) ya no existe
+  // o está deshabilitado, se omite y se avisa en pantalla. Los precios son
+  // los vigentes del menú, no los del pedido original.
+  useEffect(() => {
+    if (!menu || !repeatOrder || prefillDoneRef.current) return;
+    prefillDoneRef.current = true;
+    const skipped = [];
+    const byKey = new Map();
+    for (const it of repeatOrder.items || []) {
+      const prod = it?.productId ? flatProducts.find((p) => p.id === it.productId) : null;
+      if (!prod) {
+        skipped.push(it?.name || "un producto");
+        continue;
+      }
+      const extras = [];
+      for (const ex of it.extras || []) {
+        const current = (prod.extras || []).find((e) => e.id === ex.id);
+        if (current) extras.push(current);
+        else skipped.push(`${ex.label || "un extra"} (${prod.name})`);
+      }
+      const key = `${prod.id}|${extras.map((e) => e.id).sort().join(",")}|${it.notes || ""}`;
+      const qty = it.qty || 1;
+      const existing = byKey.get(key);
+      if (existing) existing.qty += qty;
+      else
+        byKey.set(key, {
+          key,
+          productId: prod.id,
+          name: prod.name,
+          unitPrice: prod.price,
+          extras,
+          notes: it.notes || "",
+          qty,
+        });
+    }
+    setCart(Array.from(byKey.values()));
+    setOrderMode(repeatOrder.orderMode === "delivery" ? "delivery" : "pickup");
+    setName(repeatOrder.customer?.name || "");
+    setPhone(repeatOrder.customer?.phone || "");
+    // El costo de envío NO se copia: el server lo recalcula con el flujo
+    // existente a partir de esta dirección.
+    setAddress(repeatOrder.orderMode === "delivery" ? repeatOrder.address || "" : "");
+    setNotes(repeatOrder.notes || "");
+    setPrefillSkipped(skipped);
+  }, [menu, repeatOrder, flatProducts]);
+
   function addToCart(product, opts = { extras: [], notes: "", qty: 1 }) {
+    setCartCleared("");
     setCart((prev) => {
       const qty = opts.qty || 1;
       // La nota forma parte de la clave para no fusionar líneas idénticas
@@ -138,6 +207,8 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "" })
       setPhone("");
       setAddress("");
       setNotes("");
+      setPrefillSkipped([]);
+      setCartCleared("");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -160,9 +231,20 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "" })
           </button>
         </div>
       )}
+      {prefillSkipped.length > 0 && (
+        <div className="form-error">
+          ⚠️ No se pudieron cargar del pedido original: {prefillSkipped.join(", ")}. Ya no
+          están en el menú de esta sucursal.
+        </div>
+      )}
+      {cartCleared && <div className="form-error">🧹 {cartCleared}</div>}
 
       <div className="admin-products__controls" style={{ marginBottom: 14 }}>
-        <Dropdown value={branchId} onChange={changeBranch} options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))} />
+        {fixedBranch ? (
+          <span className="badge badge--branch">{BRANCH_LIST.find((b) => b.id === branchId)?.name}</span>
+        ) : (
+          <Dropdown value={branchId} onChange={changeBranch} options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))} />
+        )}
       </div>
 
       <div className="new-order__grid">

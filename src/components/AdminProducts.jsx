@@ -54,11 +54,14 @@ function slugify(text) {
   );
 }
 
-export default function AdminProducts() {
+export default function AdminProducts({ me }) {
+  const isBranchAdmin = me?.role === "branch_admin";
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [branchId, setBranchId] = useState(BRANCH_LIST[0]?.id || "");
+  // El admin de sucursal edita SIEMPRE su menú: arranca en SU
+  // sucursal y no puede elegir otra (el server igual filtra).
+  const [branchId, setBranchId] = useState(isBranchAdmin ? me.branch : BRANCH_LIST[0]?.id || "");
   const [editing, setEditing] = useState(null); // null | { product } | { isNew: true, groupName }
   const [form, setForm] = useState(EMPTY_FORM);
   const [newCategory, setNewCategory] = useState(false);
@@ -351,11 +354,15 @@ export default function AdminProducts() {
     <div className="admin-products">
       <div className="admin-products__toolbar">
         <div className="admin-products__controls">
-          <Dropdown
-            value={branchId}
-            onChange={setBranchId}
-            options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))}
-          />
+          {isBranchAdmin ? (
+            <span className="badge badge--branch">{BRANCH_LIST.find((b) => b.id === branchId)?.name}</span>
+          ) : (
+            <Dropdown
+              value={branchId}
+              onChange={setBranchId}
+              options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))}
+            />
+          )}
           <input
             type="search"
             className="admin-search"
@@ -560,7 +567,7 @@ export default function AdminProducts() {
                   value={form.branch}
                   onChange={(v) => setForm({ ...form, branch: v })}
                   options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))}
-                  disabled={!!editing?.product}
+                  disabled={!!editing?.product || isBranchAdmin}
                   ariaLabel="Sucursal del producto"
                 />
               </div>

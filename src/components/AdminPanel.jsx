@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   adminOrders,
   adminSetStatus,
   adminLogout,
-  adminLogoutAll,
   adminOrder,
   adminSetShipping,
   adminRefund,
@@ -32,6 +31,7 @@ import AdminCoupons from "./AdminCoupons.jsx";
 import AdminCustomers from "./AdminCustomers.jsx";
 import AdminSales from "./AdminSales.jsx";
 import AdminNewOrder from "./AdminNewOrder.jsx";
+import AdminUsers from "./AdminUsers.jsx";
 
 // ============================================================
 // AdminPanel — gestión de pedidos
@@ -97,14 +97,23 @@ function LiveClock() {
   );
 }
 
-export default function AdminPanel({ onLogout }) {
+export default function AdminPanel({ me, onLogout }) {
   const [section, setSection] = useState("orders"); // "orders" | "stats" | "products" | "coupons"
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
+  // Pedido original al rehacer: se pasa a AdminNewOrder para precargar
+  // productos, modo de entrega y cliente. Se limpia al volver, al crear
+  // el pedido nuevo y con el botón "Nuevo pedido" del toolbar.
+  const [repeatOrder, setRepeatOrder] = useState(null);
   const [lastWhatsApp, setLastWhatsApp] = useState("");
-  const [branch, setBranch] = useState("");
+  // El admin de sucursal NO elige sucursal: su `branch` es SIEMPRE
+  // me.branch (el server además filtra por la sesión, esto es solo
+  // lo que se le muestra). El dropdown queda para el superadmin.
+  const isBranchAdmin = me?.role === "branch_admin";
+  const [branchFilter, setBranchFilter] = useState("");
+  const branch = isBranchAdmin ? me.branch : branchFilter;
   const [status, setStatus] = useState("");
   const [payment, setPayment] = useState("");
   const [search, setSearch] = useState("");
@@ -117,65 +126,20 @@ export default function AdminPanel({ onLogout }) {
   const [busyShipping, setBusyShipping] = useState(false);
   const [refundInput, setRefundInput] = useState("");
   const [refundConfirm, setRefundConfirm] = useState(null); // { amount, full }
+  const [refundForm, setRefundForm] = useState(false);
   const pageRef = useRef(1);
   const seenRef = useRef(loadSeen());
   const [unseenIds, setUnseenIds] = useState(() => new Set());
   const [today, setToday] = useState(null);
   const dialogRef = useDialogA11y({ onClose: () => setSelected(null), isActive: !!selected });
-  const navigate = useNavigate();
 
-  // "Rehacer": vuelve a cargar un pedido en el carrito del cliente (store).
-  // Usa el mismo bridge de localStorage que useCart.repeatOrder: escribe los
-  // items en fw.cart.<branch> y navega a "/" para que el checkout quede listo.
+  // "Rehacer": abre "Nuevo pedido" precargado con los productos, cantidades,
+  // modo de entrega y datos del cliente del pedido original. No copia pago,
+  // estado ni número (es un pedido nuevo de mostrador) y la sucursal sigue
+  // saliendo de la sesión (fixedBranch / filtro), nunca del pedido original.
   function rehacerPedido(order) {
-    const cartKey = `fw.cart.${order.branch}`;
-    let current = [];
-    try {
-      current = JSON.parse(localStorage.getItem(cartKey) || "[]");
-    } catch {
-      current = [];
-    }
-    if (!Array.isArray(current)) current = [];
-    const byKey = new Map(current.map((it) => [it.key, it]));
-    for (const it of order.items || []) {
-      const key = `${it.productId}|${(it.extras || [])
-        .map((e) => e.id)
-        .sort()
-        .join(",")}`;
-      const line = {
-        key,
-        productId: it.productId,
-        name: it.name,
-        unitPrice: it.unitPrice,
-        extras: it.extras || [],
-        notes: it.notes || "",
-        qty: it.qty,
-      };
-      const existing = byKey.get(key);
-      if (existing) byKey.set(key, { ...existing, qty: existing.qty + line.qty });
-      else byKey.set(key, line);
-    }
-    try {
-      localStorage.setItem(cartKey, JSON.stringify(Array.from(byKey.values())));
-    } catch {}
-    try {
-      localStorage.setItem("fw.lastBranch", order.branch);
-    } catch {}
-    const cust = { name: order.customer?.name || "", phone: order.customer?.phone || "" };
-    if (order.orderMode === "delivery") {
-      cust.notes = order.notes || "";
-      if (order.address) cust.address = order.address;
-    }
-    try {
-      localStorage.setItem("fw.customer", JSON.stringify(cust));
-    } catch {}
-    try {
-      localStorage.setItem(
-        "fw.afterRepeat",
-        JSON.stringify({ orderMode: order.orderMode || "delivery", openCart: true })
-      );
-    } catch {}
-    navigate("/");
+    setRepeatOrder(order);
+    setSection("new-order");
   }
 
   // Mini resumen del día ("Hoy: $X · N pedidos") para la pestaña de pedidos
@@ -378,16 +342,6 @@ export default function AdminPanel({ onLogout }) {
     onLogout();
   }
 
-  async function handleLogoutAll() {
-    if (!window.confirm("¿Cerrar TODAS las sesiones del panel (incluida esta)?")) return;
-    try {
-      await adminLogoutAll();
-    } catch {
-      /* aunque falle, se cierra la sesión local */
-    }
-    onLogout();
-  }
-
   return (
     <div className="admin">
       <header className="admin__header">
@@ -405,9 +359,6 @@ export default function AdminPanel({ onLogout }) {
             </Link>
             <button className="btn btn--ghost btn--sm" onClick={handleLogout}>
               Salir
-            </button>
-            <button className="btn btn--ghost btn--sm" onClick={handleLogoutAll}>
-              🔒 Cerrar todas las sesiones
             </button>
           </div>
         </div>
@@ -452,25 +403,45 @@ export default function AdminPanel({ onLogout }) {
           >
             💵 Ventas
           </button>
+          {me?.role === "superadmin" && (
+            <button
+              className={`admin-nav__btn ${section === "users" ? "is-active" : ""}`}
+              onClick={() => setSection("users")}
+            >
+              🔐 Cuentas
+            </button>
+          )}
         </nav>
 
         <div className="container admin__body">
 
-        {section === "stats" && <AdminStats />}
+        {section === "stats" && <AdminStats me={me} />}
 
-        {section === "products" && <AdminProducts />}
+        {section === "products" && <AdminProducts me={me} />}
 
-        {section === "coupons" && <AdminCoupons />}
+        {section === "coupons" && <AdminCoupons me={me} />}
 
-        {section === "customers" && <AdminCustomers />}
+        {section === "customers" && <AdminCustomers me={me} />}
 
-        {section === "sales" && <AdminSales />}
+        {section === "sales" && <AdminSales me={me} />}
+
+        {section === "users" && me?.role === "superadmin" && (
+          <AdminUsers me={me} onLogout={onLogout} />
+        )}
 
         {section === "new-order" && (
           <AdminNewOrder
-            onBack={() => setSection("orders")}
-            onCreated={() => load({ showSpinner: false })}
+            onBack={() => {
+              setRepeatOrder(null);
+              setSection("orders");
+            }}
+            onCreated={() => {
+              setRepeatOrder(null);
+              load({ showSpinner: false });
+            }}
             initialBranch={branch}
+            fixedBranch={isBranchAdmin ? me.branch : ""}
+            repeatOrder={repeatOrder}
           />
         )}
 
@@ -490,7 +461,10 @@ export default function AdminPanel({ onLogout }) {
             <button
               type="button"
               className="btn btn--primary btn--sm"
-              onClick={() => setSection("new-order")}
+              onClick={() => {
+                setRepeatOrder(null);
+                setSection("new-order");
+              }}
             >
               <IconPlus style={{ width: 14, height: 14 }} /> Nuevo pedido
             </button>
@@ -504,15 +478,20 @@ export default function AdminPanel({ onLogout }) {
             onChange={(e) => setSearch(e.target.value)}
             className="admin-search"
           />
-          <Dropdown
-            value={branch}
-            onChange={setBranch}
-            options={[
-              { value: "", label: "Todas las sucursales" },
-              ...BRANCH_LIST.map((b) => ({ value: b.id, label: b.name })),
-            ]}
-            placeholder="Sucursal"
-          />
+          {isBranchAdmin ? (
+            // Sucursal fija: el admin de sucursal no puede filtrar la otra
+            <span className="badge badge--branch">{BRANCHES[branch]?.name}</span>
+          ) : (
+            <Dropdown
+              value={branch}
+              onChange={setBranchFilter}
+              options={[
+                { value: "", label: "Todas las sucursales" },
+                ...BRANCH_LIST.map((b) => ({ value: b.id, label: b.name })),
+              ]}
+              placeholder="Sucursal"
+            />
+          )}
           <Dropdown
             value={status}
             onChange={setStatus}
@@ -745,63 +724,71 @@ const renderOrder = (o) => {
                 </div>
                 <div className="detail-block">
                   <h4>Pago</h4>
-                  <p className={`badge badge--pay badge--pay-${selected.paymentStatus}`}>
-                    {paymentLabel(selected.paymentStatus)} · {selected.paymentMethod}
-                  </p>
-                  {selected.mpOrderId && <p>Order MP: {selected.mpOrderId}</p>}
-                  {selected.mpPaymentId && <p>ID pago: {selected.mpPaymentId}</p>}
-
-                  {selected.refunds?.length > 0 && (
-                    <div className="refunds">
-                      {selected.refunds.map((r) => (
-                        <p className="refunds__row" key={r.id}>
-                          <span>↩ {formatPrice(r.amount)}</span>
-                          <span>{new Date(r.at).toLocaleString("es-AR")}</span>
-                        </p>
-                      ))}
-                      <p className="refunds__total">
-                        Devuelto: {formatPrice(selected.refundedAmount)} de {formatPrice(selected.total)}
-                      </p>
-                    </div>
-                  )}
-
-                  {canRefund && (
-                    <div className="refund-box">
-                      <p className="refund-box__note">
-                        Quedan {formatPrice(refundable)} por devolver.
-                      </p>
-                      <div className="refund-box__row">
-                        <input
-                          className="refund-box__input"
-                          type="number"
-                          inputMode="numeric"
-                          min="1"
-                          max={refundable}
-                          placeholder="Monto parcial"
-                          value={refundInput}
-                          onChange={(e) => setRefundInput(e.target.value)}
-                        />
-                        <button
-                          className="btn btn--primary btn--sm"
-                          onClick={() => openRefundConfirm(refundInput)}
-                        >
-                          Devolver monto
-                        </button>
-                      </div>
-                      <button
-                        className="btn btn--ghost btn--sm btn--block"
-                        onClick={() => openRefundConfirm()}
-                      >
-                        Devolver todo ({formatPrice(refundable)})
-                      </button>
-                    </div>
-                  )}
-
-                  {selected.paymentMethod === "mercadopago" &&
-                    selected.paymentStatus === "approved" &&
-                    !canRefund && (
-                      <p className="refund-box__note">Este pedido fue devuelto por completo.</p>
+                  <div className="pay-card">
+                    <p className={`badge badge--pay badge--pay-${selected.paymentStatus}`}>
+                      {paymentLabel(selected.paymentStatus)} · {selected.paymentMethod}
+                    </p>
+                    {selected.mpOrderId && (
+                      <p className="pay-card__meta">Order MP: {selected.mpOrderId}</p>
                     )}
+                    {selected.mpPaymentId && (
+                      <p className="pay-card__meta">ID pago: {selected.mpPaymentId}</p>
+                    )}
+
+                    {selected.refunds?.length > 0 && (
+                      <div className="refunds">
+                        {selected.refunds.map((r) => (
+                          <div className="refunds__row" key={r.id}>
+                            <span className="refunds__arrow">↩</span>
+                            <span className="refunds__amount">{formatPrice(r.amount)}</span>
+                            <span className="refunds__date">
+                              {new Date(r.at).toLocaleString("es-AR", {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                hour12: false,
+                              })}
+                            </span>
+                          </div>
+                        ))}
+                        <div
+                          className="refunds__bar"
+                          aria-hidden="true"
+                          style={{
+                            "--refunds-pct": `${Math.min(
+                              100,
+                              Math.round(
+                                ((selected.refundedAmount || 0) / (selected.total || 1)) * 100
+                              )
+                            )}%`,
+                          }}
+                        >
+                          <span className="refunds__bar-fill" />
+                        </div>
+                        <p className="refunds__total">
+                          Devuelto: {formatPrice(selected.refundedAmount)} de {formatPrice(selected.total)}
+                        </p>
+                      </div>
+                    )}
+
+                    {canRefund && (
+                      <button
+                        type="button"
+                        className="refund-open"
+                        onClick={() => setRefundForm(true)}
+                      >
+                        <span className="refund-open__label">Devolver dinero</span>
+                        <span className="refund-open__hint">
+                          Quedan {formatPrice(refundable)} por devolver
+                        </span>
+                      </button>
+                    )}
+
+                    {selected.paymentMethod === "mercadopago" &&
+                      selected.paymentStatus === "approved" &&
+                      !canRefund && (
+                        <p className="refund-done">✓ Pedido devuelto por completo</p>
+                      )}
+                  </div>
                 </div>
               </div>
 
@@ -883,6 +870,84 @@ const renderOrder = (o) => {
         </div>
       )}
 
+      {refundForm && canRefund && (
+        <div className="modal-backdrop" onClick={() => setRefundForm(false)}>
+          <div
+            className="modal refund-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="refund-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal__head">
+              <h3 id="refund-modal-title">Devolver dinero</h3>
+              <button
+                type="button"
+                className="modal__close"
+                onClick={() => setRefundForm(false)}
+                aria-label="Cerrar"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal__body">
+              <p className="refund-modal__lead">
+                Quedan <strong>{formatPrice(refundable)}</strong> por devolver.
+              </p>
+
+              <div className="field">
+                <label htmlFor="refund-modal-amount">Monto a devolver</label>
+                <div className="refund-modal__field">
+                  <span className="refund-modal__prefix" aria-hidden="true">$</span>
+                  <input
+                    id="refund-modal-amount"
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max={refundable}
+                    placeholder="Monto parcial"
+                    value={refundInput}
+                    onChange={(e) => setRefundInput(e.target.value)}
+                  />
+                </div>
+                <span className="hint">Máximo: {formatPrice(refundable)}</span>
+              </div>
+            </div>
+
+            <div className="modal__footer">
+              <button
+                type="button"
+                className="btn btn--block refund-modal__btn-partial"
+                onClick={() => {
+                  setRefundForm(false);
+                  openRefundConfirm(refundInput);
+                }}
+              >
+                Devolver monto
+              </button>
+              <button
+                type="button"
+                className="btn btn--block refund-modal__btn-full"
+                onClick={() => {
+                  setRefundForm(false);
+                  openRefundConfirm();
+                }}
+              >
+                Devolver todo ({formatPrice(refundable)})
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--block"
+                onClick={() => setRefundForm(false)}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {printOrder && <TicketPrint order={printOrder} onClose={() => setPrintOrder(null)} />}
       {printComanda && (
         <TicketPrint order={printComanda} variant="comanda" onClose={() => setPrintComanda(null)} />
@@ -893,15 +958,28 @@ const renderOrder = (o) => {
           variant="danger"
           title={refundConfirm.full ? "Devolver el total" : "Devolver un monto"}
           message={
-            refundConfirm.full
-              ? `Se va a devolver ${formatPrice(refundConfirm.refundable)} a ${
-                  selected?.name || "el cliente"
-                } por Mercado Pago. El pedido quedará marcado como devuelto y sale de la venta.`
-              : `Se va a devolver ${formatPrice(refundConfirm.amount)} a ${
-                  selected?.name || "el cliente"
-                } por Mercado Pago. Quedarán ${formatPrice(
-                  refundConfirm.refundable - refundConfirm.amount
-                )} sin devolver.`
+            refundConfirm.full ? (
+              <>
+                <span className="confirm-refund__amount">
+                  {formatPrice(refundConfirm.refundable)}
+                </span>
+                <span className="confirm-refund__line">
+                  Se va a devolver a {selected?.name || "el cliente"} por Mercado Pago. El
+                  pedido quedará marcado como devuelto y sale de la venta.
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="confirm-refund__amount">
+                  {formatPrice(refundConfirm.amount)}
+                </span>
+                <span className="confirm-refund__line">
+                  Se va a devolver a {selected?.name || "el cliente"} por Mercado Pago.
+                  Quedarán {formatPrice(refundConfirm.refundable - refundConfirm.amount)}{" "}
+                  sin devolver.
+                </span>
+              </>
+            )
           }
           confirmText={refundConfirm.full ? "Devolver todo" : "Devolver"}
           onConfirm={handleRefundConfirm}

@@ -132,10 +132,12 @@ export function simulatePayment(orderId, action, demoToken = "") {
 }
 
 // ---- cupones (cliente) ----
-export function validateCoupon(code, total) {
+// `branch` es la sucursal del pedido: un cupón local de la otra sucursal
+// no valida. La validación definitiva se hace server-side al crear el pedido.
+export function validateCoupon(code, total, branch) {
   return request("/api/coupons/validate", {
     method: "POST",
-    body: JSON.stringify({ code, total }),
+    body: JSON.stringify({ code, total, branch }),
   });
 }
 
@@ -368,4 +370,35 @@ export function adminCreateManualOrder(payload) {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+// ---- cuentas de admin por sucursal (solo superadmin) ----
+export function adminUsers() {
+  return request("/api/admin/users");
+}
+
+export function adminCreateUser(payload) {
+  return request("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function adminSetUserPassword(id, password) {
+  return request(`/api/admin/users/${id}/password`, {
+    method: "PUT",
+    body: JSON.stringify({ password }),
+  });
+}
+
+export function adminSetUserActive(id, active) {
+  return request(`/api/admin/users/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ active }),
+  });
+}
+
+// Borrar una cuenta de sucursal (definitivo, solo superadmin).
+export function adminDeleteUser(id) {
+  return request(`/api/admin/users/${id}`, { method: "DELETE" });
 }

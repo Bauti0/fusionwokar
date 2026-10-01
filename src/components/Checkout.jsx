@@ -170,7 +170,7 @@ export default function Checkout({
     setCouponBusy(true);
     setCouponError("");
     try {
-      const res = await validateCoupon(code, total);
+      const res = await validateCoupon(code, total, branch.id);
       setCoupon({ code: res.code, discount: res.discount, totalAfter: res.totalAfter });
       setCouponCode("");
     } catch (err) {

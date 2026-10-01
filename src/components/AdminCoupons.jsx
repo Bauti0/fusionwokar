@@ -12,11 +12,15 @@ import Dropdown from "./ui/Dropdown.jsx";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 import { IconPlus, IconEdit, IconTrash } from "./ui/icons.jsx";
+import { BRANCH_LIST } from "../data/branches.js";
 
 // ============================================================
 // AdminCoupons — cupones de descuento
 // - Crear cupones (% o monto fijo, mínimo de compra, usos, vencimiento)
 // - Activar / desactivar / eliminar
+// - Sucursal del cupón: el branch_admin opera SOLO la suya (sin
+//   selector; el server la fuerza); el superadmin elige global
+//   (vale en ambas), necochea o tandil al crear
 // - La validación se hace server-side al crear el pedido
 // ============================================================
 
@@ -27,13 +31,21 @@ const EMPTY = {
   minTotal: "",
   maxUses: "",
   expiresAt: "",
+  branch: "", // "" = global (ambas sucursales); solo elige el superadmin
 };
 
 function typeLabel(type, value) {
   return type === "percent" ? `${value}%` : formatPrice(value);
 }
 
-export default function AdminCoupons() {
+// Etiqueta de la sucursal del cupón para el badge de la lista.
+function branchLabel(branch) {
+  if (!branch) return "🌐 Global";
+  return BRANCH_LIST.find((b) => b.id === branch)?.name || branch;
+}
+
+export default function AdminCoupons({ me }) {
+  const isBranchAdmin = me?.role === "branch_admin";
   const [coupons, setCoupons] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -73,10 +85,13 @@ export default function AdminCoupons() {
         expiresAt: form.expiresAt || "",
       };
       if (editing) {
+        // La sucursal del cupón no se edita: nace con ella.
         await adminUpdateCoupon(editing.id, payload);
         setEditing(null);
       } else {
-        await adminCreateCoupon(payload);
+        // El branch_admin no elige: el server fuerza su sucursal aunque
+        // el body traiga otra cosa.
+        await adminCreateCoupon({ ...payload, branch: form.branch });
       }
       setCreating(false);
       setForm(EMPTY);
@@ -128,6 +143,7 @@ export default function AdminCoupons() {
             <div className={`coupon-card ${c.active ? "" : "is-hidden"}`} key={c.id}>
               <div className="coupon-card__main">
                 <strong className="coupon-card__code">{c.code}</strong>
+                <span className="badge badge--branch">{branchLabel(c.branch)}</span>
                 <span className="coupon-card__value">{typeLabel(c.type, c.value)}</span>
               </div>
               <div className="coupon-card__meta">
@@ -180,6 +196,20 @@ export default function AdminCoupons() {
                   onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
                 />
               </div>
+              {!isBranchAdmin && !editing && (
+                <div className="field">
+                  <label>Sucursal</label>
+                  <Dropdown
+                    value={form.branch}
+                    onChange={(v) => setForm({ ...form, branch: v })}
+                    options={[
+                      { value: "", label: "🌐 Global (ambas sucursales)" },
+                      ...BRANCH_LIST.map((b) => ({ value: b.id, label: b.name })),
+                    ]}
+                    ariaLabel="Sucursal del cupón"
+                  />
+                </div>
+              )}
               <div className="field">
                 <label>Tipo</label>
                 <Dropdown

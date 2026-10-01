@@ -9,8 +9,12 @@ import Dropdown from "./ui/Dropdown.jsx";
 // Nombre, dirección más reciente, cantidad de pedidos, gasto
 // total, y botón directo para escribirles por WhatsApp.
 // ============================================================
-export default function AdminCustomers() {
-  const [branch, setBranch] = useState("");
+export default function AdminCustomers({ me }) {
+  const isBranchAdmin = me?.role === "branch_admin";
+  // El admin de sucursal ve SIEMPRE sus clientes: sin dropdown (el
+  // server igual filtra por la sesión).
+  const [branchSel, setBranchSel] = useState("");
+  const branch = isBranchAdmin ? me.branch : branchSel;
   const [search, setSearch] = useState("");
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -43,11 +47,15 @@ export default function AdminCustomers() {
     <section className="admin-customers">
       <div className="admin-products__toolbar">
         <div className="admin-products__controls">
-          <Dropdown
-            value={branch}
-            onChange={setBranch}
-            options={[{ value: "", label: "Todas las sucursales" }, ...BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))]}
-          />
+          {isBranchAdmin ? (
+            <span className="badge badge--branch">{BRANCH_LIST.find((b) => b.id === branch)?.name}</span>
+          ) : (
+            <Dropdown
+              value={branch}
+              onChange={setBranchSel}
+              options={[{ value: "", label: "Todas las sucursales" }, ...BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))]}
+            />
+          )}
           <input
             type="search"
             className="admin-search"

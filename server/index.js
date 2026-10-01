@@ -4,7 +4,7 @@ import cors from "cors";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { randomBytes, createHmac } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import {
   db,
@@ -42,8 +42,26 @@ import {
   releaseStaleCouponReservations,
 } from "./coupons.js";
 import { applyRefunds, refundableAmount } from "./refunds.js";
-import { refundedQuery, sumRefunded, refundedByBranch, netAmount, buildSalesReport, arDay } from "./reports.js";
+import {
+  listOrders,
+  getOrderScoped,
+  effectiveBranch,
+  getStats,
+  getSalesReport,
+  listCustomers,
+  getCashRegisterState,
+  openCashRegister,
+  closeCashRegister,
+  listMenuForAdmin,
+  getScopedProduct,
+  getScopedCategory,
+  listCoupons,
+  getScopedCoupon,
+  isCouponCodeTaken,
+} from "./admin-queries.js";
 import { validateConfig } from "./config.js";
+import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
+import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone } from "../src/utils/validation.js";
 
 // ============================================================
@@ -83,6 +101,7 @@ import { isValidPhone } from "../src/utils/validation.js";
 //   GET   /api/admin/coupons                → listar cupones
 //   POST  /api/admin/coupons                → crear cupón
 //   PATCH /api/admin/coupons/:id            → activar/desactivar cupón
+//   PUT   /api/admin/coupons/:id            → editar cupón
 //   DELETE /api/admin/coupons/:id           → eliminar cupón
 //   POST  /api/admin/upload                 → subir imagen de producto
 //   GET   /api/admin/customers               → clientes agrupados por teléfono
@@ -91,6 +110,11 @@ import { isValidPhone } from "../src/utils/validation.js";
 //   POST  /api/admin/cash-register/open      → abrir caja
 //   POST  /api/admin/cash-register/:id/close → cerrar caja (calcula diferencia)
 //   POST  /api/admin/orders/manual           → cargar pedido de WhatsApp/mostrador
+//   GET   /api/admin/users                  → cuentas de admin de sucursal (solo superadmin)
+//   POST  /api/admin/users                  → crear cuenta de sucursal
+//   PUT   /api/admin/users/:id/password     → cambiar contraseña de una cuenta
+//   PATCH /api/admin/users/:id              → activar/desactivar una cuenta
+//   DELETE /api/admin/users/:id             → borrar una cuenta (definitivo; 404 si no existe)
 // ============================================================
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -698,11 +722,13 @@ async function validateOrderBody(body) {
   const address = orderMode === "delivery" ? String(body.address || "").trim() : "";
   if (orderMode === "delivery" && !address) return { error: "Falta la dirección de entrega" };
 
-  // Cupón de descuento (opcional): se valida contra la BD y se recalcula
+  // Cupón de descuento (opcional): se valida contra la BD y se recalcula.
+  // `branch` es la sucursal del pedido: un cupón local de la otra sucursal
+  // no aplica acá (T14).
   let discount = 0;
   let appliedCoupon = "";
   if (couponCode) {
-    const coupon = await applyCoupon(db, couponCode, total);
+    const coupon = await applyCoupon(db, couponCode, total, branch);
     if (coupon.error) return { error: coupon.error };
     discount = coupon.discount;
     appliedCoupon = coupon.code;
@@ -766,22 +792,39 @@ async function recordEvent(type, branch) {
   );
 }
 
-// Autenticación del admin (cookie httpOnly o token en tabla admin_tokens)
+// Autenticación del admin (cookie httpOnly o token en tabla admin_tokens).
+// resolveAdminFromToken resuelve QUIÉN llama: rol y sucursal salen del
+// token (y de admin_users, la fuente de verdad), nunca del cliente.
+// El resto de los endpoints lee req.admin y no vuelve a tocar las
+// credenciales.
 async function requireAdmin(req, res, next) {
   try {
     const token = getAdminToken(req);
-    const row = await db.prepare("SELECT * FROM admin_tokens WHERE token = ?").get(token);
-    if (!row) return res.status(401).json({ error: "No autorizado" });
-    const age = Date.now() - new Date(row.created_at).getTime();
-    if (age > TOKEN_TTL_MS) {
-      await db.prepare("DELETE FROM admin_tokens WHERE token = ?").run(token);
-      return res.status(401).json({ error: "Sesión expirada" });
-    }
+    const admin = await resolveAdminFromToken(db, token, { maxAgeMs: TOKEN_TTL_MS });
+    // invalid y expired devuelven los mismos textos que antes: el
+    // frontend cierra la sesión del panel dependiendo de ellos.
+    if (admin.invalid) return res.status(401).json({ error: "No autorizado" });
+    if (admin.expired) return res.status(401).json({ error: "Sesión expirada" });
+    req.admin = {
+      role: admin.role,
+      branch: admin.branch,
+      userId: admin.userId,
+      username: admin.username,
+    };
     return next();
   } catch (err) {
     console.error("requireAdmin:", err.message);
     return res.status(500).json({ error: "Error al validar la sesión" });
   }
+}
+
+// Solo el superadmin (el dueño) pasa. Se encadena DESPUÉS de requireAdmin,
+// que es quien completa req.admin.
+function requireSuperadmin(req, res, next) {
+  if (req.admin?.role !== "superadmin") {
+    return res.status(403).json({ error: "Solo el administrador principal puede hacer esto" });
+  }
+  next();
 }
 
 // ---------- rate limit de login (bloqueo progresivo por IP) ----------
@@ -901,7 +944,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     await releaseStaleCouponReservations(db);
     let couponReserved = false;
     if (couponCode) {
-      if (!(await reserveCoupon(db, couponCode))) {
+      if (!(await reserveCoupon(db, couponCode, branch))) {
         return res.status(400).json({ error: "El cupón ya no tiene usos disponibles" });
       }
       couponReserved = true;
@@ -975,7 +1018,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
       // El pedido no se llegó a crear: devolvemos el uso reservado del cupón.
       // No hay fila que marcar, y no hace falta: ni el webhook ni el sweep
       // pueden encontrar un pedido que no existe.
-      if (couponReserved) await releaseOrphanReservation(db, couponCode);
+      if (couponReserved) await releaseOrphanReservation(db, couponCode, branch);
       throw err;
     }
 
@@ -996,7 +1039,7 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         // se libera la reserva del cupón (no hay venta real por esta vía).
         // El pedido ya está commiteado, así que sí se marca la fila.
         console.error("MP order falló después de guardar el pedido:", err.message);
-        if (couponReserved) await releaseOrderCoupon(db, orderId, couponCode);
+        if (couponReserved) await releaseOrderCoupon(db, orderId, couponCode, branch);
         const { status, payload } = mpUnavailablePayload(err, { orderId, orderNumber });
         return res.status(status).json(payload);
       }
@@ -1084,7 +1127,7 @@ async function applyMpOrderState(row, mpOrder) {
   // por un pedido que no se cobró. Si en cambio se DEVOLVIÓ, el pedido se
   // pagó de verdad, así que el cupón se considera consumido.
   if (status === "rejected" && !wasFailure && couponCode) {
-    await releaseOrderCoupon(db, row.id, couponCode);
+    await releaseOrderCoupon(db, row.id, couponCode, row.branch);
   }
   return status;
 }
@@ -1361,14 +1404,17 @@ app.get("/api/menu/:branchId", rateLimit({ max: 120, name: "menu" }), async (req
 // ---------- cupones (cliente) ----------
 // Valida un código y devuelve el descuento sobre un total dado.
 // La validación definitiva se hace server-side al crear el pedido.
+// `branch` (la sucursal del pedido, la manda el checkout) es opcional:
+// con ella, un cupón local de la OTRA sucursal no valida acá.
 app.post("/api/coupons/validate", rateLimit({ max: 30, name: "couponvalidate" }), async (req, res) => {
   try {
-    const { code, total } = req.body || {};
+    const { code, total, branch } = req.body || {};
     const n = Number(total);
     if (typeof code !== "string" || !code.trim() || !Number.isFinite(n) || n < 0) {
       return res.status(400).json({ error: "Datos inválidos" });
     }
-    const result = await applyCoupon(db, code, n);
+    if (branch && !CATALOG[branch]) return res.status(400).json({ error: "Sucursal inválida" });
+    const result = await applyCoupon(db, code, n, branch || "");
     if (result.error) return res.status(400).json({ error: result.error });
     res.json({ ok: true, code: result.code, discount: result.discount, totalAfter: Math.max(n - result.discount, 0) });
   } catch (err) {
@@ -1466,7 +1512,7 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
           );
           if (status === "approved" && !wasApproved) await recordEvent("order_created", row.branch);
           if (status === "rejected" && !wasFailure && row.coupon_code) {
-            await releaseOrderCoupon(db, row.id, row.coupon_code);
+            await releaseOrderCoupon(db, row.id, row.coupon_code, row.branch);
           }
         }
       }
@@ -1516,7 +1562,9 @@ if (isDemoMode()) {
         ).run(approved ? "approved" : "rejected", approved ? "received" : row.status, now(), id);
         if (approved && !wasApproved) await recordEvent("order_created", row.branch);
         // Rechazo simulado: devuelve el uso del cupón igual que el webhook.
-        if (!approved && !wasFailure && row.coupon_code) await releaseOrderCoupon(db, row.id, row.coupon_code);
+        if (!approved && !wasFailure && row.coupon_code) {
+          await releaseOrderCoupon(db, row.id, row.coupon_code, row.branch);
+        }
         res.json({ ok: true, orderId: id, paymentStatus: approved ? "approved" : "rejected" });
       } catch (err) {
         console.error("POST /api/payments/demo/:id/:action:", err.message);
@@ -1527,14 +1575,9 @@ if (isDemoMode()) {
 }
 
 // ---------- admin ----------
-// Comparación en tiempo constante para credenciales. Se hashean ambos lados
-// a longitud fija (SHA-256) antes de timingSafeEqual: así no se filtra ni el
-// contenido ni el largo del secreto por diferencias de tiempo.
-function safeEqual(a, b) {
-  const ha = createHash("sha256").update(String(a)).digest();
-  const hb = createHash("sha256").update(String(b)).digest();
-  return timingSafeEqual(ha, hb);
-}
+// safeEqual (comparación en tiempo constante para credenciales) vive en
+// server/auth.js: la comparten el login, el middleware CSRF y el token
+// del modo demo. Importada arriba junto a authenticateAdmin.
 
 app.post(
   "/api/admin/login",
@@ -1546,10 +1589,19 @@ app.post(
       if (typeof username !== "string" || typeof password !== "string") {
         return res.status(400).json({ error: "Faltan credenciales" });
       }
-       if (!safeEqual(username, ADMIN_USER) || !safeEqual(password, ADMIN_PASSWORD)) {
-         recordLoginFailure(req);
-         return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
-       }
+      // El superadmin del .env o una cuenta de sucursal de admin_users.
+      // authenticateAdmin devuelve exactamente lo mismo para todo fallo:
+      // no se enumeran usuarios ni se distingue una cuenta desactivada.
+      const admin = await authenticateAdmin(db, {
+        username,
+        password,
+        envUser: ADMIN_USER,
+        envPassword: ADMIN_PASSWORD,
+      });
+      if (!admin.ok) {
+        recordLoginFailure(req);
+        return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
+      }
       recordLoginSuccess(req);
       // Higiene: purga sesiones vencidas para que la tabla no crezca sin límite
       try {
@@ -1559,7 +1611,13 @@ app.post(
         console.error("purga admin_tokens:", purgeErr.message);
       }
       const token = randomBytes(32).toString("hex");
-      await db.prepare("INSERT INTO admin_tokens (token, created_at) VALUES (?, ?)").run(token, now());
+      // El token nace atado a quién inició sesión: superadmin
+      // (admin_user_id NULL) o la cuenta de sucursal con su rol y branch.
+      await db
+        .prepare(
+          "INSERT INTO admin_tokens (token, created_at, admin_user_id, role, branch) VALUES (?, ?, ?, ?, ?)"
+        )
+        .run(token, now(), admin.userId, admin.role, admin.branch);
       // Cookie httpOnly: el token nunca queda en localStorage ni en JS.
       // secure en producción/HTTPS/MP real: nunca viaja por HTTP plano.
       res.cookie("fw_admin_token", token, {
@@ -1602,7 +1660,9 @@ app.post("/api/admin/logout", requireAdmin, async (req, res) => {
 
 // Revoca TODAS las sesiones del panel (máquinas, pestañas, tokens robados):
 // borra todos los tokens vivos. La sesión actual también queda invalidada.
-app.post("/api/admin/logout-all", requireAdmin, async (req, res) => {
+// Solo el superadmin: un admin de sucursal no puede tirar abajo las
+// sesiones del dueño ni las de la otra sucursal.
+app.post("/api/admin/logout-all", requireAdmin, requireSuperadmin, async (req, res) => {
   try {
     await db.prepare("DELETE FROM admin_tokens").run();
     res.clearCookie("fw_admin_token", { path: "/" });
@@ -1614,48 +1674,52 @@ app.post("/api/admin/logout-all", requireAdmin, async (req, res) => {
   }
 });
 
-// Valida la sesión del panel (cookie o header) sin exponer el token
+// Valida la sesión del panel (cookie o header) sin exponer el token.
+// Devuelve además el rol y la sucursal: el frontend los usa para
+// mostrar (o no) las secciones del panel, aunque la separación real
+// se aplica en cada endpoint del backend.
 app.get("/api/admin/me", requireAdmin, (req, res) => {
-  res.json({ ok: true, user: ADMIN_USER });
+  // user: el del .env para el superadmin; el de la tabla para admins
+  // de sucursal (resolveAdminFromToken deja username null para el
+  // superadmin porque auth.js no conoce el .env).
+  res.json({
+    ok: true,
+    user: req.admin.username || ADMIN_USER,
+    role: req.admin.role,
+    branch: req.admin.branch,
+  });
 });
+
+// Scope de la sesión para TODA la Etapa B: el branch_admin solo ve
+// su sucursal; el superadmin ve todo (null). Sale de req.admin,
+// que a su vez salió del token — nunca del query ni del body.
+function adminScope(req) {
+  return req.admin?.role === "branch_admin" ? req.admin.branch : null;
+}
 
 // Listado de pedidos para el admin (con filtros, búsqueda y paginación)
 app.get("/api/admin/orders", requireAdmin, async (req, res) => {
   try {
-    const { branch, search, status, payment, includePending } = req.query;
-    const conds = [];
-    const params = [];
-
-    if (branch) { conds.push("branch = ?"); params.push(branch); }
-    if (status && status !== "all") { conds.push("status = ?"); params.push(status); }
-    if (payment && payment !== "all") { conds.push("payment_status = ?"); params.push(payment); }
-
-    // Por defecto no se muestran los pagos de MP pendientes (pedidos no confirmados)
-    if (includePending !== "1") {
-      conds.push("(payment_method != 'mercadopago' OR payment_status != 'pending')");
-    }
-
-    if (search) {
-      conds.push("(order_number LIKE ? OR customer_name LIKE ? OR customer_phone LIKE ?)");
-      const like = `%${search}%`;
-      params.push(like, like, like);
-    }
-
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-    const offset = (page - 1) * limit;
-    const totalRow = await db.prepare(`SELECT COUNT(*) AS n FROM orders ${where}`).get(...params);
-    const total = totalRow.n;
-    const rows = await db
-      .prepare(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
-      .all(...params, limit, offset);
+    const { search, status, payment, includePending } = req.query;
+    const scope = adminScope(req);
+    // El ?branch= del query es el filtro del panel del superadmin;
+    // para el branch_admin se ignora (listOrders no lo recibe).
+    const { rows, total, page, limit, hasMore } = await listOrders(db, {
+      scope,
+      branch: scope ? undefined : req.query.branch,
+      search,
+      status,
+      payment,
+      includePending,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
     res.json({
       orders: rows.map(toPublicOrder),
       total,
       page,
       limit,
-      hasMore: offset + rows.length < total,
+      hasMore,
     });
   } catch (err) {
     console.error("GET /api/admin/orders:", err.message);
@@ -1667,7 +1731,8 @@ app.get("/api/admin/orders/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    // Pedido ajeno → 404 (no 403): no se confirma que exista.
+    const row = await getOrderScoped(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
     res.json({ ...toPublicOrder(row), whatsappLink: orderWhatsAppLink(row, row.status) });
   } catch (err) {
@@ -1722,7 +1787,9 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (req, res) => {
     }
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    // Pedido ajeno → 404: el branch_admin no puede cambiar el estado
+    // del de la otra sucursal.
+    const row = await getOrderScoped(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
     // Cancelar desde el panel también devuelve el uso del cupón (como el
     // webhook en rejected): sin esto, un pedido cancelado quemaba el cupo
@@ -1730,7 +1797,7 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (req, res) => {
     // por pedido (marca coupon_released_at), así que el webhook, el sweep y
     // esta ruta pueden coincidir sin que el contador baje de más.
     if (status === "cancelled" && row.status !== "cancelled" && row.coupon_code) {
-      await releaseOrderCoupon(db, row.id, row.coupon_code);
+      await releaseOrderCoupon(db, row.id, row.coupon_code, row.branch);
     }
     await db.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), id);
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
@@ -1760,7 +1827,9 @@ app.post("/api/admin/orders/:id/shipping", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Costo de envío inválido" });
     }
     if (!Number.isFinite(km) || km < 0) return res.status(400).json({ error: "Cuadras inválidas" });
-    const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    // Pedido ajeno → 404: el branch_admin no puede fijar el envío
+    // del de la otra sucursal.
+    const row = await getOrderScoped(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
     const oldShipping = Number(row.shipping) || 0;
     const delta = shipping - oldShipping;
@@ -1784,7 +1853,9 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    // Pedido ajeno → 404: solo cambia la carga de la fila, el flujo
+    // de devolución de MP queda exactamente igual.
+    const row = await getOrderScoped(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
     if (row.payment_method !== "mercadopago") {
       return res.status(400).json({ error: "Este pedido no se pagó con Mercado Pago" });
@@ -1909,124 +1980,16 @@ function safeIso(value, fallback) {
   return isNaN(d.getTime()) ? fallback : d.toISOString();
 }
 
-// Fecha YYYY-MM-DD en la zona del local: vive en reports.js (arDay) para poder
-// probar la agrupacion por dia sin arrancar el server ni depender del huso de
-// la maquina donde corren los tests.
-
 app.get("/api/admin/stats", requireAdmin, async (req, res) => {
   try {
     const { from, to } = req.query;
     const defaultFrom = new Date(Date.now() - 30 * 86400000).toISOString();
     const fromIso = safeIso(from, defaultFrom);
     const toIso = safeIso(to, now());
-
-    // 3 consultas independientes en un solo round-trip de lectura
-    const results = await db.batch(
-      [
-        {
-          sql: `SELECT branch, total FROM orders
-         WHERE payment_status = 'approved' AND status != 'cancelled'
-           AND created_at >= ? AND created_at <= ?`,
-          args: [fromIso, toIso],
-        },
-        {
-          sql: "SELECT type, COUNT(*) AS n FROM events WHERE created_at >= ? AND created_at <= ? GROUP BY type",
-          args: [fromIso, toIso],
-        },
-        {
-          sql: "SELECT COUNT(DISTINCT visitor_id) AS n FROM events WHERE type = 'page_view' AND visitor_id IS NOT NULL AND created_at >= ? AND created_at <= ?",
-          args: [fromIso, toIso],
-        },
-        {
-          sql: `SELECT items FROM orders
-         WHERE payment_status = 'approved' AND status != 'cancelled'
-           AND created_at >= ? AND created_at <= ?`,
-          args: [fromIso, toIso],
-        },
-        // Lo devuelto va en el MISMO batch (sigue siendo un solo round-trip).
-        refundedQuery({ fromIso, toIso }),
-      ],
-      "read"
-    );
-    const confirmed = results[0].rows;
-    const eventRows = results[1].rows;
-    const visitantes = Number((results[2].rows[0] || {}).n || 0);
-    const confirmedItems = results[3].rows;
-    const devueltoPorLocal = refundedByBranch(results[4].rows);
-    const devuelto = devueltoPorLocal.total;
-    const devueltoTandil = devueltoPorLocal.byBranch.get("tandil") || 0;
-    const devueltoNecochea = devueltoPorLocal.byBranch.get("necochea") || 0;
-
-    let ventaBruta = 0;
-    let ventaNecocheaBruta = 0;
-    let ventaTandilBruta = 0;
-    for (const o of confirmed) {
-      ventaBruta += o.total;
-      if (o.branch === "necochea") ventaNecocheaBruta += o.total;
-      if (o.branch === "tandil") ventaTandilBruta += o.total;
-    }
-    // Lo que se muestra en el panel es la venta NETA (lo vendido menos lo
-    // devuelto). Lo devuelto va aparte, y también por local, para que se vea
-    // de qué sucursal salió cada número y no solo el agregado.
-    const ventaNeta = netAmount(ventaBruta, devuelto);
-    const ventaTandil = netAmount(ventaTandilBruta, devueltoTandil);
-    const ventaNecochea = netAmount(ventaNecocheaBruta, devueltoNecochea);
-    const pedidos = confirmed.length;
-    const ticketPromedio = pedidos > 0 ? Math.round(ventaNeta / pedidos) : 0;
-
-    // Conteo de eventos en el período (fila de los eventos viene del batch)
-    const counts = { page_view: 0, product_view: 0, checkout_started: 0, order_created: 0 };
-    for (const row of eventRows) {
-      if (row.type in counts) counts[row.type] = row.n;
-    }
-
-    const visitas = visitantes;
-    const pageViews = counts.page_view || 0;
-    const productosVistos = counts.product_view || 0;
-    const checkouts = counts.checkout_started || 0;
-    const conversion = visitas > 0 ? Math.round((pedidos / visitas) * 1000) / 10 : 0;
-
-    // Productos más vendidos (por cantidad) y que más facturan (netos, en $),
-    // calculado a partir de los mismos pedidos confirmados del período.
-    const productAgg = new Map(); // name -> { name, qty, revenue }
-    for (const row of confirmedItems) {
-      let items;
-      try { items = JSON.parse(row.items); } catch { items = []; }
-      for (const it of items) {
-        const extrasTotal = (it.extras || []).reduce((a, e) => a + (e.price || 0), 0);
-        const lineRevenue = (it.unitPrice + extrasTotal) * it.qty;
-        const key = it.name || it.productId;
-        const entry = productAgg.get(key) || { name: key, qty: 0, revenue: 0 };
-        entry.qty += it.qty;
-        entry.revenue += lineRevenue;
-        productAgg.set(key, entry);
-      }
-    }
-    const allProducts = Array.from(productAgg.values());
-    const topSelling = [...allProducts].sort((a, b) => b.qty - a.qty).slice(0, 8);
-    const topRevenue = [...allProducts].sort((a, b) => b.revenue - a.revenue).slice(0, 8);
-
-    res.json({
-      period: { from: fromIso, to: toIso },
-      ventaBruta,
-      ventaNeta,
-      ventaTandil,
-      ventaNecochea,
-      ventaTandilBruta,
-      ventaNecocheaBruta,
-      devuelto,
-      devueltoTandil,
-      devueltoNecochea,
-      ticketPromedio,
-      pedidos,
-      checkouts,
-      productosVistos,
-      visitas,
-      pageViews,
-      conversion,
-      topSelling,
-      topRevenue,
-    });
+    // El shape depende del scope: superadmin recibe el consolidado +
+    // desglose por local + analytics; branch_admin solo SU venta
+    // (ver getStats en admin-queries.js).
+    res.json(await getStats(db, { fromIso, toIso, scope: adminScope(req) }));
   } catch (err) {
     console.error("GET /api/admin/stats:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2034,60 +1997,18 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
 });
 
 // ---------- clientes (agregado por teléfono) ----------
+// El gasto total y el historial del cliente salen SOLO de los
+// pedidos de la sucursal del admin (decisión 9 del dueño);
+// el superadmin conserva su filtro ?branch= del panel.
 app.get("/api/admin/customers", requireAdmin, async (req, res) => {
   try {
-    const { search, branch } = req.query;
-    const conds = [];
-    const params = [];
-    if (branch) { conds.push("branch = ?"); params.push(branch); }
-    if (search) {
-      conds.push("(customer_name LIKE ? OR customer_phone LIKE ?)");
-      const like = `%${search}%`;
-      params.push(like, like);
-    }
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-    // Por cliente (teléfono): nombre y dirección más recientes, cantidad de
-    // pedidos, gasto total y fecha del último pedido.
-    const rows = await db
-      .prepare(
-        `SELECT
-         customer_phone AS phone,
-         customer_name AS name,
-         address,
-         branch,
-         total,
-         created_at
-       FROM orders ${where}
-       ORDER BY created_at DESC`
-      )
-      .all(...params);
-
-    const byPhone = new Map();
-    for (const r of rows) {
-      // Se agrupa por teléfono NORMALIZADO (solo dígitos), igual que se guarda
-      // desde e628540: así los pedidos con formato viejo (espacios/guiones/+54)
-      // no abren un cliente duplicado. Se muestra el formato más reciente.
-      const key = String(r.phone || "").replace(/\D/g, "");
-      if (!key) continue;
-      const entry = byPhone.get(key) || {
-        phone: r.phone,
-        name: r.name,
-        address: "",
-        branch: r.branch,
-        ordersCount: 0,
-        totalSpent: 0,
-        lastOrderAt: r.created_at,
-      };
-      entry.phone = r.phone || entry.phone;
-      entry.name = r.name || entry.name;
-      entry.ordersCount += 1;
-      entry.totalSpent += r.total;
-      if (!entry.address && r.address) entry.address = r.address;
-      byPhone.set(key, entry);
-    }
-    const customers = Array.from(byPhone.values()).sort(
-      (a, b) => new Date(b.lastOrderAt) - new Date(a.lastOrderAt)
-    );
+    const { search } = req.query;
+    const scope = adminScope(req);
+    const customers = await listCustomers(db, {
+      scope,
+      branch: scope ? undefined : req.query.branch,
+      search,
+    });
     res.json({ customers, total: customers.length });
   } catch (err) {
     console.error("GET /api/admin/customers:", err.message);
@@ -2098,30 +2019,14 @@ app.get("/api/admin/customers", requireAdmin, async (req, res) => {
 // ---------- ventas (panel admin: filtro de fecha + medios de pago) ----------
 app.get("/api/admin/sales", requireAdmin, async (req, res) => {
   try {
-    const { from, to, branch } = req.query;
+    const { from, to } = req.query;
     const defaultFrom = new Date(Date.now() - 30 * 86400000).toISOString();
     const fromIso = safeIso(from, defaultFrom);
     const toIso = safeIso(to, now());
-
-    const conds = ["payment_status = 'approved'", "status != 'cancelled'", "created_at >= ?", "created_at <= ?"];
-    const params = [fromIso, toIso];
-    if (branch) { conds.push("branch = ?"); params.push(branch); }
-    const where = `WHERE ${conds.join(" AND ")}`;
-
-    const rows = await db.prepare(`SELECT payment_method, total, created_at FROM orders ${where}`).all(...params);
-
-    // Lo devuelto va por afuera de la consulta de arriba, que filtra
-    // 'approved': si no, una devolución total (payment_status 'refunded')
-    // quedaría invisible. Ver server/reports.js.
-    const rq = refundedQuery({ fromIso, toIso, branch });
-    const devuelto = sumRefunded(await db.prepare(rq.sql).all(...rq.args));
-
-    // El panel muestra `net` (bruto - devuelto) como titular, igual que
-    // /api/admin/stats. `total` sigue siendo el bruto: es lo que suman los
-    // desgloses por método y por día.
-    const report = buildSalesReport({ rows, refunded: devuelto, dayOf: arDay });
-
-    res.json({ period: { from: fromIso, to: toIso }, ...report });
+    const scope = adminScope(req);
+    // ?branch= es el filtro del panel del superadmin; con scope de
+    // branch_admin se ignora (la venta es SIEMPRE la de su sucursal).
+    res.json(await getSalesReport(db, { fromIso, toIso, scope, branch: scope ? undefined : req.query.branch }));
   } catch (err) {
     console.error("GET /api/admin/sales:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2134,36 +2039,11 @@ app.get("/api/admin/sales", requireAdmin, async (req, res) => {
 // físicamente contra lo esperado (apertura + ventas en efectivo del turno).
 app.get("/api/admin/cash-register", requireAdmin, async (req, res) => {
   try {
-    const { branch } = req.query;
+    const scope = adminScope(req);
+    // branch_admin → SU caja siempre; superadmin → la que pida.
+    const branch = scope || req.query.branch;
     if (!branch) return res.status(400).json({ error: "Falta la sucursal" });
-    const results = await db.batch(
-      [
-        {
-          sql: "SELECT * FROM cash_registers WHERE branch = ? AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
-          args: [branch],
-        },
-        {
-          sql: "SELECT * FROM cash_registers WHERE branch = ? AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 30",
-          args: [branch],
-        },
-      ],
-      "read"
-    );
-    const open = results[0].rows[0] || null;
-    const history = results[1].rows;
-
-    let expectedNow = null;
-    if (open) {
-      const cashIncome = await db
-        .prepare(
-          `SELECT COALESCE(SUM(total), 0) AS s FROM orders
-         WHERE branch = ? AND payment_method = 'efectivo' AND payment_status = 'approved'
-           AND status != 'cancelled' AND created_at >= ?`
-        )
-        .get(branch, open.opened_at);
-      expectedNow = open.opening_amount + cashIncome.s;
-    }
-
+    const { open, history, expectedNow } = await getCashRegisterState(db, scope, req.query.branch);
     res.json({
       open: open ? { ...rowToCashRegister(open), expectedNow } : null,
       history: history.map(rowToCashRegister),
@@ -2190,30 +2070,14 @@ function rowToCashRegister(row) {
 
 app.post("/api/admin/cash-register/open", requireAdmin, async (req, res) => {
   try {
-    const { branch, openingAmount } = req.body || {};
+    const scope = adminScope(req);
+    // branch_admin abre SIEMPRE en su sucursal (body.branch se ignora);
+    // el superadmin mantiene el comportamiento actual.
+    const branch = scope || (req.body || {}).branch;
     if (!branch) return res.status(400).json({ error: "Falta la sucursal" });
-    // Campo vacío no debe interpretarse como $0 (Number("") === 0)
-    if (String(openingAmount ?? "").trim() === "") return res.status(400).json({ error: "Ingresá el monto inicial" });
-    const amount = Number(openingAmount);
-    if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: "Monto inicial inválido" });
-    const already = await db
-      .prepare("SELECT id FROM cash_registers WHERE branch = ? AND closed_at IS NULL")
-      .get(branch);
-    if (already) return res.status(400).json({ error: "Ya hay una caja abierta en esta sucursal" });
-    // INSERT condicional y atómico (el WHERE NOT EXISTS se evalúa dentro de la
-    // misma sentencia): dos aperturas simultáneas no pueden crear cajas
-    // duplicadas. El índice único parcial de db.js es la garantía de respaldo.
-    const info = await db
-      .prepare(
-        `INSERT INTO cash_registers (branch, opening_amount, opened_at, notes, created_at, updated_at)
-         SELECT ?, ?, ?, '', ?, ?
-         WHERE NOT EXISTS (SELECT 1 FROM cash_registers WHERE branch = ? AND closed_at IS NULL)`
-      )
-      .run(branch, Math.round(amount), now(), now(), now(), branch);
-    if (info.changes === 0) {
-      return res.status(400).json({ error: "Ya hay una caja abierta en esta sucursal" });
-    }
-    res.json({ ok: true, id: Number(info.lastInsertRowid) });
+    const r = await openCashRegister(db, { branch, openingAmount: req.body?.openingAmount, nowIso: now() });
+    if (r.error) return res.status(r.status || 400).json({ error: r.error });
+    res.json({ ok: true, id: r.id });
   } catch (err) {
     console.error("POST /api/admin/cash-register/open:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2224,31 +2088,16 @@ app.post("/api/admin/cash-register/:id/close", requireAdmin, async (req, res) =>
   try {
     const id = paramId(req.params.id);
     const { closingCounted, notes } = req.body || {};
-    // Campo vacío no debe interpretarse como $0 (Number("") === 0)
-    if (String(closingCounted ?? "").trim() === "") return res.status(400).json({ error: "Ingresá el monto contado" });
-    const counted = Number(closingCounted);
-    if (!Number.isFinite(counted) || counted < 0) return res.status(400).json({ error: "Monto contado inválido" });
-    const row = await db.prepare("SELECT * FROM cash_registers WHERE id = ?").get(id);
-    if (!row) return res.status(404).json({ error: "Arqueo no encontrado" });
-    if (row.closed_at) return res.status(400).json({ error: "Esta caja ya está cerrada" });
-
-    const cashIncome = await db
-      .prepare(
-        `SELECT COALESCE(SUM(total), 0) AS s FROM orders
-       WHERE branch = ? AND payment_method = 'efectivo' AND payment_status = 'approved'
-         AND status != 'cancelled' AND created_at >= ?`
-      )
-      .get(row.branch, row.opened_at);
-    const expected = row.opening_amount + cashIncome.s;
-    const difference = Math.round(counted) - expected;
-
-    await db.prepare(
-      `UPDATE cash_registers
-     SET closing_counted = ?, closed_at = ?, expected_amount = ?, difference = ?, notes = ?, updated_at = ?
-     WHERE id = ?`
-    ).run(Math.round(counted), now(), expected, difference, String(notes || "").slice(0, 500), now(), id);
-
-    res.json({ ok: true, expected, difference });
+    // El scope valida que el arqueo sea de SU sucursal: uno ajeno
+    // responde con el mismo 404 que uno inexistente.
+    const r = await closeCashRegister(db, id, {
+      counted: closingCounted,
+      notes,
+      scope: adminScope(req),
+      nowIso: now(),
+    });
+    if (r.error) return res.status(r.status || 400).json({ error: r.error });
+    res.json({ ok: true, expected: r.expected, difference: r.difference });
   } catch (err) {
     console.error("POST /api/admin/cash-register/:id/close:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2262,7 +2111,12 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
     if (!["whatsapp", "counter"].includes(source)) {
       return res.status(400).json({ error: "Origen inválido" });
     }
-    const result = await validateOrderBody(req.body);
+    // La sucursal del pedido manual sale de la SESIÓN, no del body:
+    // el branch_admin carga SIEMPRE en la suya (body.branch se ignora);
+    // el superadmin elige, pero tiene que existir de verdad.
+    const branchResult = effectiveBranch(req.admin, req.body?.branch);
+    if (branchResult.error) return res.status(400).json({ error: branchResult.error });
+    const result = await validateOrderBody({ ...req.body, branch: branchResult.branch });
     if (result.error) return res.status(400).json({ error: result.error });
     const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
 
@@ -2344,13 +2198,9 @@ function productRowToAdmin(row) {
 // Listado: agrupado por sucursal y categoría (con grupos), listo para el panel
 app.get("/api/admin/products", requireAdmin, async (req, res) => {
   try {
-    const rows = await db
-      .prepare(
-        `SELECT p.*, c.id AS _catRowId FROM products p
-       LEFT JOIN categories c ON c.branch = p.branch AND c.category_id = p.category_id
-       ORDER BY COALESCE(c.sort_order, 999999), p.sort_order`
-      )
-      .all();
+    // listMenuForAdmin aplica el scope (branch_admin → solo SU
+    // sucursal); el agrupado para el panel queda acá.
+    const rows = await listMenuForAdmin(db, { scope: adminScope(req) });
     // Object.create(null): una branch "__proto__" no puede contaminar el mapa
     const grouped = Object.create(null);
     for (const row of rows) {
@@ -2457,12 +2307,12 @@ async function ensureCategoryRow(branch, categoryId, categoryName) {
 app.post("/api/admin/products", requireAdmin, async (req, res) => {
   try {
     const { branch, ...rest } = req.body || {};
-    // La sucursal debe existir de verdad (tandil/necochea): antes se aceptaba
-    // cualquier id con formato válido y se podían crear productos de una
-    // sucursal "fantasma" que después quedaba en el catálogo y aceptaba pedidos.
-    if (typeof branch !== "string" || !MENUS[branch.trim()]) {
-      return res.status(400).json({ error: "Sucursal inválida" });
-    }
+    // La sucursal sale de la SESIÓN: el branch_admin crea SIEMPRE en
+    // la suya (body.branch se ignora); el superadmin elige, pero
+    // tiene que existir de verdad (misma validación que antes).
+    const branchResult = effectiveBranch(req.admin, branch);
+    if (branchResult.error) return res.status(400).json({ error: branchResult.error });
+    const branchId = branchResult.branch;
     // Si no se manda categoryId pero sí categoryName, se genera el slug
     if (!rest.categoryId && rest.categoryName) {
       rest.categoryId = slugify(rest.categoryName);
@@ -2470,7 +2320,6 @@ app.post("/api/admin/products", requireAdmin, async (req, res) => {
     const validated = validateProductBody({ ...rest, categoryName: rest.categoryName || rest.categoryId });
     if (validated.error) return res.status(400).json({ error: validated.error });
     const data = validated.data;
-    const branchId = branch.trim();
     const existingRow = await db
       .prepare("SELECT COUNT(*) AS n FROM products WHERE branch = ? AND category_id = ?")
       .get(branchId, data.categoryId);
@@ -2528,7 +2377,9 @@ app.put("/api/admin/products/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
+    // Producto ajeno → 404: el branch_admin no puede editar el de
+    // la otra sucursal.
+    const row = await getScopedProduct(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
     const validated = validateProductBody(req.body);
     if (validated.error) return res.status(400).json({ error: validated.error });
@@ -2579,7 +2430,7 @@ app.patch("/api/admin/products/:id/available", requireAdmin, async (req, res) =>
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
+    const row = await getScopedProduct(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
     const { available } = req.body || {};
     const value = available === true || available === 1 ? 1 : 0;
@@ -2598,7 +2449,7 @@ app.delete("/api/admin/products/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
+    const row = await getScopedProduct(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
     // Limpieza: si el producto usa una imagen subida (BLOB en Turso), se borra
     // junto con el producto para no dejar basura en el plan free.
@@ -2626,7 +2477,7 @@ app.post("/api/admin/products/:id/move", requireAdmin, async (req, res) => {
     const id = paramId(req.params.id);
     const dir = req.body?.dir === "down" ? "down" : "up";
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
+    const row = await getScopedProduct(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Producto no encontrado" });
     const scope = "branch = ? AND category_id = ? AND group_name = ?";
     const scoped = [row.branch, row.category_id, row.group_name];
@@ -2657,19 +2508,24 @@ app.post("/api/admin/products/:id/move", requireAdmin, async (req, res) => {
 });
 
 // ---------- categorías (agregar / renombrar / eliminar / reordenar) ----------
+// Scope de los endpoints de grupos: sucursal + categoría. La
+// sucursal sale de la SESIÓN: el branch_admin opera SIEMPRE en la
+// suya (body.branch se ignora); el superadmin elige con body.branch.
 function catScope(req) {
-  const branch = req.body?.branch;
   const categoryId = req.body?.categoryId;
-  return typeof branch === "string" && typeof categoryId === "string" ? { branch, categoryId } : null;
+  const branchResult = effectiveBranch(req.admin, req.body?.branch);
+  if (branchResult.error || typeof categoryId !== "string") return null;
+  return { branch: branchResult.branch, categoryId };
 }
 
 app.post("/api/admin/categories", requireAdmin, async (req, res) => {
   try {
-    const { branch, name } = req.body || {};
-    // La sucursal debe existir de verdad (tandil/necochea), ver POST /api/admin/products
-    if (typeof branch !== "string" || !MENUS[branch.trim()]) {
-      return res.status(400).json({ error: "Sucursal inválida" });
-    }
+    const { name } = req.body || {};
+    // La sucursal sale de la SESIÓN (igual que POST /products):
+    // branch_admin → SIEMPRE la suya; superadmin → la del body.
+    const branchResult = effectiveBranch(req.admin, req.body?.branch);
+    if (branchResult.error) return res.status(400).json({ error: branchResult.error });
+    const branch = branchResult.branch;
     const catName = String(name || "").trim();
     if (!catName || catName.length > 120) return res.status(400).json({ error: "Nombre de categoría inválido" });
     let catId = slugify(catName);
@@ -2702,7 +2558,9 @@ app.put("/api/admin/categories/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
+    // Categoría ajena → 404: el branch_admin no puede renombrar la
+    // de la otra sucursal.
+    const row = await getScopedCategory(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Categoría no encontrada" });
     const name = String(req.body?.name || "").trim();
     if (!name || name.length > 120) return res.status(400).json({ error: "Nombre de categoría inválido" });
@@ -2726,7 +2584,7 @@ app.delete("/api/admin/categories/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
+    const row = await getScopedCategory(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Categoría no encontrada" });
     // Antes de borrar los productos, se anotan sus imágenes para limpiar los
     // BLOB y no dejarlos huérfanos hasta el sweep del próximo upload.
@@ -2751,7 +2609,7 @@ app.post("/api/admin/categories/:id/move", requireAdmin, async (req, res) => {
     const id = paramId(req.params.id);
     const dir = req.body?.dir === "down" ? "down" : "up";
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
+    const row = await getScopedCategory(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Categoría no encontrada" });
     const neighbor = await db
       .prepare(
@@ -2837,12 +2695,26 @@ function couponRowToAdmin(row) {
     usedCount: row.used_count,
     expiresAt: row.expires_at || "",
     createdAt: row.created_at,
+    branch: row.branch || "",
   };
+}
+
+// Branch de un cupón que crea un admin: el branch_admin cae SIEMPRE en su
+// sucursal (venga lo que venga en el body); el superadmin elige entre
+// global (''), necochea o tandil.
+const COUPON_BRANCHES = ["", "necochea", "tandil"];
+function couponBranchFor(req) {
+  if (req.admin.role === "branch_admin") return req.admin.branch;
+  const requested = String(req.body?.branch ?? "");
+  return COUPON_BRANCHES.includes(requested) ? requested : null;
 }
 
 app.get("/api/admin/coupons", requireAdmin, async (req, res) => {
   try {
-    const rows = await db.prepare("SELECT * FROM coupons ORDER BY id DESC").all();
+    // Con scope, el branch_admin ve SOLO los cupones de su sucursal: ni
+    // los de la otra ni los globales (esos los crea el superadmin y
+    // valen en ambas).
+    const rows = await listCoupons(db, { scope: adminScope(req) });
     res.json({ coupons: rows.map(couponRowToAdmin) });
   } catch (err) {
     console.error("GET /api/admin/coupons:", err.message);
@@ -2853,6 +2725,8 @@ app.get("/api/admin/coupons", requireAdmin, async (req, res) => {
 app.post("/api/admin/coupons", requireAdmin, async (req, res) => {
   try {
     const { code, type, value, minTotal, maxUses, active, expiresAt } = req.body || {};
+    const branch = couponBranchFor(req);
+    if (branch === null) return res.status(400).json({ error: "Sucursal inválida" });
     const cleanCode = String(code || "").trim().toUpperCase();
     if (!/^[A-Z0-9_-]{2,30}$/.test(cleanCode)) return res.status(400).json({ error: "Código de cupón inválido" });
     if (!["percent", "fixed"].includes(type)) return res.status(400).json({ error: "Tipo de cupón inválido" });
@@ -2860,8 +2734,10 @@ app.post("/api/admin/coupons", requireAdmin, async (req, res) => {
     if (!Number.isInteger(v) || v <= 0 || (type === "percent" && v > 100)) return res.status(400).json({ error: "Valor inválido" });
     const min = Math.max(0, Number(minTotal) || 0);
     const maxUsesNum = Math.max(0, Number(maxUses) || 0);
-    if (await db.prepare("SELECT 1 FROM coupons WHERE code = ?").get(cleanCode)) {
-      return res.status(400).json({ error: "El código ya existe" });
+    // Duplicado por código GLOBAL (opción 2 del dueño): existe en cualquier
+    // sucursal → error genérico, sin revelar en cuál está en uso.
+    if (await isCouponCodeTaken(db, cleanCode)) {
+      return res.status(400).json({ error: "Ese código ya está en uso" });
     }
     let expires = "";
     if (expiresAt) {
@@ -2871,8 +2747,8 @@ app.post("/api/admin/coupons", requireAdmin, async (req, res) => {
     }
     const ts = now();
     await db.prepare(
-      "INSERT INTO coupons (code, type, value, min_total, active, max_uses, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).run(cleanCode, type, v, min, active === false ? 0 : 1, maxUsesNum, expires, ts, ts);
+      "INSERT INTO coupons (code, type, value, min_total, active, max_uses, expires_at, branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(cleanCode, type, v, min, active === false ? 0 : 1, maxUsesNum, expires, branch, ts, ts);
     res.json({ ok: true });
   } catch (err) {
     console.error("POST /api/admin/coupons:", err.message);
@@ -2884,7 +2760,9 @@ app.patch("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM coupons WHERE id = ?").get(id);
+    // Ajeno al scope (otra sucursal, o global para el branch_admin) → 404,
+    // sin confirmar la existencia.
+    const row = await getScopedCoupon(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Cupón no encontrado" });
     const active = req.body?.active === false ? 0 : 1;
     await db.prepare("UPDATE coupons SET active = ?, updated_at = ? WHERE id = ?").run(active, now(), id);
@@ -2900,7 +2778,7 @@ app.put("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM coupons WHERE id = ?").get(id);
+    const row = await getScopedCoupon(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Cupón no encontrado" });
 
     const { code, type, value, minTotal, maxUses, active } = req.body || {};
@@ -2915,9 +2793,11 @@ app.put("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
     const finalMin = minTotal !== undefined ? Math.max(0, Number(minTotal) || 0) : row.min_total;
     const finalMaxUses = maxUses !== undefined ? Math.max(0, Number(maxUses) || 0) : row.max_uses;
 
+    // Duplicado GLOBAL igual que el POST (mismo caso, mismo mensaje
+    // genérico). La sucursal del cupón no se edita acá: nace con ella.
     if (cleanCode !== row.code) {
-      const dup = await db.prepare("SELECT 1 FROM coupons WHERE code = ? AND id != ?").get(cleanCode, id);
-      if (dup) return res.status(400).json({ error: "El código ya existe" });
+      const dup = await isCouponCodeTaken(db, cleanCode, { excludeId: id });
+      if (dup) return res.status(400).json({ error: "Ese código ya está en uso" });
     }
     const finalActive = active !== undefined ? (active ? 1 : 0) : row.active;
     await db.prepare(
@@ -2936,13 +2816,88 @@ app.delete("/api/admin/coupons/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-    const row = await db.prepare("SELECT * FROM coupons WHERE id = ?").get(id);
+    const row = await getScopedCoupon(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Cupón no encontrado" });
     await db.prepare("DELETE FROM coupons WHERE id = ?").run(id);
     res.json({ ok: true });
   } catch (err) {
     console.error("DELETE /api/admin/coupons/:id:", err.message);
     res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- cuentas de admin por sucursal (solo superadmin) ----------
+// El dueño crea y administra los admins de cada sucursal. Las
+// contraseñas viajan por HTTPS, se hashean con scrypt dentro de
+// admin-users.js y NUNCA salen del server: estos endpoints solo
+// devuelven id/username/branch/role/active. Cambiar contraseña o
+// desactivar borra los tokens de la cuenta (la sesión abierta corta
+// en el request siguiente).
+app.get("/api/admin/users", requireAdmin, requireSuperadmin, async (req, res) => {
+  try {
+    res.json({ users: await listAdminUsers(db) });
+  } catch (err) {
+    console.error("GET /api/admin/users:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.post("/api/admin/users", requireAdmin, requireSuperadmin, async (req, res) => {
+  try {
+    const { username, password, branch } = req.body || {};
+    const r = await createAdminUser(db, { username, password, branch }, { envUser: ADMIN_USER, nowIso: now() });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.status(201).json({ ok: true, user: r.user });
+  } catch (err) {
+    // Nunca se loguea la contraseña (ni el hash) si algo falla.
+    console.error("POST /api/admin/users:", err.message);
+    res.status(500).json({ error: "No se pudo crear la cuenta" });
+  }
+});
+
+app.put("/api/admin/users/:id/password", requireAdmin, requireSuperadmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+    const { password } = req.body || {};
+    const r = await setUserPassword(db, id, password, { nowIso: now() });
+    if (r.error) return res.status(r.error === "Cuenta no encontrada" ? 404 : 400).json({ error: r.error });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("PUT /api/admin/users/:id/password:", err.message);
+    res.status(500).json({ error: "No se pudo cambiar la contraseña" });
+  }
+});
+
+app.patch("/api/admin/users/:id", requireAdmin, requireSuperadmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+    const { active } = req.body || {};
+    if (typeof active !== "boolean") return res.status(400).json({ error: "Falta el estado de la cuenta" });
+    const r = await setUserActive(db, id, active, { nowIso: now() });
+    if (r.error) return res.status(r.error === "Cuenta no encontrada" ? 404 : 400).json({ error: r.error });
+    res.json({ ok: true, active: r.active });
+  } catch (err) {
+    console.error("PATCH /api/admin/users/:id:", err.message);
+    res.status(500).json({ error: "No se pudo actualizar la cuenta" });
+  }
+});
+
+// Borrar una cuenta de sucursal DEFINITIVAMENTE (solo superadmin).
+// Borra también sus tokens: la sesión abierta cae en el request
+// siguiente. Pedidos, ventas y cajas no se tocan (no referencian
+// a la cuenta).
+app.delete("/api/admin/users/:id", requireAdmin, requireSuperadmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+    const r = await deleteAdminUser(db, id);
+    if (r.error) return res.status(r.error === "Cuenta no encontrada" ? 404 : 400).json({ error: r.error });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/users/:id:", err.message);
+    res.status(500).json({ error: "No se pudo borrar la cuenta" });
   }
 });
 

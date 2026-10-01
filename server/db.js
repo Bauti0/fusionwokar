@@ -4,8 +4,8 @@ import { parseRefunds, refundableAmount } from "./refunds.js";
 
 // ============================================================
 // FUSIÓN WOK — Base de datos Turso (libSQL en la nube)
-// Tablas: orders, admin_tokens, events, products, categories,
-// coupons, cash_registers, product_images
+// Tablas: orders, admin_tokens, admin_users, events, products,
+// categories, coupons, cash_registers, product_images
 //
 // Se conecta a Turso con TURSO_DATABASE_URL + TURSO_AUTH_TOKEN
 // (.env). La DB es remota y persistente; no hay archivo local.
@@ -73,6 +73,23 @@ await db.exec(`
     token TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
   );
+
+  -- Cuentas de admin por sucursal. El superadmin (el dueño) NO vive
+  -- acá: sigue siendo el ADMIN_USER/ADMIN_PASSWORD del .env, para no
+  -- romper su login ni exigir ningún paso manual de migración.
+  -- COLLATE NOCASE en username: "Tandil1" y "tandil1" son la misma
+  -- cuenta, no puede haber duplicados que se diferencien por mayúsculas.
+  CREATE TABLE IF NOT EXISTS admin_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'branch_admin',
+    branch TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_admin_users_branch ON admin_users(branch);
 
   CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,6 +209,24 @@ await ensureColumn("orders", "coupon_released_at", "coupon_released_at TEXT");
 // Dinero devuelto por Mercado Pago (suma) y detalle de cada devolución.
 await ensureColumn("orders", "refunded_amount", "refunded_amount INTEGER NOT NULL DEFAULT 0");
 await ensureColumn("orders", "refunds_json", "refunds_json TEXT NOT NULL DEFAULT '[]'");
+
+// Cupones por sucursal (T14): '' = global (vale en ambas), 'necochea'/
+// 'tandil' = local. Los cupones existentes quedan globales sin tocar
+// filas; la unicidad del código sigue siendo GLOBAL (opción 2 del dueño:
+// no se recrea la tabla).
+await ensureColumn("coupons", "branch", "branch TEXT NOT NULL DEFAULT ''");
+
+// Roles del panel: los tokens de sesión guardan quién los emitió.
+//   admin_user_id NULL → el superadmin del .env: los tokens vivos de
+//   antes de este cambio siguen válidos y resuelven como superadmin
+//   sin ningún paso manual.
+//   role/branch duplican los de admin_users para tenerlos a mano en
+//   cada request (requireAdmin), pero la fuente de verdad de la
+//   identidad es admin_users: si la cuenta se desactiva, la sesión
+//   corta aunque el token siga en la tabla.
+await ensureColumn("admin_tokens", "admin_user_id", "admin_user_id INTEGER");
+await ensureColumn("admin_tokens", "role", "role TEXT NOT NULL DEFAULT 'superadmin'");
+await ensureColumn("admin_tokens", "branch", "branch TEXT NOT NULL DEFAULT ''");
 
 // Visitante anónimo por evento (para contar personas, no vistas netas).
 // El índice se crea DESPUÉS de agregar la columna (sino falla en DBs viejas).

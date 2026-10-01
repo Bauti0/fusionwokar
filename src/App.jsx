@@ -30,8 +30,11 @@ function PageFallback() {
 }
 
 export default function App() {
-  // null = verificando sesión (cookie httpOnly) · true/false = autenticado
-  const [adminAuthed, setAdminAuthed] = useState(null);
+  // null = verificando sesión (cookie httpOnly) · false = anónimo ·
+  // objeto = sesión válida. El objeto es lo que devuelve /api/admin/me
+  // (user, role, branch): el panel lo usa para saber qué secciones
+  // mostrar, aunque la separación real la aplica el backend.
+  const [adminSession, setAdminSession] = useState(null);
   const location = useLocation();
 
   // Visita a la página (cada ruta)
@@ -57,8 +60,8 @@ export default function App() {
     if (!location.pathname.startsWith("/admin")) return;
     let alive = true;
     adminMe()
-      .then(() => alive && setAdminAuthed(true))
-      .catch(() => alive && setAdminAuthed(false));
+      .then((me) => alive && setAdminSession(me))
+      .catch(() => alive && setAdminSession(false));
     return () => {
       alive = false;
     };
@@ -75,12 +78,20 @@ export default function App() {
         <Route
           path="/admin"
           element={
-            adminAuthed === null ? (
+            adminSession === null ? (
               <PageFallback />
-            ) : adminAuthed ? (
-              <AdminPanel onLogout={() => setAdminAuthed(false)} />
+            ) : adminSession ? (
+              <AdminPanel me={adminSession} onLogout={() => setAdminSession(false)} />
             ) : (
-              <AdminLogin onLogin={() => setAdminAuthed(true)} />
+              // Tras el login se vuelve a consultar /me: el panel necesita
+              // el rol y la sucursal de la sesión recién creada.
+              <AdminLogin
+                onLogin={() =>
+                  adminMe()
+                    .then((me) => setAdminSession(me))
+                    .catch(() => setAdminSession(false))
+                }
+              />
             )
           }
         />

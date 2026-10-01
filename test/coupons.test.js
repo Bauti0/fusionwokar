@@ -26,12 +26,15 @@ async function makeDb() {
   const client = createClient({ url: "file::memory:" });
   const db = createDb(client);
   // db.exec() es el mismo camino que usan las migraciones del server.
+  // `branch` espeja el ensureColumn aditivo de T14: '' = cupón global
+  // (vale en ambas sucursales), 'necochea'/'tandil' = cupón local.
   await db.exec(`
     CREATE TABLE coupons (
       code TEXT PRIMARY KEY, active INTEGER NOT NULL DEFAULT 1,
       max_uses INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0,
       min_total INTEGER NOT NULL DEFAULT 0, type TEXT NOT NULL DEFAULT 'percent',
-      value INTEGER NOT NULL DEFAULT 0, expires_at TEXT, updated_at TEXT
+      value INTEGER NOT NULL DEFAULT 0, expires_at TEXT, updated_at TEXT,
+      branch TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,22 +42,23 @@ async function makeDb() {
       coupon_released_at TEXT,
       payment_status TEXT NOT NULL DEFAULT 'pending',
       status TEXT NOT NULL DEFAULT 'received',
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      branch TEXT NOT NULL DEFAULT ''
     );
   `);
   return db;
 }
 
-async function addCoupon(db, { code = "VERDE", maxUses = 0, used = 0, active = 1 } = {}) {
+async function addCoupon(db, { code = "VERDE", maxUses = 0, used = 0, active = 1, type = "percent", value = 0, branch = "" } = {}) {
   await db
-    .prepare("INSERT INTO coupons (code, active, max_uses, used_count) VALUES (?, ?, ?, ?)")
-    .run(code, active, maxUses, used);
+    .prepare("INSERT INTO coupons (code, active, max_uses, used_count, type, value, branch) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(code, active, maxUses, used, type, value, branch);
 }
 
-async function addOrder(db, { code = "VERDE", payment = "pending", status = "received", ageMin = 0 } = {}) {
+async function addOrder(db, { code = "VERDE", payment = "pending", status = "received", ageMin = 0, branch = "" } = {}) {
   const r = await db
-    .prepare("INSERT INTO orders (coupon_code, payment_status, status, created_at) VALUES (?, ?, ?, ?)")
-    .run(code, payment, status, iso(-ageMin));
+    .prepare("INSERT INTO orders (coupon_code, payment_status, status, created_at, branch) VALUES (?, ?, ?, ?, ?)")
+    .run(code, payment, status, iso(-ageMin), branch);
   return r.lastInsertRowid;
 }
 
@@ -353,5 +357,114 @@ describe("applyCoupon", () => {
       .run();
     assert.match((await applyCoupon(db, "MIN", 1000)).error, /mínimo/);
     assert.equal((await applyCoupon(db, "MIN", 4000)).discount, 500);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Cupones por sucursal (T14). `branch` es OPCIONAL en todas las
+// funciones: sin él mantienen el comportamiento actual (las regresiones
+// de arriba lo prueban). Con él, la fila se resuelve como:
+//   code = ? AND (branch = ? OR branch = '')
+// — un cupón local ('necochea'/'tandil') solo vale en SU sucursal;
+//   uno global ('') vale en ambas. La unicidad del código sigue siendo
+//   GLOBAL (opción 2 del dueño): no puede haber un local y un global
+//   con el mismo código.
+// ---------------------------------------------------------------------
+describe("applyCoupon — scoping por sucursal", () => {
+  let db;
+  beforeEach(async () => { db = await makeDb(); });
+
+  it("un cupón local de tandil aplica en tandil y NO en necochea", async () => {
+    await addCoupon(db, { code: "LOCAL", branch: "tandil", value: 10 });
+    assert.deepEqual(await applyCoupon(db, "LOCAL", 5000, "tandil"), { code: "LOCAL", discount: 500 });
+    const ajena = await applyCoupon(db, "LOCAL", 5000, "necochea");
+    assert.match(ajena.error, /no es válido para esta sucursal/);
+  });
+
+  it("un cupón global (branch vacía) aplica en ambas sucursales", async () => {
+    await addCoupon(db, { code: "GLOBAL", value: 10 }); // branch '' por defecto
+    for (const b of ["necochea", "tandil"]) {
+      assert.equal((await applyCoupon(db, "GLOBAL", 5000, b)).discount, 500, `aplica en ${b}`);
+    }
+  });
+
+  it("en la otra sucursal, un código que no existe sigue siendo 'no existe'", async () => {
+    // El scoping no puede disfrazar la inexistencia: el cliente tiene que
+    // poder distinguir "lo tipeé mal" de "es de la otra sucursal".
+    assert.match((await applyCoupon(db, "FANTASMA", 5000, "necochea")).error, /no existe/);
+  });
+
+  it("sin branch, el comportamiento actual no cambia", async () => {
+    await addCoupon(db, { code: "LOCAL", branch: "tandil", value: 10 });
+    assert.equal((await applyCoupon(db, "LOCAL", 5000)).discount, 500);
+  });
+});
+
+describe("reserveCoupon — scoping por sucursal", () => {
+  let db;
+  beforeEach(async () => { db = await makeDb(); });
+
+  it("un cupón local se reserva solo en su sucursal", async () => {
+    await addCoupon(db, { code: "LOCAL", branch: "tandil", used: 0 });
+    assert.equal(await reserveCoupon(db, "LOCAL", "tandil"), true);
+    assert.equal(await usedCount(db, "LOCAL"), 1);
+    assert.equal(await reserveCoupon(db, "LOCAL", "necochea"), false, "para necochea el cupón no existe");
+    assert.equal(await usedCount(db, "LOCAL"), 1, "y el intento ajeno no toca el contador");
+  });
+
+  it("un cupón global se reserva desde ambas sucursales (mismo contador)", async () => {
+    await addCoupon(db, { code: "GLOBAL", used: 0 });
+    assert.equal(await reserveCoupon(db, "GLOBAL", "necochea"), true);
+    assert.equal(await reserveCoupon(db, "GLOBAL", "tandil"), true);
+    assert.equal(await usedCount(db, "GLOBAL"), 2, "el global acumula usos de ambas");
+  });
+});
+
+describe("liberación con branch — baja el contador SOLO de la fila resuelta", () => {
+  let db;
+  beforeEach(async () => { db = await makeDb(); });
+
+  it("releaseOrderCoupon con branch libera el cupón local de esa sucursal", async () => {
+    await addCoupon(db, { code: "LOCAL", branch: "tandil", used: 1 });
+    const id = await addOrder(db, { code: "LOCAL", branch: "tandil", payment: "pending", ageMin: 45 });
+    assert.equal(await releaseOrderCoupon(db, id, "LOCAL", "tandil"), true);
+    assert.equal(await usedCount(db, "LOCAL"), 0);
+  });
+
+  it("releaseOrderCoupon con un branch que no resuelve marca el pedido pero NO baja el contador", async () => {
+    // Defensivo: un pedido de necochea no puede haber reservado el cupón
+    // local de tandil (applyCoupon lo impide). Si igual aparece esa fila
+    // (dato viejo, restauración), liberarla no puede regalar un uso del
+    // cupón de tandil.
+    await addCoupon(db, { code: "LOCAL", branch: "tandil", used: 1 });
+    const id = await addOrder(db, { code: "LOCAL", branch: "necochea", payment: "pending", ageMin: 45 });
+    assert.equal(await releaseOrderCoupon(db, id, "LOCAL", "necochea"), true, "el pedido se marca liberado igual");
+    assert.equal(await usedCount(db, "LOCAL"), 1, "el contador de tandil queda intocado");
+  });
+
+  it("releaseOrphanReservation con branch baja la fila resuelta", async () => {
+    await addCoupon(db, { code: "LOCAL", branch: "tandil", used: 1 });
+    assert.equal(await releaseOrphanReservation(db, "LOCAL", "tandil"), true);
+    assert.equal(await usedCount(db, "LOCAL"), 0);
+  });
+
+  it("releaseOrphanReservation con un branch que no resuelve no toca nada", async () => {
+    await addCoupon(db, { code: "LOCAL", branch: "tandil", used: 1 });
+    assert.equal(await releaseOrphanReservation(db, "LOCAL", "necochea"), true);
+    assert.equal(await usedCount(db, "LOCAL"), 1);
+  });
+
+  it("el sweep libera usando el branch de cada pedido", async () => {
+    await addCoupon(db, { code: "LOCAL", branch: "tandil", used: 1 });
+    await addOrder(db, { code: "LOCAL", branch: "tandil", payment: "pending", ageMin: 45 });
+    await releaseStaleCouponReservations(db);
+    assert.equal(await usedCount(db, "LOCAL"), 0);
+  });
+
+  it("el sweep no baja un contador que el branch del pedido no resuelve", async () => {
+    await addCoupon(db, { code: "LOCAL", branch: "tandil", used: 1 });
+    await addOrder(db, { code: "LOCAL", branch: "necochea", payment: "pending", ageMin: 45 });
+    await releaseStaleCouponReservations(db);
+    assert.equal(await usedCount(db, "LOCAL"), 1, "el cupón local de tandil no se toca");
   });
 });

@@ -20,7 +20,7 @@ const PERIODS = [
 
 const branchLabel = (v) => (typeof v === "number" && Number.isFinite(v) ? `${v}%` : "0%");
 
-export default function AdminStats() {
+export default function AdminStats({ me }) {
   const [period, setPeriod] = useState("30d");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -94,28 +94,45 @@ export default function AdminStats() {
                 bruto {formatPrice(stats.ventaBruta)} · devuelto {formatPrice(stats.devuelto ?? 0)}
               </span>
             </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Venta neta · Tandil</span>
-              <strong className="stat-card__value">{formatPrice(stats.ventaTandil)}</strong>
-              <span className="stat-card__note">devuelto {formatPrice(stats.devueltoTandil ?? 0)}</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Venta neta · Necochea</span>
-              <strong className="stat-card__value">{formatPrice(stats.ventaNecochea)}</strong>
-              <span className="stat-card__note">devuelto {formatPrice(stats.devueltoNecochea ?? 0)}</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Ticket Promedio</span>
-              <strong className="stat-card__value">{formatPrice(stats.ticketPromedio)}</strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Pedidos</span>
-              <strong className="stat-card__value">{stats.pedidos}</strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-card__label">Visitantes (personas)</span>
-              <strong className="stat-card__value">{stats.visitas}</strong>
-            </div>
+            {me?.role === "branch_admin" ? (
+              // El admin de sucursal solo ve SU venta: sin desglose por
+              // local ni analytics (decisión 3 del dueño).
+              <>
+                <div className="stat-card">
+                  <span className="stat-card__label">Ticket Promedio</span>
+                  <strong className="stat-card__value">{formatPrice(stats.ticketPromedio)}</strong>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-card__label">Pedidos</span>
+                  <strong className="stat-card__value">{stats.pedidos}</strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="stat-card">
+                  <span className="stat-card__label">Venta neta · Tandil</span>
+                  <strong className="stat-card__value">{formatPrice(stats.ventaTandil)}</strong>
+                  <span className="stat-card__note">devuelto {formatPrice(stats.devueltoTandil ?? 0)}</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-card__label">Venta neta · Necochea</span>
+                  <strong className="stat-card__value">{formatPrice(stats.ventaNecochea)}</strong>
+                  <span className="stat-card__note">devuelto {formatPrice(stats.devueltoNecochea ?? 0)}</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-card__label">Ticket Promedio</span>
+                  <strong className="stat-card__value">{formatPrice(stats.ticketPromedio)}</strong>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-card__label">Pedidos</span>
+                  <strong className="stat-card__value">{stats.pedidos}</strong>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-card__label">Visitantes (personas)</span>
+                  <strong className="stat-card__value">{stats.visitas}</strong>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="top-products">
