@@ -1483,7 +1483,7 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
     }
 
     // ---- Orders API (integración actual) ----
-    if (type === "order") {
+    if (type === "order" && data?.id) {
       const mpOrderId = String(data.id);
       // El estado se lee SIEMPRE de la API y no del cuerpo de la notificación:
       // así una devolución hecha desde el panel de MP (o un contracargo) queda
@@ -1504,7 +1504,7 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
     }
 
     // ---- Preferences API (pedidos abiertos antes de migrar a Orders) ----
-    if (type === "payment") {
+    if (type === "payment" && data?.id) {
       const paymentId = String(data.id);
       const payment = await getPayment(paymentId);
       if (payment.external_reference) {
@@ -1552,9 +1552,12 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
     // no había nada que actualizar. mpFetch ya clasifica estos casos
     // (retryable=false), igual que el resto del server, así que acá se respeta.
     if (err instanceof MpError && !err.retryable) {
-      console.warn(`Webhook de MP con error definitivo (${err.status}): ${err.message}`);
+      console.warn(
+        `Webhook de MP con error definitivo (${err.status}): ${err.message}`
+      );
       return res.sendStatus(200);
     }
+
     console.error("Webhook error:", err.message);
     // 500 para que Mercado Pago reintente (lo hace unas pocas veces con backoff):
     // si devolviéramos 200 la notificación se pierde y el pedido queda sin actualizar.
