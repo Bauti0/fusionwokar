@@ -1470,8 +1470,22 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
       return res.status(400).json({ error: "Firma inválida" });
     }
 
+    // ---- Payload que no procesamos: no-op con 200 ----
+    // El botón "Probar" del panel de MP manda una simulación con el id en la
+    // raíz ({"type":"order","id":"123456"}), sin la forma de Orders API
+    // ({"type":"order","data":{"id":"01J…"}}), así que no hay `data.id` con
+    // qué trabajar. Antes caía al catch y respondía 500: MP lo marcaba como
+    // fallido y reintentaba hasta agotar los intentos. Un tipo desconocido (o
+    // un id ausente) no va a convertirse en válido al reintentarlo, así que se
+    // acusa recibo con 200 y se sigue. Los tipos que sí atiende MP son
+    // "order" (Orders API) y "payment" (Preferences API, histórica).
+    if ((type !== "order" && type !== "payment") || !data?.id) {
+      console.warn(`Webhook ignorado (sin data.id): type=${type ?? "?"} id=${data?.id ?? req.body?.id ?? "?"}`);
+      return res.sendStatus(200);
+    }
+
     // ---- Orders API (integración actual) ----
-    if (type === "order" && data?.id) {
+    if (type === "order") {
       const mpOrderId = String(data.id);
       // El estado se lee SIEMPRE de la API y no del cuerpo de la notificación:
       // así una devolución hecha desde el panel de MP (o un contracargo) queda
@@ -1492,7 +1506,7 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
     }
 
     // ---- Preferences API (pedidos abiertos antes de migrar a Orders) ----
-    if (type === "payment" && data?.id) {
+    if (type === "payment") {
       const paymentId = String(data.id);
       const payment = await getPayment(paymentId);
       if (payment.external_reference) {
