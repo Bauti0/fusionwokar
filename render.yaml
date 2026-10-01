@@ -1,5 +1,8 @@
 # Render blueprint — Fusión Wok
-# Deploy único: `npm install && npm run build && node server/index.js`
+# Deploy único: `npm ci --include=dev && npm run build && node server/index.js`
+# `--include=dev` es OBLIGATORIO: el build necesita vite (devDependency). Sin este
+# flag, un `NODE_ENV=production` en el entorno de build hace que npm omita las
+# devDependencies y el build muera con `sh: 1: vite: not found`.
 # Las variables con `sync: false` se setean una vez en el dashboard y no se
 # pisotean en redeploys (se rellenan en el primer deploy).
 services:
@@ -7,7 +10,7 @@ services:
     name: fusion-wok
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /
     envVars:
