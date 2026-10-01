@@ -1470,17 +1470,15 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
       return res.status(400).json({ error: "Firma inválida" });
     }
 
-    // ---- Payload que no procesamos: no-op con 200 ----
-    // El botón "Probar" del panel de MP manda una simulación con el id en la
-    // raíz ({"type":"order","id":"123456"}), sin la forma de Orders API
-    // ({"type":"order","data":{"id":"01J…"}}), así que no hay `data.id` con
-    // qué trabajar. Antes caía al catch y respondía 500: MP lo marcaba como
-    // fallido y reintentaba hasta agotar los intentos. Un tipo desconocido (o
-    // un id ausente) no va a convertirse en válido al reintentarlo, así que se
-    // acusa recibo con 200 y se sigue. Los tipos que sí atiende MP son
-    // "order" (Orders API) y "payment" (Preferences API, histórica).
+    // ---- Payload que no sabemos procesar: no-op con 200 ----
+    // Los tipos que MP emite son "order" (Orders API, la integración actual) y
+    // "payment" (Preferences API, histórica). Cualquier otro, o un id ausente,
+    // no se va a volver válido reintentando, así que se acusa recibo con 200 en
+    // vez de devolver 500 y hacer que MP insista. Ojo: el id de Orders API no
+    // es numérico (es tipo "01J…"), así que un id numérico casi seguro es una
+    // simulación del botón "Probar" del panel de MP.
     if ((type !== "order" && type !== "payment") || !data?.id) {
-      console.warn(`Webhook ignorado (sin data.id): type=${type ?? "?"} id=${data?.id ?? req.body?.id ?? "?"}`);
+      console.warn(`Webhook ignorado (tipo o id desconocido): type=${type ?? "?"} id=${data?.id ?? "?"}`);
       return res.sendStatus(200);
     }
 
@@ -1545,6 +1543,18 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
     }
     res.sendStatus(200);
   } catch (err) {
+    // Un MpError no retryable (400/404/422) es una respuesta definitiva de MP:
+    // el id no existe o la operación está mal. El caso real es el botón "Probar"
+    // del panel de MP, que manda {"type":"order","data":{"id":"123456"}} y MP
+    // contesta 400 "path param order id is invalid" porque una order válida no
+    // tiene id numérico. Reintentar eso nunca va a funcionar, así que 500 solo
+    // hacía que MP lo marcara fallido e insistiera. Se acusa recibo con 200:
+    // no había nada que actualizar. mpFetch ya clasifica estos casos
+    // (retryable=false), igual que el resto del server, así que acá se respeta.
+    if (err instanceof MpError && !err.retryable) {
+      console.warn(`Webhook de MP con error definitivo (${err.status}): ${err.message}`);
+      return res.sendStatus(200);
+    }
     console.error("Webhook error:", err.message);
     // 500 para que Mercado Pago reintente (lo hace unas pocas veces con backoff):
     // si devolviéramos 200 la notificación se pierde y el pedido queda sin actualizar.
