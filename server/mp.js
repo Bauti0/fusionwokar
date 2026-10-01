@@ -378,10 +378,26 @@ function diagManifiestoReal(req, rawSignature, rawRequestId) {
 }
 
 // TEMP-DIAG: remover tras diagnóstico
-// Devuelve { a..i: true|false|null }. null = la variante no se pudo calcular
-// porque el request no trae el dato que necesita.
-function diagVariantes({ secret, v1, real, queryId, bodyDataId, bodyTopId }) {
-  const nulas = { a: null, b: null, c: null, d: null, e: null, f: null, g: null, h: null, i: null };
+// Devuelve { a..i, j, k, l, m, n1, n2: true|false|null }. null = la variante no
+// se pudo calcular porque el request no trae el dato que necesita.
+function diagVariantes({ secret, v1, real, queryId, bodyDataId, bodyTopId, paymentId, externalReference }) {
+  const nulas = {
+    a: null,
+    b: null,
+    c: null,
+    d: null,
+    e: null,
+    f: null,
+    g: null,
+    h: null,
+    i: null,
+    j: null,
+    k: null,
+    l: null,
+    m: null,
+    n1: null,
+    n2: null,
+  };
   if (!real) return nulas; // sin ts= o header no string: no hay manifest que probar
   const { ts, requestId, dataId } = real;
   const lc = (v) => (v == null || v === "" ? null : String(v).toLowerCase());
@@ -392,7 +408,9 @@ function diagVariantes({ secret, v1, real, queryId, bodyDataId, bodyTopId }) {
     pedazos.push(`ts:${ts};`);
     return pedazos.join("");
   };
-  const out = {};
+  // Se parte de todas en null: así las variantes que no se computan salen
+  // como null explícito (no como clave ausente) y el JSON siempre es estable.
+  const out = { ...nulas };
   // A: el manifest LITERAL que arma la verificación real, sin reconstruirlo.
   // Por construcción, a:true implica que la verificación devuelve true.
   out.a = diagMatch(real.manifest, secret, v1);
@@ -412,6 +430,26 @@ function diagVariantes({ secret, v1, real, queryId, bodyDataId, bodyTopId }) {
   out.h = diagMatch(`${dataId ? `id:${dataId};` : ""}ts:${ts};`, secret, v1);
   // I: solo ts.
   out.i = diagMatch(`ts:${ts};`, secret, v1);
+  // J: manifest con el id de pago (data.transactions.payments[0].id) en minúsculas.
+  if (paymentId != null && paymentId !== "") out.j = diagMatch(partes(lc(paymentId)), secret, v1);
+  // K: igual que J, pero con el id de pago tal cual.
+  if (paymentId != null && paymentId !== "") out.k = diagMatch(partes(String(paymentId)), secret, v1);
+  // L: manifest con el external_reference en minúsculas como id.
+  if (externalReference != null && externalReference !== "") {
+    out.l = diagMatch(partes(lc(externalReference)), secret, v1);
+  }
+  // M: igual que L, pero con el external_reference tal cual.
+  if (externalReference != null && externalReference !== "") {
+    out.m = diagMatch(partes(String(externalReference)), secret, v1);
+  }
+  // N: data.id en minúsculas + campo external_reference: en minúsculas, en dos
+  // órdenes. n1: id;external_reference;request-id;ts. n2: id;request-id;external_reference;ts.
+  if (dataId && externalReference != null && externalReference !== "") {
+    const extRefLc = lc(externalReference);
+    const reqPart = requestId ? `request-id:${requestId};` : "";
+    out.n1 = diagMatch(`id:${dataId};external_reference:${extRefLc};${reqPart}ts:${ts};`, secret, v1);
+    out.n2 = diagMatch(`id:${dataId};${reqPart}external_reference:${extRefLc};ts:${ts};`, secret, v1);
+  }
   return out;
 }
 
@@ -423,14 +461,15 @@ export function diagWebhook(req) {
     const rawRequestId = headers["x-request-id"];
     const firma = diagParseSignature(rawSignature);
 
-    // Query: solo se leen data.id, type y topic. Ningún otro valor.
-    let url = { path: "", queryNames: [], dataId: null, type: null, topic: null };
+    // Query: solo se leen data.id, data.external_reference, type y topic.
+    let url = { path: "", queryNames: [], dataId: null, externalReference: null, type: null, topic: null };
     try {
       const parsed = new URL(req?.originalUrl || req?.url || "", "http://mp.local");
       url = {
         path: parsed.pathname,
         queryNames: [...parsed.searchParams.keys()],
         dataId: parsed.searchParams.get("data.id"),
+        externalReference: parsed.searchParams.get("data.external_reference"),
         type: parsed.searchParams.get("type"),
         topic: parsed.searchParams.get("topic"),
       };
@@ -443,6 +482,37 @@ export function diagWebhook(req) {
     const queryId = url.dataId;
     const bodyDataId = bodyData?.id ?? null;
     const bodyTopId = body?.id ?? null;
+
+    // Payment: en Orders el primer pago vive en data.transactions.payments[0].
+    // Solo se leen los NOMBRES de sus keys y el id (que ya es público en la
+    // notificación). Nunca se registra el contenido del resto.
+    const transactions =
+      bodyData?.transactions && typeof bodyData.transactions === "object"
+        ? bodyData.transactions
+        : null;
+    const payments = Array.isArray(transactions?.payments) ? transactions.payments : null;
+    const payment0 = payments && payments[0] && typeof payments[0] === "object" ? payments[0] : null;
+    const paymentId = payment0?.id ?? null;
+
+    // external_reference: el webhook real de Orders lo trae en el query; el
+    // body también puede tenerlo (notificaciones viejas). Se prioriza el query.
+    const externalReference =
+      url.externalReference != null
+        ? url.externalReference
+        : bodyData?.external_reference ?? body?.external_reference ?? null;
+
+    // Diferencia entre el ts del header y la hora del servidor, y cantidad de
+    // dígitos del ts. Si no hay ts → null (no 0), para no confundir "no hay ts"
+    // con "skew cero".
+    const tsTexto = firma.ts;
+    const tsNum = tsTexto != null && /^\d+$/.test(String(tsTexto)) ? Number(tsTexto) : null;
+    const tsDigitos = tsTexto == null ? null : String(tsTexto).length;
+    const tsDiffMs = tsNum == null ? null : Date.now() - tsNum;
+
+    // Confirmación de headers duplicados: si llegó más de un valor, el runtime
+    // lo entrega como array. Nunca lanza.
+    const dupSignature = Array.isArray(rawSignature) ? rawSignature.length : 1;
+    const dupRequestId = Array.isArray(rawRequestId) ? rawRequestId.length : 1;
     // Mismo manifest que arma la verificación real, para que la variante A
     // sea esa misma cadena y no una reconstrucción parecida.
     const real = diagManifiestoReal(req, rawSignature, rawRequestId);
@@ -467,18 +537,23 @@ export function diagWebhook(req) {
       signature: {
         presente: firma.presentes,
         comoArray: Array.isArray(rawSignature),
-        duplicado: (firma.ocurrenciasTs ?? 0) > 1,
+        duplicado: dupSignature > 1,
+        cantidad: dupSignature,
         largo: rawSignature == null ? 0 : String(rawSignature).length,
         componentes: firma.componentes,
         largoPorValor: firma.largoPorValor,
         v1EsHex: firma.v1EsHex,
         ts: firma.ts,
+        tsDigitos,
+        tsDiffMs,
       },
       requestId: {
         presente: requestId != null && requestId !== "",
         comoArray: Array.isArray(rawRequestId),
         valor: requestId ?? null,
         largo: requestId == null ? 0 : String(requestId).length,
+        duplicado: dupRequestId > 1,
+        cantidad: dupRequestId,
       },
       headersX: Object.keys(headers)
         .filter((h) => h.toLowerCase().startsWith("x-"))
@@ -495,6 +570,12 @@ export function diagWebhook(req) {
         idLargo: bodyTopId == null ? 0 : String(bodyTopId).length,
         type: body.type ?? null,
         action: body.action ?? null,
+        liveMode: body.live_mode ?? bodyData?.live_mode ?? null,
+        applicationId: body.application_id ?? bodyData?.application_id ?? null,
+        userId: body.user_id ?? bodyData?.user_id ?? null,
+        dataKeys: bodyData ? Object.keys(bodyData).sort() : [],
+        transactionsKeys: transactions ? Object.keys(transactions).sort() : [],
+        paymentKeys: payment0 ? Object.keys(payment0).sort() : [],
       },
       manifest: {
         id: manifestId ?? null,
@@ -513,6 +594,8 @@ export function diagWebhook(req) {
         queryId,
         bodyDataId,
         bodyTopId,
+        paymentId,
+        externalReference,
       }),
     };
 
