@@ -263,6 +263,8 @@ export async function getPayment(paymentId) {
 // marcara pagos como aprobados. En demo no llegan webhooks reales, así que
 // rechazar es seguro: el flujo demo se simula por el endpoint /demo con token.)
 export function verifyWebhookSignature(req) {
+  // TEMP-DIAG: remover tras diagnóstico
+  diagWebhook(req);
   const secret = process.env.MP_WEBHOOK_SECRET;
   if (!secret) return false; // firma no verificable → inválida
   const signature = req.headers["x-signature"] || "";
@@ -290,4 +292,232 @@ export function dataIdForManifest(req) {
   const fromQuery = new URL(req.originalUrl || req.url || "", "http://mp.local").searchParams.get("data.id");
   const raw = fromQuery != null ? fromQuery : req.body?.data?.id;
   return raw == null || raw === "" ? null : String(raw).toLowerCase();
+}
+
+// ============================================================
+// TEMP-DIAG: remover tras diagnóstico
+// Diagnóstico del rechazo de firma del webhook. SOLO lee el request y escribe
+// una línea JSON por request. NO cambia la verificación: no toca el manifest
+// que usa la función real, no altera el retorno y va envuelto en un try/catch
+// que no puede propagar errores.
+//
+// Reglas de este bloque: jamás imprimir el secret, el v1 recibido ni ningún
+// HMAC calculado (ni entero, ni prefijo/sufijo). Solo booleanos, largos,
+// nombres de campo y los tres valores que la doc de MP ya expone en claro
+// (ts, x-request-id y data.id). Si algo no se puede calcular se emite null,
+// para no confundir "no calculé" con "no coincide".
+// ============================================================
+
+const DIAG_PREFIJO = "[MP-WEBHOOK-DIAG]";
+
+// Separa `ts=...,v1=...` en pares [nombre, valor]. Tolera coma y punto y coma,
+// y no propaga si el header no es string.
+function diagParseSignature(raw) {
+  if (raw == null) return { presentes: false, componentes: [], largoPorValor: {}, ts: null, v1EsHex: null, ocurrenciasTs: 0 };
+  const texto = Array.isArray(raw) ? raw.join(",") : String(raw);
+  const componentes = [];
+  const largoPorValor = {};
+  let ts = null;
+  for (const trozo of texto.split(/[,;]/)) {
+    const eq = trozo.indexOf("=");
+    if (eq <= 0) continue;
+    const nombre = trozo.slice(0, eq).trim();
+    const valor = trozo.slice(eq + 1).trim();
+    componentes.push(nombre);
+    largoPorValor[nombre] = valor.length;
+    // Se guarda el PRIMER ts: es el que toma el regex de la verificación real.
+    if (nombre === "ts" && ts == null) ts = valor;
+  }
+  const v1 = texto.match(/v1=([a-f0-9]+)/i);
+  return {
+    presentes: true,
+    componentes,
+    largoPorValor,
+    ts,
+    v1EsHex: v1 ? /^[a-f0-9]+$/i.test(v1[1]) : null,
+    // Duplicado real = más de un "ts=" en el header. No se cuenta la coma,
+    // porque la coma es el separador legítimo entre ts y v1 de MP.
+    ocurrenciasTs: (texto.match(/ts=/g) || []).length,
+  };
+}
+
+// Calcula el HMAC de una variante del manifest y compara contra el v1 recibido.
+// Devuelve un booleano; NO devuelve ni registra el hash.
+function diagMatch(manifest, secret, v1Recibido) {
+  if (!secret || !v1Recibido || !manifest) return null;
+  const hmac = createHmac("sha256", secret).update(manifest).digest("hex");
+  return hmac === String(v1Recibido).toLowerCase();
+}
+
+// TEMP-DIAG: remover tras diagnóstico
+// Reproduce la construcción del manifest TAL CUAL la hace
+// verifyWebhookSignature (mismos regex, mismo dataIdForManifest, mismas
+// condicionales), sin tocar esa función. Si no se puede reproducir devuelve
+// null: o el header x-signature no es string (la verificación real reventaría
+// en .match) o no hay ts= (la verificación real corta ahí).
+function diagManifiestoReal(req, rawSignature, rawRequestId) {
+  try {
+    if (typeof rawSignature !== "string") return null;
+    const tsMatch = rawSignature.match(/ts=(\d+)/);
+    if (!tsMatch) return null;
+    const requestId = rawRequestId || "";
+    const dataId = dataIdForManifest(req);
+    return {
+      ts: tsMatch[1],
+      requestId,
+      dataId,
+      manifest: [
+        dataId ? `id:${dataId};` : "",
+        requestId ? `request-id:${requestId};` : "",
+        `ts:${tsMatch[1]};`,
+      ].join(""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// TEMP-DIAG: remover tras diagnóstico
+// Devuelve { a..i: true|false|null }. null = la variante no se pudo calcular
+// porque el request no trae el dato que necesita.
+function diagVariantes({ secret, v1, real, queryId, bodyDataId, bodyTopId }) {
+  const nulas = { a: null, b: null, c: null, d: null, e: null, f: null, g: null, h: null, i: null };
+  if (!real) return nulas; // sin ts= o header no string: no hay manifest que probar
+  const { ts, requestId, dataId } = real;
+  const lc = (v) => (v == null || v === "" ? null : String(v).toLowerCase());
+  const partes = (id) => {
+    const pedazos = [];
+    if (id) pedazos.push(`id:${id};`);
+    if (requestId) pedazos.push(`request-id:${requestId};`);
+    pedazos.push(`ts:${ts};`);
+    return pedazos.join("");
+  };
+  const out = {};
+  // A: el manifest LITERAL que arma la verificación real, sin reconstruirlo.
+  // Por construcción, a:true implica que la verificación devuelve true.
+  out.a = diagMatch(real.manifest, secret, v1);
+  // B: id del body.data, en minúsculas.
+  out.b = diagMatch(partes(lc(bodyDataId)), secret, v1);
+  // C: id del query tal cual, sin minúsculas.
+  out.c = diagMatch(partes(queryId || null), secret, v1);
+  // D: id del body.data tal cual.
+  out.d = diagMatch(partes(bodyDataId || null), secret, v1);
+  // E: id del body.id de primer nivel, en minúsculas.
+  out.e = diagMatch(partes(lc(bodyTopId)), secret, v1);
+  // F: id del body.id de primer nivel, tal cual.
+  out.f = diagMatch(partes(bodyTopId || null), secret, v1);
+  // G: sin el campo id (solo request-id y ts).
+  out.g = diagMatch(partes(null), secret, v1);
+  // H: sin request-id (id de la variante actual + ts).
+  out.h = diagMatch(`${dataId ? `id:${dataId};` : ""}ts:${ts};`, secret, v1);
+  // I: solo ts.
+  out.i = diagMatch(`ts:${ts};`, secret, v1);
+  return out;
+}
+
+// TEMP-DIAG: remover tras diagnóstico
+export function diagWebhook(req) {
+  try {
+    const headers = req?.headers || {};
+    const rawSignature = headers["x-signature"];
+    const rawRequestId = headers["x-request-id"];
+    const firma = diagParseSignature(rawSignature);
+
+    // Query: solo se leen data.id, type y topic. Ningún otro valor.
+    let url = { path: "", queryNames: [], dataId: null, type: null, topic: null };
+    try {
+      const parsed = new URL(req?.originalUrl || req?.url || "", "http://mp.local");
+      url = {
+        path: parsed.pathname,
+        queryNames: [...parsed.searchParams.keys()],
+        dataId: parsed.searchParams.get("data.id"),
+        type: parsed.searchParams.get("type"),
+        topic: parsed.searchParams.get("topic"),
+      };
+    } catch {
+      /* URL ilegible: se deja el objeto vacío */
+    }
+
+    const body = req?.body && typeof req.body === "object" ? req.body : {};
+    const bodyData = body.data && typeof body.data === "object" ? body.data : null;
+    const queryId = url.dataId;
+    const bodyDataId = bodyData?.id ?? null;
+    const bodyTopId = body?.id ?? null;
+    // Mismo manifest que arma la verificación real, para que la variante A
+    // sea esa misma cadena y no una reconstrucción parecida.
+    const real = diagManifiestoReal(req, rawSignature, rawRequestId);
+    const manifestId = real?.dataId ?? null;
+
+    // De qué fuente salió el id que el server usa hoy.
+    const fuente =
+      manifestId == null
+        ? "vacio"
+        : queryId && String(queryId).toLowerCase() === manifestId
+          ? "query"
+          : bodyDataId && String(bodyDataId).toLowerCase() === manifestId
+            ? "body.data.id"
+            : "otro";
+
+    const requestId = Array.isArray(rawRequestId) ? rawRequestId[0] : rawRequestId;
+    const v1 = (String(Array.isArray(rawSignature) ? rawSignature.join(",") : rawSignature || "").match(
+      /v1=([a-f0-9]+)/i
+    ) || [])[1];
+
+    const payload = {
+      signature: {
+        presente: firma.presentes,
+        comoArray: Array.isArray(rawSignature),
+        duplicado: (firma.ocurrenciasTs ?? 0) > 1,
+        largo: rawSignature == null ? 0 : String(rawSignature).length,
+        componentes: firma.componentes,
+        largoPorValor: firma.largoPorValor,
+        v1EsHex: firma.v1EsHex,
+        ts: firma.ts,
+      },
+      requestId: {
+        presente: requestId != null && requestId !== "",
+        comoArray: Array.isArray(rawRequestId),
+        valor: requestId ?? null,
+        largo: requestId == null ? 0 : String(requestId).length,
+      },
+      headersX: Object.keys(headers)
+        .filter((h) => h.toLowerCase().startsWith("x-"))
+        .sort(),
+      contentType: headers["content-type"] ?? null,
+      url,
+      body: {
+        keys: Object.keys(body).sort(),
+        tieneData: bodyData != null,
+        tieneDataId: bodyDataId != null,
+        dataId: bodyDataId ?? null,
+        dataIdLargo: bodyDataId == null ? 0 : String(bodyDataId).length,
+        id: bodyTopId ?? null,
+        idLargo: bodyTopId == null ? 0 : String(bodyTopId).length,
+        type: body.type ?? null,
+        action: body.action ?? null,
+      },
+      manifest: {
+        id: manifestId ?? null,
+        fuente,
+        // Con qué ts y con qué request-id armó el manifest la verificación real.
+        tsUsadoPorLaVerificacion: real?.ts ?? null,
+        requestIdUsadoPorLaVerificacion:
+          real?.requestId == null ? null : String(real.requestId),
+        queryCoincideBody:
+          queryId != null && bodyDataId != null ? String(queryId) === String(bodyDataId) : null,
+      },
+      variantes: diagVariantes({
+        secret: process.env.MP_WEBHOOK_SECRET,
+        v1,
+        real,
+        queryId,
+        bodyDataId,
+        bodyTopId,
+      }),
+    };
+
+    console.log(`${DIAG_PREFIJO} ${JSON.stringify(payload)}`);
+  } catch {
+    // El diagnóstico nunca puede romper el webhook.
+  }
 }
