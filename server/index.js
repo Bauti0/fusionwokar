@@ -178,11 +178,23 @@ async function probeMpCredentials() {
   } catch (err) {
     if (err instanceof MpError && err.isAuthError) {
       mpAuthBroken = true;
+      // 403 + PolicyAgent NO es "el token venció": el token fue reconocido y lo
+      // rechazó una policy de la cuenta (MP documenta este caso como cuenta
+      // bloqueada con las API keys revocadas). Decir "regenerá el token" ahí
+      // manda al operador a una tarea que no lo arregla.
+      const byPolicies = err.status === 403 && String(err.mpCode).startsWith("PA_UNAUTHORIZED");
       console.error(
-        "❌ Mercado Pago rechazó el MP_ACCESS_TOKEN (" + (err.mpCode || err.status) + ").\n" +
-          "   El checkout con Mercado Pago NO va a funcionar hasta que se regenere el token:\n" +
-          "   Panel de MP → tu app → Credenciales → copiar el Access Token nuevo.\n" +
-          "   Mientras tanto, los pedidos por efectivo/transferencia/WhatsApp siguen funcionando."
+        byPolicies
+          ? "❌ Mercado Pago rechazó las credenciales por PolicyAgent (" + err.mpCode + ").\n" +
+              "   El token es válido pero la cuenta no pasó la validación de policies: MP\n" +
+              "   documenta este caso como cuenta bloqueada con las API keys revocadas.\n" +
+              "   Se resuelve con el Soporte de Mercado Pago (o completando los datos de la\n" +
+              "   cuenta en el panel); REGENERAR EL TOKEN EN EL PANEL NO LO ARREGLA.\n" +
+              "   Mientras tanto, efectivo/transferencia/WhatsApp siguen funcionando."
+          : "❌ Mercado Pago rechazó el MP_ACCESS_TOKEN (" + (err.mpCode || err.status) + ").\n" +
+              "   El checkout con Mercado Pago NO va a funcionar hasta que se regenere el token:\n" +
+              "   Panel de MP → tu app → Credenciales → copiar el Access Token nuevo.\n" +
+              "   Mientras tanto, los pedidos por efectivo/transferencia/WhatsApp siguen funcionando."
       );
     } else {
       console.warn(
