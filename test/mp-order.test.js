@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { sanitizeStatementDescriptor, buildOrderBody } from "../server/mp.js";
+import { sanitizeStatementDescriptor, buildOrderBody, toRegistrationDate } from "../server/mp.js";
 
 // ============================================================
 // Tests del body de la order de Checkout Pro (Orders API).
@@ -142,5 +142,93 @@ describe("buildOrderBody", () => {
   it("description cae al texto de pedido cuando no viene", () => {
     const body = buildOrderBody({ orderNumber: "FW-00007", total: 15000, backUrls: BACK_URLS });
     assert.equal(body.description, "Pedido Fusión Wok FW-00007");
+  });
+
+  it("con firstName y lastName manda first_name/last_name en payer", () => {
+    const body = buildOrderBody({
+      orderNumber: "FW-00001",
+      total: 15000,
+      backUrls: BACK_URLS,
+      payer: { email: "cliente@testuser.com", firstName: "Juan", lastName: "Perez" },
+    });
+    assert.equal(body.payer.first_name, "Juan");
+    assert.equal(body.payer.last_name, "Perez");
+    assert.equal(body.payer.email, "cliente@testuser.com");
+  });
+
+  it("sin firstName/lastName no manda esas claves (no manda vacios)", () => {
+    const body = buildOrderBody({
+      orderNumber: "FW-00001",
+      total: 15000,
+      backUrls: BACK_URLS,
+      payer: { email: "cliente@testuser.com" },
+    });
+    assert.equal(body.payer.first_name, undefined);
+    assert.equal(body.payer.last_name, undefined);
+  });
+
+  it("con identification manda {type, number} dentro de payer", () => {
+    const body = buildOrderBody({
+      orderNumber: "FW-00001",
+      total: 15000,
+      backUrls: BACK_URLS,
+      payer: { email: "cliente@testuser.com", identification: { type: "DNI", number: "12345678" } },
+    });
+    assert.deepEqual(body.payer.identification, { type: "DNI", number: "12345678" });
+  });
+
+  it("identification a medias no viaja: si falta tipo o numero, no se manda", () => {
+    const body = buildOrderBody({
+      orderNumber: "FW-00001",
+      total: 15000,
+      backUrls: BACK_URLS,
+      payer: { email: "cliente@testuser.com", identification: { type: "DNI" } },
+    });
+    assert.equal(body.payer.identification, undefined);
+  });
+
+  it("registrationDate viaja como additional_info con la clave plana de la doc", () => {
+    // El ejemplo oficial de Create order usa claves planas:
+    // "additional_info": { "payer.registration_date": "2020-01-15T00:00:00.000-03:00" }
+    const body = buildOrderBody({
+      orderNumber: "FW-00001",
+      total: 15000,
+      backUrls: BACK_URLS,
+      additionalInfo: { registrationDate: "2025-12-01T00:00:00.000-03:00" },
+    });
+    assert.deepEqual(body.additional_info, { "payer.registration_date": "2025-12-01T00:00:00.000-03:00" });
+  });
+
+  it("sin additionalInfo no manda la clave", () => {
+    const body = buildOrderBody({ orderNumber: "FW-00001", total: 15000, backUrls: BACK_URLS });
+    assert.equal(body.additional_info, undefined);
+  });
+});
+
+describe("toRegistrationDate", () => {
+  it("formatea un instante UTC con offset -03:00 (Argentina no tiene DST)", () => {
+    // 13:06:51.045Z en UTC → 10:06:51.045-03:00 en Buenos Aires.
+    const iso = toRegistrationDate(new Date("2026-01-15T13:06:51.045Z"));
+    assert.equal(iso, "2026-01-15T10:06:51.045-03:00");
+  });
+
+  it("el formato es el del ejemplo de la doc: milisegundos de 3 y offset", () => {
+    const iso = toRegistrationDate(new Date("2020-01-15T03:00:00.000Z"));
+    assert.match(iso, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}-03:00$/);
+  });
+
+  it("acepta un string ISO (como sale de la base) sin redondear", () => {
+    const iso = toRegistrationDate("2026-01-15T13:06:51.045Z");
+    assert.equal(iso, "2026-01-15T10:06:51.045-03:00");
+  });
+
+  it("fecha invalida devuelve cadena vacia (se omite el campo)", () => {
+    assert.equal(toRegistrationDate("no-una-fecha"), "");
+    assert.equal(toRegistrationDate(null), "");
+  });
+
+  it("la medianoche UTC no se corre de dia", () => {
+    // 00:00Z del 15 → 21:00 del 14 en Buenos Aires.
+    assert.equal(toRegistrationDate("2026-01-15T00:00:00.000Z"), "2026-01-14T21:00:00.000-03:00");
   });
 });

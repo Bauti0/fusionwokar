@@ -236,18 +236,28 @@ export default function StoreApp() {
   const handleConfirmCheckout = useCallback(
     async ({ customer: cust, orderMode: mode, paymentMethod, address, deliveryNotes, scheduledFor, couponCode, couponDiscount, shipping }) => {
       // Guardamos los datos del cliente; si es delivery conservamos también
-      // la dirección y las observaciones para autocompletar el próximo pedido
+      // la dirección y las observaciones para autocompletar el próximo pedido.
+      // El DOCUMENTO no se guarda: es dato sensible y solo viaja al pago de MP.
+      const customerToSave = { ...cust };
+      delete customerToSave.identification;
       setCustomer((prev) =>
         mode === "delivery" && address
-          ? { ...prev, ...cust, address, notes: deliveryNotes || "" }
-          : { ...prev, ...cust }
+          ? { ...prev, ...customerToSave, address, notes: deliveryNotes || "" }
+          : { ...prev, ...customerToSave }
       );
 
       const payload = {
         branch: branch.id,
-        // El email viaja con el customer: el server lo valida y lo guarda
-        // con el pedido (y lo manda a MP como payer.email).
-        customer: { name: cust.name, phone: cust.phone, email: cust.email },
+        // firstName/lastName van separados para el payer de MP; identification
+        // es dato sensible que solo viaja a MP con el pago, nunca se guarda.
+        customer: {
+          name: cust.name,
+          phone: cust.phone,
+          email: cust.email,
+          firstName: cust.firstName,
+          lastName: cust.lastName,
+          identification: cust.identification,
+        },
         orderMode: mode,
         paymentMethod,
         address: mode === "delivery" ? address : "",

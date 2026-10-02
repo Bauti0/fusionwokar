@@ -22,3 +22,28 @@ export function isValidEmail(value) {
   if (v.length === 0 || v.length > 100) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 }
+
+// Tipos de identificación que devuelve GET /v1/identification_types de MP
+// para Argentina (consultado con credenciales de prueba el 2026-10-02).
+// El valor es [min, max] de DÍGITOS que acepta cada tipo. El id "Otro"
+// llega tal cual de la API (con mayúscula inicial) y así se manda de vuelta.
+export const IDENTIFICATION_TYPES = {
+  DNI: [7, 8],
+  CI: [1, 9],
+  LC: [6, 7],
+  LE: [6, 7],
+  Otro: [5, 20],
+};
+
+// Identificación del comprador (viaja como payer.identification a MP).
+// El número se normaliza a solo dígitos (sin puntos ni espacios), igual que
+// hace el teléfono: el cliente tipea "12.345.678" y MP recibe "12345678".
+// Es dato sensible: el server valida acá, lo pasa directo al body de la
+// order y NO lo persiste ni lo loguea.
+export function isValidIdentification(type, number) {
+  const limits = IDENTIFICATION_TYPES[type];
+  if (!limits) return false;
+  const digits = String(number || "").replace(/[\s.-]/g, "");
+  if (!/^\d+$/.test(digits)) return false;
+  return digits.length >= limits[0] && digits.length <= limits[1];
+}

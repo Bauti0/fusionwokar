@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatPrice, lineTotal } from "../utils/format.js";
 import { validateCoupon, shippingQuote } from "../api.js";
 import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
-import { isValidPhone, isValidEmail } from "../utils/validation.js";
+import { isValidPhone, isValidEmail, isValidIdentification, IDENTIFICATION_TYPES } from "../utils/validation.js";
 import { isOpenAtTime, closedLabel } from "../utils/schedule.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
@@ -47,11 +47,21 @@ export default function Checkout({
   onRetryPaymentLink,
   retryingLink = false,
 }) {
-  const [name, setName] = useState(customer?.name || "");
+  // Nombre y apellido separados: Mercado Pago los quiere así (payer.first_name
+  // / last_name) y el server compone el "Nombre Apellido" de siempre para no
+  // romper el panel, el ticket ni el mensaje de WhatsApp. Nunca se "parte" un
+  // nombre guardado: si el cliente ya compró con nombre único, los campos
+  // arrancan vacíos y los completa.
+  const [firstName, setFirstName] = useState(customer?.firstName || "");
+  const [lastName, setLastName] = useState(customer?.lastName || "");
   const [phone, setPhone] = useState(customer?.phone || "");
   // Email del comprador: se manda a Mercado Pago como payer.email y queda
   // guardado con el pedido para que el local pueda contactar al cliente.
   const [email, setEmail] = useState(customer?.email || "");
+  // Documento del comprador (opcional): viaja SOLO al pago de Mercado Pago
+  // como payer.identification; no se guarda en la base ni en este navegador.
+  const [idType, setIdType] = useState("");
+  const [idNumber, setIdNumber] = useState("");
   // Autocompleta con la última dirección usada (guardada en el dispositivo)
   const [address, setAddress] = useState(customer?.address || "");
   const [deliveryNotes, setDeliveryNotes] = useState(customer?.notes || "");
@@ -188,8 +198,12 @@ export default function Checkout({
     // Un intento nuevo borra el error del anterior: si sigue visible, el
     // cliente no puede distinguir si el botón funcionó.
     onClearServerError?.();
-    if (!name.trim() || !phone.trim()) {
-      setError("Completá tu nombre y celular para confirmar.");
+    if (!firstName.trim() || !lastName.trim()) {
+      setError("Completá tu nombre y apellido para confirmar.");
+      return;
+    }
+    if (!phone.trim()) {
+      setError("Completá tu celular para confirmar.");
       return;
     }
     if (!isValidPhone(phone)) {
@@ -202,6 +216,15 @@ export default function Checkout({
     }
     if (!isValidEmail(email)) {
       setError("El email no parece válido. Ej: nombre@correo.com.");
+      return;
+    }
+    // El documento es opcional, pero a medias no: sin los dos campos no viaja.
+    if (!!idType !== !!idNumber.trim()) {
+      setError("Completá el tipo y el número de documento, o dejá los dos vacíos.");
+      return;
+    }
+    if (idType && !isValidIdentification(idType, idNumber)) {
+      setError("El número de documento no parece válido para ese tipo.");
       return;
     }
     if (orderMode === "delivery" && !address.trim()) {
@@ -249,7 +272,16 @@ export default function Checkout({
     setError("");
     try {
       await onConfirm({
-        customer: { name: name.trim(), phone: phone.trim(), email: email.trim() },
+        customer: {
+          // "Nombre Apellido": lo que ya esperan el panel, el ticket y el
+          // mensaje de WhatsApp. Además van separados para el payer de MP.
+          name: `${firstName.trim()} ${lastName.trim()}`.trim(),
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          phone: phone.trim(),
+          email: email.trim(),
+          ...(idType && idNumber.trim() ? { identification: { type: idType, number: idNumber.trim() } } : {}),
+        },
         orderMode,
         paymentMethod,
         address: orderMode === "delivery" ? address.trim() : "",
@@ -311,13 +343,25 @@ export default function Checkout({
             <span className="num">2</span> Tus datos
           </h3>
           <div className="field">
-            <label htmlFor="checkout-name">Nombre</label>
+            <label htmlFor="checkout-first-name">Nombre</label>
             <input
-              id="checkout-name"
+              id="checkout-first-name"
               type="text"
+              autoComplete="given-name"
               placeholder="Tu nombre"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="checkout-last-name">Apellido</label>
+            <input
+              id="checkout-last-name"
+              type="text"
+              autoComplete="family-name"
+              placeholder="Tu apellido"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
             />
           </div>
           <div className="field">
@@ -344,6 +388,38 @@ export default function Checkout({
             />
             <p className="hint">Te enviamos la confirmación del pedido a este email.</p>
           </div>
+          <div className="field">
+            <label htmlFor="checkout-id-type">Documento (opcional)</label>
+            <select
+              id="checkout-id-type"
+              value={idType}
+              onChange={(e) => setIdType(e.target.value)}
+            >
+              <option value="">No especificar</option>
+              {Object.keys(IDENTIFICATION_TYPES).map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+          {idType && (
+            <div className="field">
+              <label htmlFor="checkout-id-number">Número de documento</label>
+              <input
+                id="checkout-id-number"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="Ej: 12345678"
+                value={idNumber}
+                onChange={(e) => setIdNumber(e.target.value)}
+              />
+              <p className="hint">
+                Solo se usa para validar el pago con Mercado Pago: no lo guardamos con tu pedido.
+              </p>
+            </div>
+          )}
           {orderMode === "delivery" && (
             <div className="field">
               <label htmlFor="checkout-address">Dirección de entrega</label>

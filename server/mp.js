@@ -146,8 +146,8 @@ export function mpAuthError() {
 // El armado del body vive en buildOrderBody (función pura, testeada en
 // test/mp-order.test.js) para fijar el contrato con la API sin red ni
 // credenciales; createOrder solo agrega el envío a MP.
-export async function createOrder({ orderNumber, total, title, description, backUrls, payer }) {
-  const body = buildOrderBody({ orderNumber, total, title, description, backUrls, payer });
+export async function createOrder({ orderNumber, total, title, description, backUrls, payer, additionalInfo }) {
+  const body = buildOrderBody({ orderNumber, total, title, description, backUrls, payer, additionalInfo });
 
   // El número de pedido es único y estable → sirve de clave de idempotencia.
   const data = await mpFetch("/v1/orders", { method: "POST", body, idempotencyKey: orderNumber });
@@ -185,7 +185,7 @@ export function sanitizeStatementDescriptor(value) {
 // Los campos de comportamiento del pago (type/processing_mode/capture_mode)
 // son EXACTAMENTE los de antes: este cambio solo agrega datos, no toca
 // cómo se procesa el pago.
-export function buildOrderBody({ orderNumber, total, title, description, backUrls, payer }) {
+export function buildOrderBody({ orderNumber, total, title, description, backUrls, payer, additionalInfo }) {
   const amount = String(Math.round(Number(total) || 0));
   const body = {
     type: "online",
@@ -222,11 +222,47 @@ export function buildOrderBody({ orderNumber, total, title, description, backUrl
   };
   // payer es opcional para MP, pero si viene el objeto, exige email adentro
   // ("If the object is included, payer.email is required within it"). Se
-  // manda solo cuando hay email del comprador.
+  // arma solo con las claves que tienen valor: nada de campos vacíos.
+  // identification es dato sensible: pasa directo al body y no se guarda
+  // en la base ni se loguea (ver createOrder).
   if (payer && payer.email) {
-    body.payer = { email: payer.email };
+    const p = { email: payer.email };
+    if (payer.firstName) p.first_name = payer.firstName;
+    if (payer.lastName) p.last_name = payer.lastName;
+    if (payer.identification && payer.identification.type && payer.identification.number) {
+      p.identification = {
+        type: payer.identification.type,
+        number: payer.identification.number,
+      };
+    }
+    body.payer = p;
+  }
+  // Datos adicionales de antifraude. La doc de Orders usa claves PLANAS:
+  // "additional_info": { "payer.registration_date": "2020-01-15T..." }.
+  // registration_date es la fecha del primer pedido del comprador.
+  if (additionalInfo && additionalInfo.registrationDate) {
+    body.additional_info = { "payer.registration_date": additionalInfo.registrationDate };
   }
   return body;
+}
+
+// Fecha en el formato del ejemplo oficial de Create order:
+// "payer.registration_date": "2020-01-15T00:00:00.000-03:00" (ISO 8601 con
+// milisegundos y offset). Argentina es UTC-3 fijo (sin horario de verano
+// desde 2009), así que el offset se puede escribir directo. Recibe un Date
+// o un ISO (como el created_at que sale de la base) y devuelve "" si la
+// fecha no se puede leer — el caller omite el campo en ese caso.
+export function toRegistrationDate(date) {
+  if (date == null) return ""; // new Date(null) sería epoch, no un error
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return "";
+  const shifted = new Date(d.getTime() - 3 * 3600 * 1000); // UTC → -03:00
+  const p = (n, w = 2) => String(n).padStart(w, "0");
+  return (
+    `${shifted.getUTCFullYear()}-${p(shifted.getUTCMonth() + 1)}-${p(shifted.getUTCDate())}` +
+    `T${p(shifted.getUTCHours())}:${p(shifted.getUTCMinutes())}:${p(shifted.getUTCSeconds())}` +
+    `.${p(shifted.getUTCMilliseconds(), 3)}-03:00`
+  );
 }
 
 // Consulta el estado real de la order (webhook + panel para refrescar el
