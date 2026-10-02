@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { sanitizeStatementDescriptor, buildOrderBody, toRegistrationDate } from "../server/mp.js";
+import { sanitizeStatementDescriptor, buildOrderBody, toRegistrationDate, buildOrderItems } from "../server/mp.js";
 
 // ============================================================
 // Tests del body de la order de Checkout Pro (Orders API).
@@ -230,5 +230,194 @@ describe("toRegistrationDate", () => {
   it("la medianoche UTC no se corre de dia", () => {
     // 00:00Z del 15 → 21:00 del 14 en Buenos Aires.
     assert.equal(toRegistrationDate("2026-01-15T00:00:00.000Z"), "2026-01-14T21:00:00.000-03:00");
+  });
+});
+
+// ============================================================
+// buildOrderItems: mapea los ítems REALES del carrito (los cleanItems que
+// guarda validateOrderBody) al array items de la order de MP.
+//
+// La regla dura de la API (probada y documentada): total_amount TIENE que
+// ser igual a la suma de unit_price × quantity de TODOS los ítems. Si el
+// total trae envío o descuento, la suma se cuadra con el ítem "Envío" y
+// repartiendo el descuento en los unit_price (MP RECHAZA precios
+// negativos: probado contra la API de prueba → 400 invalid_items).
+// Si la suma exacta no se puede construir, devuelve null y el caller manda
+// el ítem único de siempre: nunca sale una order inconsistente.
+// ============================================================
+describe("buildOrderItems", () => {
+  const PRODUCTO = (nombre, precio, qty = 1, extras = []) => ({
+    key: `${nombre}-1`,
+    productId: "wok-pollo",
+    name: nombre,
+    unitPrice: precio,
+    extras,
+    notes: "",
+    qty,
+  });
+
+  it("sin descuento ni envio: manda los items reales con su precio y cantidad", () => {
+    const items = buildOrderItems({
+      items: [PRODUCTO("Wok de pollo", 8000, 1), PRODUCTO("Spring rolls", 4000, 2)],
+      total: 16000,
+      discount: 0,
+      shippingCost: 0,
+    });
+    assert.equal(items.length, 2);
+    assert.deepEqual(
+      items.map((i) => [i.title, i.unit_price, i.quantity]),
+      [
+        ["Wok de pollo", "8000", 1],
+        ["Spring rolls", "4000", 2],
+      ]
+    );
+    const suma = items.reduce((s, i) => s + Number(i.unit_price) * i.quantity, 0);
+    assert.equal(suma, 16000);
+  });
+
+  it("todos los items llevan category_id food (verificado contra la API de prueba)", () => {
+    const items = buildOrderItems({ items: [PRODUCTO("Wok de pollo", 8000)], total: 8000, discount: 0, shippingCost: 0 });
+    assert.ok(items.every((i) => i.category_id === "food"));
+  });
+
+  it("los extras se suman al unit_price y se ven en title y description", () => {
+    const items = buildOrderItems({
+      items: [PRODUCTO("Wok de pollo", 8000, 1, [{ id: "e1", label: "Pollo extra", price: 1500 }])],
+      total: 9500,
+      discount: 0,
+      shippingCost: 0,
+    });
+    assert.equal(items[0].unit_price, "9500");
+    assert.match(items[0].title, /Wok de pollo/);
+    assert.match(items[0].title, /Pollo extra/);
+    assert.match(items[0].description, /Pollo extra/);
+  });
+
+  it("el envio va como item propio de quantity 1", () => {
+    const items = buildOrderItems({
+      items: [PRODUCTO("Wok de pollo", 8000)],
+      total: 8800,
+      discount: 0,
+      shippingCost: 800,
+    });
+    assert.equal(items.length, 2);
+    const envio = items.find((i) => i.title === "Envío");
+    assert.equal(envio.unit_price, "800");
+    assert.equal(envio.quantity, 1);
+    assert.equal(items.reduce((s, i) => s + Number(i.unit_price) * i.quantity, 0), 8800);
+  });
+
+  it("el descuento se reparte en los unit_prices y la suma sigue dando EXACTO el total", () => {
+    // 8000 + 4000 = 12000 de productos, cupón de 2000, envío 800 → total 10800.
+    // El reparto es por línea de mayor subtotal: la primera absorbe lo que
+    // pueda manteniendo su unit_price entero, el resto sigue en las otras.
+    const items = buildOrderItems({
+      items: [PRODUCTO("Wok de pollo", 8000), PRODUCTO("Spring rolls", 4000)],
+      total: 10800,
+      discount: 2000,
+      shippingCost: 800,
+    });
+    const suma = items.reduce((s, i) => s + Number(i.unit_price) * i.quantity, 0);
+    assert.equal(suma, 10800);
+    assert.equal(items[0].unit_price, "6000"); // 8000 - 2000 (la línea mayor absorbe)
+    assert.equal(items[1].unit_price, "4000"); // sin descuento
+    assert.equal(items[2].title, "Envío");
+    assert.equal(items[2].unit_price, "800");
+  });
+
+  it("con descuento y cantidad > 1 el unit_price queda ENTERO", () => {
+    // 2× 5000 = 10000, cupón de 1000 → subtotal ajustado 9000 → 4500 por unidad.
+    const items = buildOrderItems({
+      items: [PRODUCTO("Wok de pollo", 5000, 2)],
+      total: 9000,
+      discount: 1000,
+      shippingCost: 0,
+    });
+    assert.equal(items[0].unit_price, "4500");
+    assert.equal(items[0].quantity, 2);
+    assert.equal(items.reduce((s, i) => s + Number(i.unit_price) * i.quantity, 0), 9000);
+  });
+
+  it("descuento que no se puede expresar con unit_prices enteros: devuelve null (fallback al item unico)", () => {
+    // 1 línea de 2× 5000 = 10000, cupón de 333: el subtotal ajustado tiene que
+    // seguir divisible por 2, y 9667 no lo es. No hay otra línea que absorba
+    // el resto → la suma exacta es imposible → ítem único.
+    const items = buildOrderItems({
+      items: [PRODUCTO("Wok de pollo", 5000, 2)],
+      total: 9667,
+      discount: 333,
+      shippingCost: 0,
+    });
+    assert.equal(items, null);
+  });
+
+  it("descuento que deja una linea en cero: devuelve null (MP no acepta precios en 0)", () => {
+    const items = buildOrderItems({
+      items: [PRODUCTO("Wok de pollo", 1000)],
+      total: 0,
+      discount: 1000,
+      shippingCost: 0,
+    });
+    assert.equal(items, null);
+  });
+
+  it("descuento mayor al subtotal de productos: devuelve null", () => {
+    const items = buildOrderItems({
+      items: [PRODUCTO("Wok de pollo", 1000)],
+      total: 500,
+      discount: 1500,
+      shippingCost: 1000,
+    });
+    assert.equal(items, null);
+  });
+
+  it("asercion final: si la suma no coincide con el total, devuelve null", () => {
+    // El total no respeta la aritmética de los items → Order inconsistente.
+    const items = buildOrderItems({
+      items: [PRODUCTO("Wok de pollo", 8000)],
+      total: 7000, // ≠ 8000 - 0 + 0
+      discount: 0,
+      shippingCost: 0,
+    });
+    assert.equal(items, null);
+  });
+
+  it("carrito vacio o total invalido: devuelve null", () => {
+    assert.equal(buildOrderItems({ items: [], total: 100, discount: 0, shippingCost: 0 }), null);
+    assert.equal(buildOrderItems({ items: [PRODUCTO("Wok", 100)], total: 0, discount: 0, shippingCost: 0 }), null);
+    assert.equal(buildOrderItems({ items: [PRODUCTO("Wok", 100)], total: -5, discount: 0, shippingCost: 0 }), null);
+  });
+});
+
+describe("buildOrderBody con items reales", () => {
+  const BACK_URLS2 = {
+    success: "https://fusionwok.ar/?pago=aprobado",
+    failure: "https://fusionwok.ar/?pago=rechazado",
+    pending: "https://fusionwok.ar/?pago=pendiente",
+  };
+
+  it("si le pasan items validos, los usa tal cual", () => {
+    const mpItems = [
+      { title: "Wok de pollo", unit_price: "8000", quantity: 1, category_id: "food" },
+      { title: "Envío", unit_price: "800", quantity: 1, category_id: "food" },
+    ];
+    const body = buildOrderBody({ orderNumber: "FW-900010", total: 8800, backUrls: BACK_URLS2, items: mpItems });
+    assert.equal(body.items.length, 2);
+    assert.equal(body.total_amount, "8800");
+  });
+
+  it("si los items no cuadran con el total, cae al item unico (asercion del server)", () => {
+    const mpItems = [{ title: "Wok de pollo", unit_price: "8000", quantity: 1, category_id: "food" }];
+    const body = buildOrderBody({ orderNumber: "FW-900011", total: 7000, backUrls: BACK_URLS2, items: mpItems });
+    // Fallback: un solo item con el total completo, como se mandaba siempre.
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].unit_price, "7000");
+    assert.equal(body.items[0].title, "Pedido Fusión Wok FW-900011");
+  });
+
+  it("items en null deja el item unico de siempre", () => {
+    const body = buildOrderBody({ orderNumber: "FW-900012", total: 1500, backUrls: BACK_URLS2, items: null });
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].unit_price, "1500");
   });
 });

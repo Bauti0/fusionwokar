@@ -146,8 +146,8 @@ export function mpAuthError() {
 // El armado del body vive en buildOrderBody (función pura, testeada en
 // test/mp-order.test.js) para fijar el contrato con la API sin red ni
 // credenciales; createOrder solo agrega el envío a MP.
-export async function createOrder({ orderNumber, total, title, description, backUrls, payer, additionalInfo }) {
-  const body = buildOrderBody({ orderNumber, total, title, description, backUrls, payer, additionalInfo });
+export async function createOrder({ orderNumber, total, title, description, backUrls, payer, additionalInfo, items }) {
+  const body = buildOrderBody({ orderNumber, total, title, description, backUrls, payer, additionalInfo, items });
 
   // El número de pedido es único y estable → sirve de clave de idempotencia.
   const data = await mpFetch("/v1/orders", { method: "POST", body, idempotencyKey: orderNumber });
@@ -185,7 +185,7 @@ export function sanitizeStatementDescriptor(value) {
 // Los campos de comportamiento del pago (type/processing_mode/capture_mode)
 // son EXACTAMENTE los de antes: este cambio solo agrega datos, no toca
 // cómo se procesa el pago.
-export function buildOrderBody({ orderNumber, total, title, description, backUrls, payer, additionalInfo }) {
+export function buildOrderBody({ orderNumber, total, title, description, backUrls, payer, additionalInfo, items }) {
   const amount = String(Math.round(Number(total) || 0));
   const body = {
     type: "online",
@@ -197,13 +197,7 @@ export function buildOrderBody({ orderNumber, total, title, description, backUrl
     total_amount: amount,
     external_reference: orderNumber,
     description: description || `Pedido Fusión Wok ${orderNumber}`,
-    items: [
-      {
-        title: title || `Pedido Fusión Wok ${orderNumber}`,
-        unit_price: amount,
-        quantity: 1,
-      },
-    ],
+    items: mpItemsFor({ orderNumber, total, title, items }),
     config: {
       // Nombre del comercio en el resumen de la tarjeta del comprador.
       // Hermano de "online" (así lo muestra el ejemplo oficial de Create
@@ -246,8 +240,137 @@ export function buildOrderBody({ orderNumber, total, title, description, backUrl
   return body;
 }
 
-// Fecha en el formato del ejemplo oficial de Create order:
-// "payer.registration_date": "2020-01-15T00:00:00.000-03:00" (ISO 8601 con
+// Categoría de los ítems para MP. "food" es la categoría de comidas de la
+// lista de MP y se probó contra la API de prueba con 201 (2026-10-02).
+const ITEM_CATEGORY_ID = "food";
+
+// Mapea los ítems REALES del carrito (los cleanItems que guarda el pedido:
+// name, unitPrice, extras[], notes, qty) al array items de la order.
+//
+// REGLA CRÍTICA de la API (documentada y probada: 400
+// order_items_total_amount_mismatch): total_amount tiene que ser IGUAL a la
+// suma de unit_price × quantity de TODOS los ítems. Por eso:
+//   - el envío viaja como ítem propio ("Envío", quantity 1);
+//   - el descuento de cupón se RESTA de los unit_price de los productos,
+//     porque MP rechaza precios negativos (probado: 400 invalid_items).
+//
+// El descuento se reparte de la línea de MAYOR subtotal hacia abajo: cada
+// línea absorbe lo que pueda manteniendo (subtotal − share) divisible por
+// qty, para que el unit_price quede entero y > 0 (MP tampoco acepta 0).
+// Si el reparto exacto es imposible, devuelve null y el caller manda el
+// ítem único de siempre: nunca sale una order inconsistente.
+//
+// Casos que devuelven null (documentados):
+//   1. total ≤ 0 o carrito vacío (MP no cobra cero ni items sin datos);
+//   2. precio/cantidad ilegibles en algún ítem;
+//   3. descuento mayor que el subtotal de los productos;
+//   4. descuento que no se puede repartir en unit_prices enteros
+//      (ej: cupón de $333 sobre una única línea de 2× $5000);
+//   5. el reparto dejaría algún unit_price en 0;
+//   6. aserción final: la suma no da EXACTO el total.
+export function buildOrderItems({ items, total, discount = 0, shippingCost = 0 }) {
+  const cart = Array.isArray(items) ? items : [];
+  const t = Math.round(Number(total) || 0);
+  const disc = Math.max(0, Math.round(Number(discount) || 0));
+  const ship = Math.max(0, Math.round(Number(shippingCost) || 0));
+  if (t <= 0 || cart.length === 0) return null; // caso 1
+
+  const lines = [];
+  for (const it of cart) {
+    const unitPrice = Math.round(Number(it.unitPrice) || 0);
+    const qty = Math.round(Number(it.qty) || 0);
+    const extras = Array.isArray(it.extras) ? it.extras : [];
+    const extrasTotal = extras.reduce((s, e) => s + Math.round(Number(e.price) || 0), 0);
+    if (unitPrice <= 0 || qty <= 0) return null; // caso 2
+    lines.push({ item: it, unit: unitPrice + extrasTotal, qty, share: 0 });
+  }
+  const baseSubtotal = lines.reduce((s, l) => s + l.unit * l.qty, 0);
+  if (disc > baseSubtotal) return null; // caso 3
+
+  // Reparto: de la línea más grande a la más chica. Para cada línea, el
+  // share más grande que: (a) no supere lo que queda por repartir,
+  // (b) no deje el subtotal ajustado en 0, y (c) lo deje divisible por qty.
+  let remaining = disc;
+  for (const line of [...lines].sort((a, b) => b.unit * b.qty - a.unit * a.qty)) {
+    if (remaining <= 0) break;
+    const subtotal = line.unit * line.qty;
+    let share = Math.min(remaining, subtotal - line.qty); // (b) deja ≥ 1 por unidad
+    // (c): share ≡ subtotal (módulo qty), bajando de a uno si hace falta.
+    while (share > 0 && (subtotal - share) % line.qty !== 0) share--;
+    if (subtotal - share === 0) share = 0; // caso 5: nunca unit_price 0
+    line.share = share;
+    remaining -= share;
+  }
+  if (remaining > 0) return null; // caso 4: quedó descuento sin aplicar
+
+  const mpItems = lines.map((line) => {
+    const extras = Array.isArray(line.item.extras) ? line.item.extras : [];
+    const extrasLabels = extras.map((e) => String(e.label || "")).filter(Boolean).join(", ");
+    const notes = String(line.item.notes || "").trim();
+    const title = extrasLabels
+      ? `${line.item.name} (${extrasLabels})`.slice(0, 120)
+      : String(line.item.name || "Producto").slice(0, 120);
+    // description lleva lo que distingue ESTA línea (extras y nota), o se
+    // omite: no se inventa texto del producto que no venga del carrito.
+    const description = extrasLabels
+      ? `Con: ${extrasLabels}`
+      : notes
+        ? `Nota: ${notes}`
+        : undefined;
+    return {
+      title,
+      ...(description ? { description } : {}),
+      unit_price: String((line.unit * line.qty - line.share) / line.qty), // entero por (c)
+      quantity: line.qty,
+      category_id: ITEM_CATEGORY_ID,
+    };
+  });
+  if (ship > 0) {
+    mpItems.push({
+      title: "Envío",
+      description: "Costo de envío a domicilio",
+      unit_price: String(ship),
+      quantity: 1,
+      category_id: ITEM_CATEGORY_ID,
+    });
+  }
+
+  // Aserción final (caso 6): sin suma exacta, no hay items que mandar.
+  const suma = mpItems.reduce((s, it) => s + Number(it.unit_price) * it.quantity, 0);
+  if (suma !== t) return null;
+  return mpItems;
+}
+
+// Decide el array items del body: los reales si cuadran EXACTO con el total,
+// o el ítem único de siempre si no (nunca una order inconsistente). Es la
+// segunda aserción (la primera es la de buildOrderItems): protege contra
+// cualquier caller que mande items sin pasar por buildOrderItems.
+function mpItemsFor({ orderNumber, total, title, items }) {
+  const amount = String(Math.round(Number(total) || 0));
+  const fallback = [
+    {
+      title: title || `Pedido Fusión Wok ${orderNumber}`,
+      unit_price: amount,
+      quantity: 1,
+    },
+  ];
+  if (!Array.isArray(items) || items.length === 0) return fallback;
+  const suma = items.reduce(
+    (s, it) => s + Math.round(Number(it.unit_price) || 0) * Math.round(Number(it.quantity) || 0),
+    0
+  );
+  if (suma !== Math.round(Number(total) || 0)) {
+    // La suma de los items que mandó el caller no cuadra: caer al ítem
+    // único cobra lo mismo y evita el 400 order_items_total_amount_mismatch.
+    console.warn(
+      `[MP] pedido ${orderNumber}: la suma de los items (${suma}) no cuadra con el total (${amount}); se envia el item unico`
+    );
+    return fallback;
+  }
+  return items;
+}
+
+// Fecha en el formato del ejemplo oficial de Create order:// "payer.registration_date": "2020-01-15T00:00:00.000-03:00" (ISO 8601 con
 // milisegundos y offset). Argentina es UTC-3 fijo (sin horario de verano
 // desde 2009), así que el offset se puede escribir directo. Recibe un Date
 // o un ISO (como el created_at que sale de la base) y devuelve "" si la

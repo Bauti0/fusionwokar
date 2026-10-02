@@ -30,6 +30,7 @@ import {
   MpError,
   verifyWebhookSignature,
   toRegistrationDate,
+  buildOrderItems,
 } from "./mp.js";
 import { MENUS } from "../src/data/menus.js";
 import { enhanceHtml } from "./seo.js";
@@ -215,7 +216,7 @@ probeMpCredentials().catch(() => {});
 // dato antifraude (fecha del primer pedido del comprador). Se arman del
 // request en el checkout y de la fila de la base en el reintento del
 // payment-link, así ambos caminos mandan lo mismo que tienen a mano.
-async function createMpOrderForOrder({ orderNumber, total, description, base, payer, additionalInfo }) {
+async function createMpOrderForOrder({ orderNumber, total, description, base, payer, additionalInfo, mpItems }) {
   if (mpAuthBroken) throw mpAuthError();
   return createOrder({
     orderNumber,
@@ -229,7 +230,22 @@ async function createMpOrderForOrder({ orderNumber, total, description, base, pa
     },
     payer,
     additionalInfo,
+    items: mpItems,
   });
+}
+
+// Items REALES del carrito para la order de MP, o null si la suma exacta no
+// se puede construir (buildOrderItems es pura y fija la regla: el fallback
+// se decide acá para que el warn quede en el log del server). El que no
+// cuadra pierde el detalle pero cobra exactamente igual.
+function mpItemsForCart({ orderNumber, cartItems, total, discount, shippingCost }) {
+  const items = buildOrderItems({ items: cartItems, total, discount, shippingCost });
+  if (!items) {
+    console.warn(
+      `[MP] pedido ${orderNumber}: los items del carrito no cuadran con el total (${total}, descuento ${discount}, envio ${shippingCost}); se envia el item unico`
+    );
+  }
+  return items;
 }
 
 // Fecha del primer pedido de un teléfono, en el formato ISO 8601 con offset
@@ -1139,6 +1155,16 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
             ...(customer.identification ? { identification: customer.identification } : {}),
           },
           additionalInfo: { registrationDate: await registrationDateFor(customer.phone) },
+          // Items reales del carrito (con el envío como ítem y el descuento
+          // repartido en los unit_price). Si no cuadran, buildOrderBody
+          // termina mandando el ítem único: el total cobrado no cambia.
+          mpItems: mpItemsForCart({
+            orderNumber,
+            cartItems: items,
+            total,
+            discount,
+            shippingCost: shipping.cost,
+          }),
         });
         mpOrderId = mpOrder.id;
         checkoutUrl = mpOrder.checkoutUrl;
@@ -1336,11 +1362,21 @@ app.post(
       }
 
       let mpOrder;
+      // Los items guardados en la fila son los mismos cleanItems que validó
+      // el checkout (JSON), así que el reintento manda los mismos ítems reales
+      // que el flujo original: descuento de la fila (row.discount) y envío
+      // (row.shipping) incluidos.
+      let cartItems = [];
+      try {
+        cartItems = JSON.parse(row.items || "[]");
+      } catch {
+        cartItems = [];
+      }
       try {
         mpOrder = await createMpOrderForOrder({
           orderNumber: row.order_number,
           total: row.total,
-          description: `${JSON.parse(row.items).length} items · ${row.branch}`,
+          description: `${cartItems.length} items · ${row.branch}`,
           base: requestBaseUrl(req),
           // El email y el nombre separado se guardan en la fila al crear el
           // pedido, así que el reintento manda lo mismo que el flujo original.
@@ -1352,6 +1388,13 @@ app.post(
             ...(row.customer_last_name ? { lastName: row.customer_last_name } : {}),
           },
           additionalInfo: { registrationDate: await registrationDateFor(row.customer_phone) },
+          mpItems: mpItemsForCart({
+            orderNumber: row.order_number,
+            cartItems,
+            total: row.total,
+            discount: row.discount,
+            shippingCost: row.shipping,
+          }),
         });
       } catch (err) {
         if (err instanceof MpError && err.isAuthError) mpAuthBroken = true;
