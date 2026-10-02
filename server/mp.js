@@ -142,7 +142,50 @@ export function mpAuthError() {
 // Crea la order de Checkout Pro para un pedido. Devuelve el checkout_url:
 // el comprador es redirigido ahí, paga en el entorno de MP y vuelve a
 // backUrls. El total va como string ("15000"), que es lo que espera Orders.
-export async function createOrder({ orderNumber, total, title, description, backUrls }) {
+//
+// El armado del body vive en buildOrderBody (función pura, testeada en
+// test/mp-order.test.js) para fijar el contrato con la API sin red ni
+// credenciales; createOrder solo agrega el envío a MP.
+export async function createOrder({ orderNumber, total, title, description, backUrls, payer }) {
+  const body = buildOrderBody({ orderNumber, total, title, description, backUrls, payer });
+
+  // El número de pedido es único y estable → sirve de clave de idempotencia.
+  const data = await mpFetch("/v1/orders", { method: "POST", body, idempotencyKey: orderNumber });
+  if (!data.id || !data.checkout_url) {
+    // MP respondió bien pero sin link: no hay a dónde mandar al cliente. Es
+    //Retryable (se puede reintentar) y NO es un problema de credenciales.
+    throw new MpError("Mercado Pago no devolvió el link de pago", { retryable: true });
+  }
+  return {
+    id: data.id,
+    checkoutUrl: data.checkout_url || null,
+    status: data.status,
+    statusDetail: data.status_detail,
+  };
+}
+
+// Limpia el texto que aparece en el resumen de la tarjeta del comprador
+// (config.statement_descriptor). La doc oficial fija el límite: "This
+// parameter accepts a text of up to 13 characters" (Configure invoice
+// description, checkout-pro-orders). Solo ASCII alfanumérico y espacio:
+// cualquier otra cosa (tildes, guiones, símbolos) se elimina, no se
+// reemplaza, para no inventar un texto que el dueño no escribió.
+export function sanitizeStatementDescriptor(value) {
+  const FALLBACK = "FUSION WOK";
+  const clean = String(value || "")
+    .replace(/[^A-Za-z0-9 ]/g, "") // fuera ASCII alfanumérico y espacio
+    .replace(/\s+/g, " ") // espacios múltiples → uno
+    .trim();
+  if (!clean) return FALLBACK;
+  return clean.slice(0, 13); // límite documentado del resumen de tarjeta
+}
+
+// Arma el body de POST /v1/orders (Checkout Pro). Pura: nada de fetch ni
+// process.env más allá de la lectura puntual de MP_STATEMENT_DESCRIPTOR.
+// Los campos de comportamiento del pago (type/processing_mode/capture_mode)
+// son EXACTAMENTE los de antes: este cambio solo agrega datos, no toca
+// cómo se procesa el pago.
+export function buildOrderBody({ orderNumber, total, title, description, backUrls, payer }) {
   const amount = String(Math.round(Number(total) || 0));
   const body = {
     type: "online",
@@ -162,6 +205,11 @@ export async function createOrder({ orderNumber, total, title, description, back
       },
     ],
     config: {
+      // Nombre del comercio en el resumen de la tarjeta del comprador.
+      // Hermano de "online" (así lo muestra el ejemplo oficial de Create
+      // order). Siempre se manda: con la variable sin configurar cae al
+      // fallback "FUSION WOK".
+      statement_descriptor: sanitizeStatementDescriptor(process.env.MP_STATEMENT_DESCRIPTOR),
       online: {
         success_url: backUrls.success,
         failure_url: backUrls.failure,
@@ -172,20 +220,13 @@ export async function createOrder({ orderNumber, total, title, description, back
       },
     },
   };
-
-  // El número de pedido es único y estable → sirve de clave de idempotencia.
-  const data = await mpFetch("/v1/orders", { method: "POST", body, idempotencyKey: orderNumber });
-  if (!data.id || !data.checkout_url) {
-    // MP respondió bien pero sin link: no hay a dónde mandar al cliente. Es
-    //Retryable (se puede reintentar) y NO es un problema de credenciales.
-    throw new MpError("Mercado Pago no devolvió el link de pago", { retryable: true });
+  // payer es opcional para MP, pero si viene el objeto, exige email adentro
+  // ("If the object is included, payer.email is required within it"). Se
+  // manda solo cuando hay email del comprador.
+  if (payer && payer.email) {
+    body.payer = { email: payer.email };
   }
-  return {
-    id: data.id,
-    checkoutUrl: data.checkout_url || null,
-    status: data.status,
-    statusDetail: data.status_detail,
-  };
+  return body;
 }
 
 // Consulta el estado real de la order (webhook + panel para refrescar el

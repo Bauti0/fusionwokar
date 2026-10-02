@@ -62,7 +62,7 @@ import {
 import { validateConfig } from "./config.js";
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
-import { isValidPhone } from "../src/utils/validation.js";
+import { isValidPhone, isValidEmail } from "../src/utils/validation.js";
 
 // ============================================================
 // FUSIÓN WOK — API + servidor de producción
@@ -209,7 +209,10 @@ probeMpCredentials().catch(() => {});
 // Crea la order de MP para un pedido ya guardado, o lanza MpError. Si el token
 // quedó marcado como roto se corta acá: es el mismo error que devolvería MP,
 // pero sin gastar una request ni esperar el timeout.
-async function createMpOrderForOrder({ orderNumber, total, description, base }) {
+// `payer` lleva los datos del comprador que viajan al body de la order
+// (hoy: email). La armamos del request en el checkout y de la fila de la
+// base en el reintento del payment-link, así ambos caminos mandan lo mismo.
+async function createMpOrderForOrder({ orderNumber, total, description, base, payer }) {
   if (mpAuthBroken) throw mpAuthError();
   return createOrder({
     orderNumber,
@@ -221,6 +224,7 @@ async function createMpOrderForOrder({ orderNumber, total, description, base }) 
       failure: `${base}/?pago=rechazado&pedido=${orderNumber}`,
       pending: `${base}/?pago=pendiente&pedido=${orderNumber}`,
     },
+    payer,
   });
 }
 
@@ -651,7 +655,7 @@ async function uniqueProductId(branchId, base) {
 
 // Valida y normaliza el cuerpo del pedido (evita manipulación de precios,
 // cantidades negativas, productos inexistentes y pedidos falsos).
-async function validateOrderBody(body) {
+async function validateOrderBody(body, { requireEmail = false } = {}) {
   const { branch, customer, orderMode, paymentMethod, items, notes, scheduledFor, couponCode } = body || {};
   if (!CATALOG[branch]) return { error: "Sucursal inválida" };
   if (!customer || typeof customer.name !== "string" || !customer.name.trim() || customer.name.trim().length > 100) {
@@ -664,6 +668,15 @@ async function validateOrderBody(body) {
   // formato con que el cliente lo tipeó al cargar el pedido.
   if (!isValidPhone(phone)) return { error: "Falta un teléfono válido" };
   const normalizedPhone = phone.replace(/\D/g, "");
+  // Email del comprador: MP lo exige dentro de payer en el checkout online
+  // (si viene el objeto payer, la doc de Orders requiere payer.email).
+  // En el checkout web es obligatorio (requireEmail); en la carga manual del
+  // panel es opcional — el admin rara vez tiene el email de un cliente que
+  // escribió por WhatsApp — pero si viene se valida igual. Se normaliza a
+  // minúsculas sin espacios, como pide la validación compartida con el front.
+  const email = String(customer.email || "").trim().toLowerCase();
+  if (requireEmail && !email) return { error: "Ingresá tu email para confirmar el pedido." };
+  if (email && !isValidEmail(email)) return { error: "El email no parece válido. Revisalo y volvé a intentar." };
   if (!["delivery", "pickup"].includes(orderMode)) return { error: "Modalidad inválida" };
   if (!["mercadopago", "efectivo", "transferencia"].includes(paymentMethod)) {
     return { error: "Método de pago inválido" };
@@ -779,7 +792,7 @@ async function validateOrderBody(body) {
   return {
     data: {
       branch,
-      customer: { name: customer.name.trim().slice(0, 100), phone: normalizedPhone },
+      customer: { name: customer.name.trim().slice(0, 100), phone: normalizedPhone, email },
       orderMode,
       paymentMethod,
       address: address.slice(0, 200),
@@ -937,7 +950,7 @@ function mpUnavailablePayload(err, { orderId, orderNumber }) {
 // está cubierto por la validación de catálogo/precios server-side.
 app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "orders" }), async (req, res) => {
   try {
-    const result = await validateOrderBody(req.body);
+    const result = await validateOrderBody(req.body, { requireEmail: true });
     if (result.error) {
       const payload = { error: result.error };
       if (result.code) payload.code = result.code;
@@ -982,16 +995,17 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         {
           sql: `
         INSERT INTO orders
-          (order_number, branch, customer_name, customer_phone, address, order_mode,
+          (order_number, branch, customer_name, customer_phone, customer_email, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
            scheduled_for, notes, shipping, shipping_km, shipping_pending, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
           args: [
             tmpNumber,
             branch,
             customer.name,
             customer.phone,
+            customer.email,
             address,
             orderMode,
             paymentMethod,
@@ -1043,6 +1057,9 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
           total,
           description: `${items.length} items · ${branch}`,
           base: requestBaseUrl(req),
+          // El email viaja como payer.email en el body de la order; MP lo usa
+          // para precompletar el checkout y para el antifraude.
+          payer: customer.email ? { email: customer.email } : undefined,
         });
         mpOrderId = mpOrder.id;
         checkoutUrl = mpOrder.checkoutUrl;
@@ -1246,6 +1263,9 @@ app.post(
           total: row.total,
           description: `${JSON.parse(row.items).length} items · ${row.branch}`,
           base: requestBaseUrl(req),
+          // El email se guarda en la fila al crear el pedido, así que el
+          // reintento manda el mismo payer.email que el flujo original.
+          payer: row.customer_email ? { email: row.customer_email } : undefined,
         });
       } catch (err) {
         if (err instanceof MpError && err.isAuthError) mpAuthBroken = true;
@@ -2167,15 +2187,16 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
       [
         {
           sql: `INSERT INTO orders
-          (order_number, branch, customer_name, customer_phone, address, order_mode,
+          (order_number, branch, customer_name, customer_phone, customer_email, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
            scheduled_for, notes, source, shipping, shipping_km, shipping_pending, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           args: [
             tmpNumber,
             branch,
             customer.name,
             customer.phone,
+            customer.email,
             address,
             orderMode,
             paymentMethod,

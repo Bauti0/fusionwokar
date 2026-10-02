@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatPrice, lineTotal } from "../utils/format.js";
 import { validateCoupon, shippingQuote } from "../api.js";
 import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
-import { isValidPhone } from "../utils/validation.js";
+import { isValidPhone, isValidEmail } from "../utils/validation.js";
 import { isOpenAtTime, closedLabel } from "../utils/schedule.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
@@ -49,6 +49,9 @@ export default function Checkout({
 }) {
   const [name, setName] = useState(customer?.name || "");
   const [phone, setPhone] = useState(customer?.phone || "");
+  // Email del comprador: se manda a Mercado Pago como payer.email y queda
+  // guardado con el pedido para que el local pueda contactar al cliente.
+  const [email, setEmail] = useState(customer?.email || "");
   // Autocompleta con la última dirección usada (guardada en el dispositivo)
   const [address, setAddress] = useState(customer?.address || "");
   const [deliveryNotes, setDeliveryNotes] = useState(customer?.notes || "");
@@ -193,6 +196,14 @@ export default function Checkout({
       setError("El celular no parece válido. Ej: 2262 555555.");
       return;
     }
+    if (!email.trim()) {
+      setError("Ingresá tu email para confirmar el pedido.");
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setError("El email no parece válido. Ej: nombre@correo.com.");
+      return;
+    }
     if (orderMode === "delivery" && !address.trim()) {
       setError("Ingresá tu dirección de entrega.");
       return;
@@ -238,7 +249,7 @@ export default function Checkout({
     setError("");
     try {
       await onConfirm({
-        customer: { name: name.trim(), phone: phone.trim() },
+        customer: { name: name.trim(), phone: phone.trim(), email: email.trim() },
         orderMode,
         paymentMethod,
         address: orderMode === "delivery" ? address.trim() : "",
@@ -319,6 +330,19 @@ export default function Checkout({
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
             />
+          </div>
+          <div className="field">
+            <label htmlFor="checkout-email">Email</label>
+            <input
+              id="checkout-email"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              placeholder="nombre@correo.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <p className="hint">Te enviamos la confirmación del pedido a este email.</p>
           </div>
           {orderMode === "delivery" && (
             <div className="field">

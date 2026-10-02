@@ -245,7 +245,9 @@ export default function StoreApp() {
 
       const payload = {
         branch: branch.id,
-        customer: { name: cust.name, phone: cust.phone },
+        // El email viaja con el customer: el server lo valida y lo guarda
+        // con el pedido (y lo manda a MP como payer.email).
+        customer: { name: cust.name, phone: cust.phone, email: cust.email },
         orderMode: mode,
         paymentMethod,
         address: mode === "delivery" ? address : "",
