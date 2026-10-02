@@ -386,14 +386,23 @@ export default function Checkout({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
-            <p className="hint">Te enviamos la confirmación del pedido a este email.</p>
+            <p className="hint">
+              Lo usamos para el pago con Mercado Pago y para contactarte por tu pedido.
+            </p>
           </div>
           <div className="field">
             <label htmlFor="checkout-id-type">Documento (opcional)</label>
             <select
               id="checkout-id-type"
               value={idType}
-              onChange={(e) => setIdType(e.target.value)}
+              onChange={(e) => {
+                // Al volver a "No especificar" el número deja de verse: si se
+                // conserva, la validación bloquea el submit con un campo que
+                // ya no existe en pantalla. Se limpia junto con la elección.
+                const next = e.target.value;
+                setIdType(next);
+                if (!next) setIdNumber("");
+              }}
             >
               <option value="">No especificar</option>
               {Object.keys(IDENTIFICATION_TYPES).map((t) => (

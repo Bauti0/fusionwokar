@@ -351,6 +351,23 @@ describe("buildOrderItems", () => {
     assert.equal(items, null);
   });
 
+  it("greedy de mayor subtotal pierde repartos alcanzables: hay que reintentar en el otro orden", () => {
+    // Caso real encontrado en la review: 3× 10000 + 2× 5000, cupón de 4000
+    // (total 36000). Recorriendo de la línea mayor a la menor, la grande
+    // absorbe 3999 (máximo múltiplo de 3) y el resto de $1 no es par para la
+    // chica → null. La solución exacta EXISTE: 10000×3 + 3000×2 = 36000
+    // (la chica absorbe el cupón entero).
+    const items = buildOrderItems({
+      items: [PRODUCTO("Combo familiar", 10000, 3), PRODUCTO("Wok chico", 5000, 2)],
+      total: 36000,
+      discount: 4000,
+      shippingCost: 0,
+    });
+    assert.notEqual(items, null);
+    const suma = items.reduce((s, i) => s + Number(i.unit_price) * i.quantity, 0);
+    assert.equal(suma, 36000);
+  });
+
   it("descuento que deja una linea en cero: devuelve null (MP no acepta precios en 0)", () => {
     const items = buildOrderItems({
       items: [PRODUCTO("Wok de pollo", 1000)],

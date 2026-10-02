@@ -249,9 +249,11 @@ function mpItemsForCart({ orderNumber, cartItems, total, discount, shippingCost 
 }
 
 // Fecha del primer pedido de un teléfono, en el formato ISO 8601 con offset
-// que usa additional_info["payer.registration_date"]. Se consulta ANTES del
-// INSERT del pedido nuevo, así un primer pedido no se cuenta a sí mismo:
-// cliente nuevo → el instante actual. Es best-effort: si la query falla se
+// que usa additional_info["payer.registration_date"]. La query corre DESPUÉS
+// del INSERT del pedido nuevo y eso es intencional: para un cliente nuevo,
+// el pedido recién insertado ES su primer pedido, así que MIN(created_at)
+// cae en "ahora", justo lo que pide la doc de MP; para uno que ya compró,
+// devuelve su primer pedido de verdad. Es best-effort: si la query falla se
 // devuelve "" y el campo simplemente no viaja (nunca rompe un cobro por un
 // dato antifraude).
 async function registrationDateFor(phone) {
@@ -864,8 +866,11 @@ async function validateOrderBody(body, { requireEmail = false } = {}) {
       customer: {
         // Con first/last, el nombre guardado es "Nombre Apellido" (lo que ya
         // esperan el panel, el ticket y el mensaje de WhatsApp); sin ellos,
-        // el name que mandó el canal (manual), tal cual.
-        name: firstName && lastName ? `${firstName} ${lastName}` : customer.name.trim().slice(0, 100),
+        // el name que mandó el canal (manual), tal cual. Mismo tope de 100
+        // caracteres que siempre tuvo customer.name.
+        name: (
+          firstName && lastName ? `${firstName} ${lastName}` : customer.name.trim()
+        ).slice(0, 100),
         phone: normalizedPhone,
         email,
         firstName,

@@ -287,21 +287,30 @@ export function buildOrderItems({ items, total, discount = 0, shippingCost = 0 }
   const baseSubtotal = lines.reduce((s, l) => s + l.unit * l.qty, 0);
   if (disc > baseSubtotal) return null; // caso 3
 
-  // Reparto: de la línea más grande a la más chica. Para cada línea, el
-  // share más grande que: (a) no supere lo que queda por repartir,
-  // (b) no deje el subtotal ajustado en 0, y (c) lo deje divisible por qty.
-  let remaining = disc;
-  for (const line of [...lines].sort((a, b) => b.unit * b.qty - a.unit * a.qty)) {
-    if (remaining <= 0) break;
-    const subtotal = line.unit * line.qty;
-    let share = Math.min(remaining, subtotal - line.qty); // (b) deja ≥ 1 por unidad
-    // (c): share ≡ subtotal (módulo qty), bajando de a uno si hace falta.
-    while (share > 0 && (subtotal - share) % line.qty !== 0) share--;
-    if (subtotal - share === 0) share = 0; // caso 5: nunca unit_price 0
-    line.share = share;
-    remaining -= share;
-  }
-  if (remaining > 0) return null; // caso 4: quedó descuento sin aplicar
+  // Reparto: cada línea absorbe lo que pueda manteniendo su unit_price
+  // entero y > 0 (share ≡ subtotal, módulo qty). Un solo orden de recorrido
+  // pierde repartos alcanzables: de mayor a menor deja residuos que la
+  // línea chica no puede absorber (y al revés pasa igual), así que se
+  // prueban AMBOS órdenes y se queda con el primero que reparta TODO.
+  // Si ninguno puede, no se puede cuadrar la suma → null.
+  const reparto = (ordenLineas) => {
+    for (const l of lines) l.share = 0; // cada pasada arranca de cero
+    let remaining = disc;
+    for (const line of ordenLineas) {
+      if (remaining <= 0) break;
+      const subtotal = line.unit * line.qty;
+      let share = Math.min(remaining, subtotal - line.qty); // deja ≥ 1 por unidad
+      // share ≡ subtotal (módulo qty), bajando de a uno si hace falta.
+      while (share > 0 && (subtotal - share) % line.qty !== 0) share--;
+      if (subtotal - share === 0) share = 0; // nunca unit_price 0
+      line.share = share;
+      remaining -= share;
+    }
+    return remaining === 0;
+  };
+  const porSubtotalDesc = [...lines].sort((a, b) => b.unit * b.qty - a.unit * a.qty);
+  const porSubtotalAsc = [...porSubtotalDesc].reverse();
+  if (!reparto(porSubtotalDesc) && !reparto(porSubtotalAsc)) return null;
 
   const mpItems = lines.map((line) => {
     const extras = Array.isArray(line.item.extras) ? line.item.extras : [];
