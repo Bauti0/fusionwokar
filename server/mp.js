@@ -142,36 +142,12 @@ export function mpAuthError() {
 // Crea la order de Checkout Pro para un pedido. Devuelve el checkout_url:
 // el comprador es redirigido ahí, paga en el entorno de MP y vuelve a
 // backUrls. El total va como string ("15000"), que es lo que espera Orders.
-export async function createOrder({ orderNumber, total, title, description, backUrls }) {
-  const amount = String(Math.round(Number(total) || 0));
-  const body = {
-    type: "online",
-    // Checkout Pro siempre es "manual": el cobro se dispara en el checkout
-    // de MP, no al crear la order. capture_mode "automatic" = se acredita
-    // apenas se aprueba (lo que ya pasaba con la preferencia anterior).
-    processing_mode: "manual",
-    capture_mode: "automatic",
-    total_amount: amount,
-    external_reference: orderNumber,
-    description: description || `Pedido Fusión Wok ${orderNumber}`,
-    items: [
-      {
-        title: title || `Pedido Fusión Wok ${orderNumber}`,
-        unit_price: amount,
-        quantity: 1,
-      },
-    ],
-    config: {
-      online: {
-        success_url: backUrls.success,
-        failure_url: backUrls.failure,
-        pending_url: backUrls.pending,
-        // "all" y no "approved": al cliente lo traemos de vuelta siempre,
-        // también cuando el pago fue rechazado, para que vea el resultado.
-        auto_return: "all",
-      },
-    },
-  };
+//
+// El armado del body vive en buildOrderBody (función pura, testeada en
+// test/mp-order.test.js) para fijar el contrato con la API sin red ni
+// credenciales; createOrder solo agrega el envío a MP.
+export async function createOrder({ orderNumber, total, title, description, backUrls, payer, additionalInfo, items }) {
+  const body = buildOrderBody({ orderNumber, total, title, description, backUrls, payer, additionalInfo, items });
 
   // El número de pedido es único y estable → sirve de clave de idempotencia.
   const data = await mpFetch("/v1/orders", { method: "POST", body, idempotencyKey: orderNumber });
@@ -186,6 +162,239 @@ export async function createOrder({ orderNumber, total, title, description, back
     status: data.status,
     statusDetail: data.status_detail,
   };
+}
+
+// Limpia el texto que aparece en el resumen de la tarjeta del comprador
+// (config.statement_descriptor). La doc oficial fija el límite: "This
+// parameter accepts a text of up to 13 characters" (Configure invoice
+// description, checkout-pro-orders). Solo ASCII alfanumérico y espacio:
+// cualquier otra cosa (tildes, guiones, símbolos) se elimina, no se
+// reemplaza, para no inventar un texto que el dueño no escribió.
+export function sanitizeStatementDescriptor(value) {
+  const FALLBACK = "FUSION WOK";
+  const clean = String(value || "")
+    .replace(/[^A-Za-z0-9 ]/g, "") // fuera ASCII alfanumérico y espacio
+    .replace(/\s+/g, " ") // espacios múltiples → uno
+    .trim();
+  if (!clean) return FALLBACK;
+  return clean.slice(0, 13); // límite documentado del resumen de tarjeta
+}
+
+// Arma el body de POST /v1/orders (Checkout Pro). Pura: nada de fetch ni
+// process.env más allá de la lectura puntual de MP_STATEMENT_DESCRIPTOR.
+// Los campos de comportamiento del pago (type/processing_mode/capture_mode)
+// son EXACTAMENTE los de antes: este cambio solo agrega datos, no toca
+// cómo se procesa el pago.
+export function buildOrderBody({ orderNumber, total, title, description, backUrls, payer, additionalInfo, items }) {
+  const amount = String(Math.round(Number(total) || 0));
+  const body = {
+    type: "online",
+    // Checkout Pro siempre es "manual": el cobro se dispara en el checkout
+    // de MP, no al crear la order. capture_mode "automatic" = se acredita
+    // apenas se aprueba (lo que ya pasaba con la preferencia anterior).
+    processing_mode: "manual",
+    capture_mode: "automatic",
+    total_amount: amount,
+    external_reference: orderNumber,
+    description: description || `Pedido Fusión Wok ${orderNumber}`,
+    items: mpItemsFor({ orderNumber, total, title, items }),
+    config: {
+      // Nombre del comercio en el resumen de la tarjeta del comprador.
+      // Hermano de "online" (así lo muestra el ejemplo oficial de Create
+      // order). Siempre se manda: con la variable sin configurar cae al
+      // fallback "FUSION WOK".
+      statement_descriptor: sanitizeStatementDescriptor(process.env.MP_STATEMENT_DESCRIPTOR),
+      online: {
+        success_url: backUrls.success,
+        failure_url: backUrls.failure,
+        pending_url: backUrls.pending,
+        // "all" y no "approved": al cliente lo traemos de vuelta siempre,
+        // también cuando el pago fue rechazado, para que vea el resultado.
+        auto_return: "all",
+      },
+    },
+  };
+  // payer es opcional para MP, pero si viene el objeto, exige email adentro
+  // ("If the object is included, payer.email is required within it"). Se
+  // arma solo con las claves que tienen valor: nada de campos vacíos.
+  // identification es dato sensible: pasa directo al body y no se guarda
+  // en la base ni se loguea (ver createOrder).
+  if (payer && payer.email) {
+    const p = { email: payer.email };
+    if (payer.firstName) p.first_name = payer.firstName;
+    if (payer.lastName) p.last_name = payer.lastName;
+    if (payer.identification && payer.identification.type && payer.identification.number) {
+      p.identification = {
+        type: payer.identification.type,
+        number: payer.identification.number,
+      };
+    }
+    body.payer = p;
+  }
+  // Datos adicionales de antifraude. La doc de Orders usa claves PLANAS:
+  // "additional_info": { "payer.registration_date": "2020-01-15T..." }.
+  // registration_date es la fecha del primer pedido del comprador.
+  if (additionalInfo && additionalInfo.registrationDate) {
+    body.additional_info = { "payer.registration_date": additionalInfo.registrationDate };
+  }
+  return body;
+}
+
+// Categoría de los ítems para MP. "food" es la categoría de comidas de la
+// lista de MP y se probó contra la API de prueba con 201 (2026-10-02).
+const ITEM_CATEGORY_ID = "food";
+
+// Mapea los ítems REALES del carrito (los cleanItems que guarda el pedido:
+// name, unitPrice, extras[], notes, qty) al array items de la order.
+//
+// REGLA CRÍTICA de la API (documentada y probada: 400
+// order_items_total_amount_mismatch): total_amount tiene que ser IGUAL a la
+// suma de unit_price × quantity de TODOS los ítems. Por eso:
+//   - el envío viaja como ítem propio ("Envío", quantity 1);
+//   - el descuento de cupón se RESTA de los unit_price de los productos,
+//     porque MP rechaza precios negativos (probado: 400 invalid_items).
+//
+// El descuento se reparte de la línea de MAYOR subtotal hacia abajo: cada
+// línea absorbe lo que pueda manteniendo (subtotal − share) divisible por
+// qty, para que el unit_price quede entero y > 0 (MP tampoco acepta 0).
+// Si el reparto exacto es imposible, devuelve null y el caller manda el
+// ítem único de siempre: nunca sale una order inconsistente.
+//
+// Casos que devuelven null (documentados):
+//   1. total ≤ 0 o carrito vacío (MP no cobra cero ni items sin datos);
+//   2. precio/cantidad ilegibles en algún ítem;
+//   3. descuento mayor que el subtotal de los productos;
+//   4. descuento que no se puede repartir en unit_prices enteros
+//      (ej: cupón de $333 sobre una única línea de 2× $5000);
+//   5. el reparto dejaría algún unit_price en 0;
+//   6. aserción final: la suma no da EXACTO el total.
+export function buildOrderItems({ items, total, discount = 0, shippingCost = 0 }) {
+  const cart = Array.isArray(items) ? items : [];
+  const t = Math.round(Number(total) || 0);
+  const disc = Math.max(0, Math.round(Number(discount) || 0));
+  const ship = Math.max(0, Math.round(Number(shippingCost) || 0));
+  if (t <= 0 || cart.length === 0) return null; // caso 1
+
+  const lines = [];
+  for (const it of cart) {
+    const unitPrice = Math.round(Number(it.unitPrice) || 0);
+    const qty = Math.round(Number(it.qty) || 0);
+    const extras = Array.isArray(it.extras) ? it.extras : [];
+    const extrasTotal = extras.reduce((s, e) => s + Math.round(Number(e.price) || 0), 0);
+    if (unitPrice <= 0 || qty <= 0) return null; // caso 2
+    lines.push({ item: it, unit: unitPrice + extrasTotal, qty, share: 0 });
+  }
+  const baseSubtotal = lines.reduce((s, l) => s + l.unit * l.qty, 0);
+  if (disc > baseSubtotal) return null; // caso 3
+
+  // Reparto: cada línea absorbe lo que pueda manteniendo su unit_price
+  // entero y > 0 (share ≡ subtotal, módulo qty). Un solo orden de recorrido
+  // pierde repartos alcanzables: de mayor a menor deja residuos que la
+  // línea chica no puede absorber (y al revés pasa igual), así que se
+  // prueban AMBOS órdenes y se queda con el primero que reparta TODO.
+  // Si ninguno puede, no se puede cuadrar la suma → null.
+  const reparto = (ordenLineas) => {
+    for (const l of lines) l.share = 0; // cada pasada arranca de cero
+    let remaining = disc;
+    for (const line of ordenLineas) {
+      if (remaining <= 0) break;
+      const subtotal = line.unit * line.qty;
+      let share = Math.min(remaining, subtotal - line.qty); // deja ≥ 1 por unidad
+      // share ≡ subtotal (módulo qty), bajando de a uno si hace falta.
+      while (share > 0 && (subtotal - share) % line.qty !== 0) share--;
+      if (subtotal - share === 0) share = 0; // nunca unit_price 0
+      line.share = share;
+      remaining -= share;
+    }
+    return remaining === 0;
+  };
+  const porSubtotalDesc = [...lines].sort((a, b) => b.unit * b.qty - a.unit * a.qty);
+  const porSubtotalAsc = [...porSubtotalDesc].reverse();
+  if (!reparto(porSubtotalDesc) && !reparto(porSubtotalAsc)) return null;
+
+  const mpItems = lines.map((line) => {
+    const extras = Array.isArray(line.item.extras) ? line.item.extras : [];
+    const extrasLabels = extras.map((e) => String(e.label || "")).filter(Boolean).join(", ");
+    const notes = String(line.item.notes || "").trim();
+    const title = extrasLabels
+      ? `${line.item.name} (${extrasLabels})`.slice(0, 120)
+      : String(line.item.name || "Producto").slice(0, 120);
+    // description lleva lo que distingue ESTA línea (extras y nota), o se
+    // omite: no se inventa texto del producto que no venga del carrito.
+    const description = extrasLabels
+      ? `Con: ${extrasLabels}`
+      : notes
+        ? `Nota: ${notes}`
+        : undefined;
+    return {
+      title,
+      ...(description ? { description } : {}),
+      unit_price: String((line.unit * line.qty - line.share) / line.qty), // entero por (c)
+      quantity: line.qty,
+      category_id: ITEM_CATEGORY_ID,
+    };
+  });
+  if (ship > 0) {
+    mpItems.push({
+      title: "Envío",
+      description: "Costo de envío a domicilio",
+      unit_price: String(ship),
+      quantity: 1,
+      category_id: ITEM_CATEGORY_ID,
+    });
+  }
+
+  // Aserción final (caso 6): sin suma exacta, no hay items que mandar.
+  const suma = mpItems.reduce((s, it) => s + Number(it.unit_price) * it.quantity, 0);
+  if (suma !== t) return null;
+  return mpItems;
+}
+
+// Decide el array items del body: los reales si cuadran EXACTO con el total,
+// o el ítem único de siempre si no (nunca una order inconsistente). Es la
+// segunda aserción (la primera es la de buildOrderItems): protege contra
+// cualquier caller que mande items sin pasar por buildOrderItems.
+function mpItemsFor({ orderNumber, total, title, items }) {
+  const amount = String(Math.round(Number(total) || 0));
+  const fallback = [
+    {
+      title: title || `Pedido Fusión Wok ${orderNumber}`,
+      unit_price: amount,
+      quantity: 1,
+    },
+  ];
+  if (!Array.isArray(items) || items.length === 0) return fallback;
+  const suma = items.reduce(
+    (s, it) => s + Math.round(Number(it.unit_price) || 0) * Math.round(Number(it.quantity) || 0),
+    0
+  );
+  if (suma !== Math.round(Number(total) || 0)) {
+    // La suma de los items que mandó el caller no cuadra: caer al ítem
+    // único cobra lo mismo y evita el 400 order_items_total_amount_mismatch.
+    console.warn(
+      `[MP] pedido ${orderNumber}: la suma de los items (${suma}) no cuadra con el total (${amount}); se envia el item unico`
+    );
+    return fallback;
+  }
+  return items;
+}
+
+// Fecha en el formato del ejemplo oficial de Create order:// "payer.registration_date": "2020-01-15T00:00:00.000-03:00" (ISO 8601 con
+// milisegundos y offset). Argentina es UTC-3 fijo (sin horario de verano
+// desde 2009), así que el offset se puede escribir directo. Recibe un Date
+// o un ISO (como el created_at que sale de la base) y devuelve "" si la
+// fecha no se puede leer — el caller omite el campo en ese caso.
+export function toRegistrationDate(date) {
+  if (date == null) return ""; // new Date(null) sería epoch, no un error
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return "";
+  const shifted = new Date(d.getTime() - 3 * 3600 * 1000); // UTC → -03:00
+  const p = (n, w = 2) => String(n).padStart(w, "0");
+  return (
+    `${shifted.getUTCFullYear()}-${p(shifted.getUTCMonth() + 1)}-${p(shifted.getUTCDate())}` +
+    `T${p(shifted.getUTCHours())}:${p(shifted.getUTCMinutes())}:${p(shifted.getUTCSeconds())}` +
+    `.${p(shifted.getUTCMilliseconds(), 3)}-03:00`
+  );
 }
 
 // Consulta el estado real de la order (webhook + panel para refrescar el

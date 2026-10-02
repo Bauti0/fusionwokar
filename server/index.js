@@ -29,6 +29,8 @@ import {
   mpAuthError,
   MpError,
   verifyWebhookSignature,
+  toRegistrationDate,
+  buildOrderItems,
 } from "./mp.js";
 import { MENUS } from "../src/data/menus.js";
 import { enhanceHtml } from "./seo.js";
@@ -62,7 +64,7 @@ import {
 import { validateConfig } from "./config.js";
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
-import { isValidPhone } from "../src/utils/validation.js";
+import { isValidPhone, isValidEmail, isValidIdentification } from "../src/utils/validation.js";
 
 // ============================================================
 // FUSIÓN WOK — API + servidor de producción
@@ -209,7 +211,12 @@ probeMpCredentials().catch(() => {});
 // Crea la order de MP para un pedido ya guardado, o lanza MpError. Si el token
 // quedó marcado como roto se corta acá: es el mismo error que devolvería MP,
 // pero sin gastar una request ni esperar el timeout.
-async function createMpOrderForOrder({ orderNumber, total, description, base }) {
+// `payer` lleva los datos del comprador que viajan al body de la order
+// (email, firstName/lastName, identification). `additionalInfo` lleva el
+// dato antifraude (fecha del primer pedido del comprador). Se arman del
+// request en el checkout y de la fila de la base en el reintento del
+// payment-link, así ambos caminos mandan lo mismo que tienen a mano.
+async function createMpOrderForOrder({ orderNumber, total, description, base, payer, additionalInfo, mpItems }) {
   if (mpAuthBroken) throw mpAuthError();
   return createOrder({
     orderNumber,
@@ -221,7 +228,43 @@ async function createMpOrderForOrder({ orderNumber, total, description, base }) 
       failure: `${base}/?pago=rechazado&pedido=${orderNumber}`,
       pending: `${base}/?pago=pendiente&pedido=${orderNumber}`,
     },
+    payer,
+    additionalInfo,
+    items: mpItems,
   });
+}
+
+// Items REALES del carrito para la order de MP, o null si la suma exacta no
+// se puede construir (buildOrderItems es pura y fija la regla: el fallback
+// se decide acá para que el warn quede en el log del server). El que no
+// cuadra pierde el detalle pero cobra exactamente igual.
+function mpItemsForCart({ orderNumber, cartItems, total, discount, shippingCost }) {
+  const items = buildOrderItems({ items: cartItems, total, discount, shippingCost });
+  if (!items) {
+    console.warn(
+      `[MP] pedido ${orderNumber}: los items del carrito no cuadran con el total (${total}, descuento ${discount}, envio ${shippingCost}); se envia el item unico`
+    );
+  }
+  return items;
+}
+
+// Fecha del primer pedido de un teléfono, en el formato ISO 8601 con offset
+// que usa additional_info["payer.registration_date"]. La query corre DESPUÉS
+// del INSERT del pedido nuevo y eso es intencional: para un cliente nuevo,
+// el pedido recién insertado ES su primer pedido, así que MIN(created_at)
+// cae en "ahora", justo lo que pide la doc de MP; para uno que ya compró,
+// devuelve su primer pedido de verdad. Es best-effort: si la query falla se
+// devuelve "" y el campo simplemente no viaja (nunca rompe un cobro por un
+// dato antifraude).
+async function registrationDateFor(phone) {
+  try {
+    const first = await db
+      .prepare("SELECT MIN(created_at) AS first FROM orders WHERE customer_phone = ?")
+      .get(phone);
+    return toRegistrationDate(first?.first || now());
+  } catch {
+    return "";
+  }
 }
 
 // CORS: solo orígenes permitidos (mismo origen por defecto)
@@ -651,10 +694,19 @@ async function uniqueProductId(branchId, base) {
 
 // Valida y normaliza el cuerpo del pedido (evita manipulación de precios,
 // cantidades negativas, productos inexistentes y pedidos falsos).
-async function validateOrderBody(body) {
+async function validateOrderBody(body, { requireEmail = false } = {}) {
   const { branch, customer, orderMode, paymentMethod, items, notes, scheduledFor, couponCode } = body || {};
   if (!CATALOG[branch]) return { error: "Sucursal inválida" };
-  if (!customer || typeof customer.name !== "string" || !customer.name.trim() || customer.name.trim().length > 100) {
+  // Nombre del cliente: el canal web manda name + firstName/lastName; el
+  // manual solo name. Con cualquiera de los dos alcanza.
+  const hasName =
+    typeof customer?.name === "string" && customer.name.trim() && customer.name.trim().length <= 100;
+  const hasFirstLast =
+    typeof customer?.firstName === "string" &&
+    customer.firstName.trim() &&
+    typeof customer?.lastName === "string" &&
+    customer.lastName.trim();
+  if (!hasName && !hasFirstLast) {
     return { error: "Faltan datos del cliente" };
   }
   const phone = String(customer.phone || "").trim();
@@ -664,6 +716,38 @@ async function validateOrderBody(body) {
   // formato con que el cliente lo tipeó al cargar el pedido.
   if (!isValidPhone(phone)) return { error: "Falta un teléfono válido" };
   const normalizedPhone = phone.replace(/\D/g, "");
+  // Email del comprador: MP lo exige dentro de payer en el checkout online
+  // (si viene el objeto payer, la doc de Orders requiere payer.email).
+  // En el checkout web es obligatorio (requireEmail); en la carga manual del
+  // panel es opcional — el admin rara vez tiene el email de un cliente que
+  // escribió por WhatsApp — pero si viene se valida igual. Se normaliza a
+  // minúsculas sin espacios, como pide la validación compartida con el front.
+  const email = String(customer.email || "").trim().toLowerCase();
+  if (requireEmail && !email) return { error: "Ingresá tu email para confirmar el pedido." };
+  if (email && !isValidEmail(email)) return { error: "El email no parece válido. Revisalo y volvé a intentar." };
+  // Nombre y apellido: el checkout web los manda separados (MP los quiere así
+  // para el payer); la carga manual del panel sigue mandando el name único.
+  // Nunca se "parte" un nombre compuesto: si el canal no manda first/last se
+  // usa el name tal cual, que es el comportamiento que ya existía.
+  const firstName = String(customer.firstName || "").trim().slice(0, 100);
+  const lastName = String(customer.lastName || "").trim().slice(0, 100);
+  if ((firstName || lastName) && !(firstName && lastName)) {
+    return { error: "Completá tu nombre y apellido." };
+  }
+  // Identificación del comprador (opcional, DATO SENSIBLE): solo se valida y
+  // se pasa a MP como payer.identification; nunca se persiste en la base ni
+  // se loguea. A medias (solo tipo o solo número) se rechaza para no mandar
+  // a MP un dato adivinado.
+  let identification = null;
+  const idType = customer.identification ? String(customer.identification.type || "").trim() : "";
+  const idNumber = customer.identification ? String(customer.identification.number || "").trim() : "";
+  if (idType || idNumber) {
+    if (!idType || !idNumber) return { error: "Completá el tipo y el número de documento, o dejá los dos vacíos." };
+    if (!isValidIdentification(idType, idNumber)) {
+      return { error: "El número de documento no parece válido para ese tipo. Revisalo." };
+    }
+    identification = { type: idType, number: idNumber.replace(/[\s.-]/g, "") };
+  }
   if (!["delivery", "pickup"].includes(orderMode)) return { error: "Modalidad inválida" };
   if (!["mercadopago", "efectivo", "transferencia"].includes(paymentMethod)) {
     return { error: "Método de pago inválido" };
@@ -779,7 +863,20 @@ async function validateOrderBody(body) {
   return {
     data: {
       branch,
-      customer: { name: customer.name.trim().slice(0, 100), phone: normalizedPhone },
+      customer: {
+        // Con first/last, el nombre guardado es "Nombre Apellido" (lo que ya
+        // esperan el panel, el ticket y el mensaje de WhatsApp); sin ellos,
+        // el name que mandó el canal (manual), tal cual. Mismo tope de 100
+        // caracteres que siempre tuvo customer.name.
+        name: (
+          firstName && lastName ? `${firstName} ${lastName}` : customer.name.trim()
+        ).slice(0, 100),
+        phone: normalizedPhone,
+        email,
+        firstName,
+        lastName,
+        identification,
+      },
       orderMode,
       paymentMethod,
       address: address.slice(0, 200),
@@ -937,7 +1034,7 @@ function mpUnavailablePayload(err, { orderId, orderNumber }) {
 // está cubierto por la validación de catálogo/precios server-side.
 app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "orders" }), async (req, res) => {
   try {
-    const result = await validateOrderBody(req.body);
+    const result = await validateOrderBody(req.body, { requireEmail: true });
     if (result.error) {
       const payload = { error: result.error };
       if (result.code) payload.code = result.code;
@@ -982,16 +1079,19 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         {
           sql: `
         INSERT INTO orders
-          (order_number, branch, customer_name, customer_phone, address, order_mode,
+          (order_number, branch, customer_name, customer_phone, customer_email, customer_first_name, customer_last_name, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
            scheduled_for, notes, shipping, shipping_km, shipping_pending, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
           args: [
             tmpNumber,
             branch,
             customer.name,
             customer.phone,
+            customer.email,
+            customer.firstName,
+            customer.lastName,
             address,
             orderMode,
             paymentMethod,
@@ -1036,13 +1136,40 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
 
     // Mercado Pago: recién acá se crea la order, con el pedido ya guardado
     // y su número real como external_reference (y como clave de idempotencia).
+    // La fecha de registro del comprador sale de MIN(created_at) del teléfono:
+    // para un cliente nuevo, el pedido recién insertado ES su primer pedido,
+    // así que el MIN cae en "ahora", que es lo que la doc de MP pide; para
+    // uno que ya compró, devuelve su primer pedido de verdad.
     if (isMp && !demo) {
+      let mpOrder;
       try {
-        const mpOrder = await createMpOrderForOrder({
+        mpOrder = await createMpOrderForOrder({
           orderNumber,
           total,
           description: `${items.length} items · ${branch}`,
           base: requestBaseUrl(req),
+          // El email viaja como payer.email en el body de la order; MP lo usa
+          // para precompletar el checkout y para el antifraude. La
+          // identificación es dato sensible: pasa directo al body y no se
+          // guarda en la base ni se loguea (el reintento del payment-link no
+          // la tiene: limitación documentada en el reporte).
+          payer: {
+            ...(customer.email ? { email: customer.email } : {}),
+            ...(customer.firstName ? { firstName: customer.firstName } : {}),
+            ...(customer.lastName ? { lastName: customer.lastName } : {}),
+            ...(customer.identification ? { identification: customer.identification } : {}),
+          },
+          additionalInfo: { registrationDate: await registrationDateFor(customer.phone) },
+          // Items reales del carrito (con el envío como ítem y el descuento
+          // repartido en los unit_price). Si no cuadran, buildOrderBody
+          // termina mandando el ítem único: el total cobrado no cambia.
+          mpItems: mpItemsForCart({
+            orderNumber,
+            cartItems: items,
+            total,
+            discount,
+            shippingCost: shipping.cost,
+          }),
         });
         mpOrderId = mpOrder.id;
         checkoutUrl = mpOrder.checkoutUrl;
@@ -1240,12 +1367,39 @@ app.post(
       }
 
       let mpOrder;
+      // Los items guardados en la fila son los mismos cleanItems que validó
+      // el checkout (JSON), así que el reintento manda los mismos ítems reales
+      // que el flujo original: descuento de la fila (row.discount) y envío
+      // (row.shipping) incluidos.
+      let cartItems = [];
+      try {
+        cartItems = JSON.parse(row.items || "[]");
+      } catch {
+        cartItems = [];
+      }
       try {
         mpOrder = await createMpOrderForOrder({
           orderNumber: row.order_number,
           total: row.total,
-          description: `${JSON.parse(row.items).length} items · ${row.branch}`,
+          description: `${cartItems.length} items · ${row.branch}`,
           base: requestBaseUrl(req),
+          // El email y el nombre separado se guardan en la fila al crear el
+          // pedido, así que el reintento manda lo mismo que el flujo original.
+          // La identificación NO se persiste (dato sensible): el reintento
+          // la manda sin ella — limitación conocida, ver el reporte.
+          payer: {
+            ...(row.customer_email ? { email: row.customer_email } : {}),
+            ...(row.customer_first_name ? { firstName: row.customer_first_name } : {}),
+            ...(row.customer_last_name ? { lastName: row.customer_last_name } : {}),
+          },
+          additionalInfo: { registrationDate: await registrationDateFor(row.customer_phone) },
+          mpItems: mpItemsForCart({
+            orderNumber: row.order_number,
+            cartItems,
+            total: row.total,
+            discount: row.discount,
+            shippingCost: row.shipping,
+          }),
         });
       } catch (err) {
         if (err instanceof MpError && err.isAuthError) mpAuthBroken = true;
@@ -2167,15 +2321,18 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
       [
         {
           sql: `INSERT INTO orders
-          (order_number, branch, customer_name, customer_phone, address, order_mode,
+          (order_number, branch, customer_name, customer_phone, customer_email, customer_first_name, customer_last_name, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
            scheduled_for, notes, source, shipping, shipping_km, shipping_pending, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', 'received', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           args: [
             tmpNumber,
             branch,
             customer.name,
             customer.phone,
+            customer.email,
+            customer.firstName,
+            customer.lastName,
             address,
             orderMode,
             paymentMethod,

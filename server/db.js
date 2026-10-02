@@ -48,6 +48,9 @@ await db.exec(`
     branch TEXT NOT NULL,
     customer_name TEXT NOT NULL,
     customer_phone TEXT NOT NULL,
+    customer_email TEXT NOT NULL DEFAULT '',
+    customer_first_name TEXT NOT NULL DEFAULT '',
+    customer_last_name TEXT NOT NULL DEFAULT '',
     address TEXT NOT NULL DEFAULT '',
     order_mode TEXT NOT NULL,
     payment_method TEXT NOT NULL,
@@ -186,6 +189,9 @@ async function ensureColumn(table, column, ddl) {
 await ensureColumn("orders", "scheduled_for", "scheduled_for TEXT NOT NULL DEFAULT ''");
 await ensureColumn("orders", "coupon_code", "coupon_code TEXT NOT NULL DEFAULT ''");
 await ensureColumn("orders", "discount", "discount INTEGER NOT NULL DEFAULT 0");
+await ensureColumn("orders", "customer_email", "customer_email TEXT NOT NULL DEFAULT ''");
+await ensureColumn("orders", "customer_first_name", "customer_first_name TEXT NOT NULL DEFAULT ''");
+await ensureColumn("orders", "customer_last_name", "customer_last_name TEXT NOT NULL DEFAULT ''");
 await ensureColumn("products", "image", "image TEXT NOT NULL DEFAULT ''");
 // "web" = pedido online normal. "whatsapp"/"counter" = cargado a mano
 // por el admin (pedido que llegó por WhatsApp o cliente de mostrador).
@@ -399,7 +405,15 @@ export function toPublicOrder(row) {
     id: row.id,
     orderNumber: row.order_number,
     branch: row.branch,
-    customer: { name: row.customer_name, phone: row.customer_phone },
+    // El email se expone SOLO acá (panel admin). toPublicOrderPublic, que
+    // alimenta los endpoints públicos de tracking, no lo incluye.
+    customer: {
+      name: row.customer_name,
+      phone: row.customer_phone,
+      email: row.customer_email || "",
+      firstName: row.customer_first_name || "",
+      lastName: row.customer_last_name || "",
+    },
     address: row.address,
     orderMode: row.order_mode,
     paymentMethod: row.payment_method,
