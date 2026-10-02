@@ -581,6 +581,9 @@ async function buildCatalog() {
     catalog[row.branch][p.id] = {
       price: p.price,
       available: p.available,
+      // Descripción del producto: se guarda acá para que validateOrderBody
+      // la copie a los cleanItems y llegue a MP como items[].description.
+      description: p.description || "",
       extras: new Map((p.extras || []).map((e) => [e.id, e.price])),
     };
   }
@@ -717,11 +720,12 @@ async function validateOrderBody(body, { requireEmail = false } = {}) {
   if (!isValidPhone(phone)) return { error: "Falta un teléfono válido" };
   const normalizedPhone = phone.replace(/\D/g, "");
   // Email del comprador: MP lo exige dentro de payer en el checkout online
-  // (si viene el objeto payer, la doc de Orders requiere payer.email).
-  // En el checkout web es obligatorio (requireEmail); en la carga manual del
-  // panel es opcional — el admin rara vez tiene el email de un cliente que
-  // escribió por WhatsApp — pero si viene se valida igual. Se normaliza a
-  // minúsculas sin espacios, como pide la validación compartida con el front.
+  // (si viene el objeto payer, la doc de Orders requiere payer.email). Se
+  // exige SOLO cuando el pago es con Mercado Pago; en efectivo/transferencia
+  // el campo ni aparece en el checkout. En la carga manual del panel es
+  // opcional (el admin rara vez tiene el email de un cliente que escribió
+  // por WhatsApp), pero si viene se valida igual. Se normaliza a minúsculas
+  // sin espacios, como pide la validación compartida con el front.
   const email = String(customer.email || "").trim().toLowerCase();
   if (requireEmail && !email) return { error: "Ingresá tu email para confirmar el pedido." };
   if (email && !isValidEmail(email)) return { error: "El email no parece válido. Revisalo y volvé a intentar." };
@@ -809,6 +813,10 @@ async function validateOrderBody(body, { requireEmail = false } = {}) {
       key: String(it.key || `${it.productId}-${extras.map((x) => x.id).sort().join(",")}`).slice(0, 120),
       productId: it.productId,
       name: String(it.name || "").slice(0, 120),
+      // Descripción del PRODUCTO (del catálogo): viaja a MP como
+      // items[].description. Límite real de la API: 256 chars (probado
+      // contra la API de prueba: "length must be <= 256").
+      description: String(product.description || "").trim().slice(0, 256),
       unitPrice: product.price,
       extras,
       notes: String(it.notes || "").slice(0, 300),
@@ -1034,7 +1042,13 @@ function mpUnavailablePayload(err, { orderId, orderNumber }) {
 // está cubierto por la validación de catálogo/precios server-side.
 app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "orders" }), async (req, res) => {
   try {
-    const result = await validateOrderBody(req.body, { requireEmail: true });
+    // El email lo exige SOLO Mercado Pago (viaja como payer.email de la
+    // order); con efectivo o transferencia el checkout ni lo muestra.
+    // Sigue siendo una decisión server-side: el canal público la pide
+    // según el método de pago, la carga manual del panel no la pide nunca.
+    const result = await validateOrderBody(req.body, {
+      requireEmail: req.body?.paymentMethod === "mercadopago",
+    });
     if (result.error) {
       const payload = { error: result.error };
       if (result.code) payload.code = result.code;

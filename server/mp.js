@@ -244,6 +244,12 @@ export function buildOrderBody({ orderNumber, total, title, description, backUrl
 // lista de MP y se probó contra la API de prueba con 201 (2026-10-02).
 const ITEM_CATEGORY_ID = "food";
 
+// Límite real de items[].description: la doc de Orders no lo publica, pero la
+// API lo valida con "length must be <= 256" (probado con 2000 chars contra
+// la API de prueba → 400 property_value, 2026-10-02). Se trunca acá y en el
+// cleanItem que arma el server, por las dos puntas.
+const ITEM_DESCRIPTION_MAX = 256;
+
 // Mapea los ítems REALES del carrito (los cleanItems que guarda el pedido:
 // name, unitPrice, extras[], notes, qty) al array items de la order.
 //
@@ -315,20 +321,20 @@ export function buildOrderItems({ items, total, discount = 0, shippingCost = 0 }
   const mpItems = lines.map((line) => {
     const extras = Array.isArray(line.item.extras) ? line.item.extras : [];
     const extrasLabels = extras.map((e) => String(e.label || "")).filter(Boolean).join(", ");
-    const notes = String(line.item.notes || "").trim();
     const title = extrasLabels
       ? `${line.item.name} (${extrasLabels})`.slice(0, 120)
       : String(line.item.name || "Producto").slice(0, 120);
-    // description lleva lo que distingue ESTA línea (extras y nota), o se
-    // omite: no se inventa texto del producto que no venga del carrito.
-    const description = extrasLabels
-      ? `Con: ${extrasLabels}`
-      : notes
-        ? `Nota: ${notes}`
-        : undefined;
+    // description: la del PRODUCTO si existe; si no, el título (que ya
+    // lleva los extras entre paréntesis). Límite real de la API: 256 chars
+    // — la API de prueba lo rechaza con property_value "'$.items[N].
+    // description' - length must be <= 256" (probado 2026-10-02).
+    // Pedidos guardados antes de este cambio no traen description en su
+    // JSON: caen al título sin romper nada.
+    const description =
+      String(line.item.description || "").trim().slice(0, ITEM_DESCRIPTION_MAX) || title;
     return {
       title,
-      ...(description ? { description } : {}),
+      description,
       unit_price: String((line.unit * line.qty - line.share) / line.qty), // entero por (c)
       quantity: line.qty,
       category_id: ITEM_CATEGORY_ID,
@@ -356,9 +362,14 @@ export function buildOrderItems({ items, total, discount = 0, shippingCost = 0 }
 // cualquier caller que mande items sin pasar por buildOrderItems.
 function mpItemsFor({ orderNumber, total, title, items }) {
   const amount = String(Math.round(Number(total) || 0));
+  const fallbackTitle = title || `Pedido Fusión Wok ${orderNumber}`;
   const fallback = [
     {
-      title: title || `Pedido Fusión Wok ${orderNumber}`,
+      title: fallbackTitle,
+      // El ítem único también lleva description: sin descripción de
+      // producto que aplicar, es el propio título (regla del resto de
+      // los ítems). No toca precio ni cantidad: la suma no cambia.
+      description: fallbackTitle,
       unit_price: amount,
       quantity: 1,
     },

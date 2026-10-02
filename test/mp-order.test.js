@@ -137,6 +137,9 @@ describe("buildOrderBody", () => {
     assert.equal(body.items[0].unit_price, "15000");
     assert.equal(body.items[0].quantity, 1);
     assert.equal(body.items[0].title, "Pedido Fusión Wok FW-00001");
+    // El item unico tambien lleva description: sin descripción de producto,
+    // es el propio título.
+    assert.equal(body.items[0].description, "Pedido Fusión Wok FW-00001");
   });
 
   it("description cae al texto de pedido cuando no viene", () => {
@@ -246,10 +249,11 @@ describe("toRegistrationDate", () => {
 // el ítem único de siempre: nunca sale una order inconsistente.
 // ============================================================
 describe("buildOrderItems", () => {
-  const PRODUCTO = (nombre, precio, qty = 1, extras = []) => ({
+  const PRODUCTO = (nombre, precio, qty = 1, extras = [], description = "") => ({
     key: `${nombre}-1`,
     productId: "wok-pollo",
     name: nombre,
+    description,
     unitPrice: precio,
     extras,
     notes: "",
@@ -280,9 +284,11 @@ describe("buildOrderItems", () => {
     assert.ok(items.every((i) => i.category_id === "food"));
   });
 
-  it("los extras se suman al unit_price y se ven en title y description", () => {
+  it("los extras se suman al unit_price y se ven en title (la description sale del producto)", () => {
     const items = buildOrderItems({
-      items: [PRODUCTO("Wok de pollo", 8000, 1, [{ id: "e1", label: "Pollo extra", price: 1500 }])],
+      items: [
+        PRODUCTO("Wok de pollo", 8000, 1, [{ id: "e1", label: "Pollo extra", price: 1500 }], "Arroz salteado con pollo y verduras"),
+      ],
       total: 9500,
       discount: 0,
       shippingCost: 0,
@@ -290,10 +296,32 @@ describe("buildOrderItems", () => {
     assert.equal(items[0].unit_price, "9500");
     assert.match(items[0].title, /Wok de pollo/);
     assert.match(items[0].title, /Pollo extra/);
-    assert.match(items[0].description, /Pollo extra/);
+    // La description es la del PRODUCTO (no los extras): los extras ya viajan
+    // en el título entre paréntesis.
+    assert.equal(items[0].description, "Arroz salteado con pollo y verduras");
   });
 
-  it("el envio va como item propio de quantity 1", () => {
+  it("description: si el producto no tiene, es el titulo del item", () => {
+    const items = buildOrderItems({ items: [PRODUCTO("Wok de pollo", 8000)], total: 8000, discount: 0, shippingCost: 0 });
+    assert.equal(items[0].description, "Wok de pollo");
+  });
+
+  it("description: se trunca a 256, el limite real que valida la API de MP", () => {
+    // Probado contra la API de prueba: una description de 2000 chars da
+    // 400 property_value "'$.items[0].description' - length must be <= 256".
+    const largo = PRODUCTO("Wok de pollo", 8000, 1, [], "d".repeat(400));
+    const items = buildOrderItems({ items: [largo], total: 8000, discount: 0, shippingCost: 0 });
+    assert.equal(items[0].description.length, 256);
+    assert.ok(items[0].description.startsWith("dddd"));
+  });
+
+  it("description: pedidos viejos sin description en su JSON caen al titulo sin romper", () => {
+    const viejo = { key: "k", productId: "p", name: "Wok viejo", unitPrice: 8000, extras: [], notes: "", qty: 1 };
+    const items = buildOrderItems({ items: [viejo], total: 8000, discount: 0, shippingCost: 0 });
+    assert.equal(items[0].description, "Wok viejo");
+  });
+
+  it("el envio va como item propio de quantity 1 (con su description)", () => {
     const items = buildOrderItems({
       items: [PRODUCTO("Wok de pollo", 8000)],
       total: 8800,
@@ -304,6 +332,7 @@ describe("buildOrderItems", () => {
     const envio = items.find((i) => i.title === "Envío");
     assert.equal(envio.unit_price, "800");
     assert.equal(envio.quantity, 1);
+    assert.equal(envio.description, "Costo de envío a domicilio");
     assert.equal(items.reduce((s, i) => s + Number(i.unit_price) * i.quantity, 0), 8800);
   });
 

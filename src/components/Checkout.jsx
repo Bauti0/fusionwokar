@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatPrice, lineTotal } from "../utils/format.js";
 import { validateCoupon, shippingQuote } from "../api.js";
 import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
-import { isValidPhone, isValidEmail, isValidIdentification, IDENTIFICATION_TYPES } from "../utils/validation.js";
+import { isValidPhone, isValidEmail } from "../utils/validation.js";
 import { isOpenAtTime, closedLabel } from "../utils/schedule.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
@@ -55,13 +55,11 @@ export default function Checkout({
   const [firstName, setFirstName] = useState(customer?.firstName || "");
   const [lastName, setLastName] = useState(customer?.lastName || "");
   const [phone, setPhone] = useState(customer?.phone || "");
-  // Email del comprador: se manda a Mercado Pago como payer.email y queda
-  // guardado con el pedido para que el local pueda contactar al cliente.
+  // Email del comprador: solo lo pide (y solo lo muestra) el pago con
+  // Mercado Pago, que lo usa como payer.email; se guarda con el pedido para
+  // que el local pueda contactar al cliente y se recuerda junto con el resto
+  // de los datos para el próximo pedido.
   const [email, setEmail] = useState(customer?.email || "");
-  // Documento del comprador (opcional): viaja SOLO al pago de Mercado Pago
-  // como payer.identification; no se guarda en la base ni en este navegador.
-  const [idType, setIdType] = useState("");
-  const [idNumber, setIdNumber] = useState("");
   // Autocompleta con la última dirección usada (guardada en el dispositivo)
   const [address, setAddress] = useState(customer?.address || "");
   const [deliveryNotes, setDeliveryNotes] = useState(customer?.notes || "");
@@ -210,22 +208,17 @@ export default function Checkout({
       setError("El celular no parece válido. Ej: 2262 555555.");
       return;
     }
-    if (!email.trim()) {
-      setError("Ingresá tu email para confirmar el pedido.");
-      return;
-    }
-    if (!isValidEmail(email)) {
-      setError("El email no parece válido. Ej: nombre@correo.com.");
-      return;
-    }
-    // El documento es opcional, pero a medias no: sin los dos campos no viaja.
-    if (!!idType !== !!idNumber.trim()) {
-      setError("Completá el tipo y el número de documento, o dejá los dos vacíos.");
-      return;
-    }
-    if (idType && !isValidIdentification(idType, idNumber)) {
-      setError("El número de documento no parece válido para ese tipo.");
-      return;
+    // El email solo lo pide Mercado Pago (lo usa como payer.email); con
+    // efectivo o transferencia el campo ni se muestra ni se exige.
+    if (isMp) {
+      if (!email.trim()) {
+        setError("Ingresá tu email para confirmar el pedido.");
+        return;
+      }
+      if (!isValidEmail(email)) {
+        setError("El email no parece válido. Ej: nombre@correo.com.");
+        return;
+      }
     }
     if (orderMode === "delivery" && !address.trim()) {
       setError("Ingresá tu dirección de entrega.");
@@ -279,8 +272,9 @@ export default function Checkout({
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           phone: phone.trim(),
+          // El email solo es obligatorio para MP, pero si el cliente ya lo
+          // había cargado se manda igual (lo valida el server si viene).
           email: email.trim(),
-          ...(idType && idNumber.trim() ? { identification: { type: idType, number: idNumber.trim() } } : {}),
         },
         orderMode,
         paymentMethod,
@@ -375,60 +369,6 @@ export default function Checkout({
               onChange={(e) => setPhone(e.target.value)}
             />
           </div>
-          <div className="field">
-            <label htmlFor="checkout-email">Email</label>
-            <input
-              id="checkout-email"
-              type="email"
-              inputMode="email"
-              autoComplete="email"
-              placeholder="nombre@correo.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <p className="hint">
-              Lo usamos para el pago con Mercado Pago y para contactarte por tu pedido.
-            </p>
-          </div>
-          <div className="field">
-            <label htmlFor="checkout-id-type">Documento (opcional)</label>
-            <select
-              id="checkout-id-type"
-              value={idType}
-              onChange={(e) => {
-                // Al volver a "No especificar" el número deja de verse: si se
-                // conserva, la validación bloquea el submit con un campo que
-                // ya no existe en pantalla. Se limpia junto con la elección.
-                const next = e.target.value;
-                setIdType(next);
-                if (!next) setIdNumber("");
-              }}
-            >
-              <option value="">No especificar</option>
-              {Object.keys(IDENTIFICATION_TYPES).map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          {idType && (
-            <div className="field">
-              <label htmlFor="checkout-id-number">Número de documento</label>
-              <input
-                id="checkout-id-number"
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder="Ej: 12345678"
-                value={idNumber}
-                onChange={(e) => setIdNumber(e.target.value)}
-              />
-              <p className="hint">
-                Solo se usa para validar el pago con Mercado Pago: no lo guardamos con tu pedido.
-              </p>
-            </div>
-          )}
           {orderMode === "delivery" && (
             <div className="field">
               <label htmlFor="checkout-address">Dirección de entrega</label>
@@ -545,6 +485,27 @@ export default function Checkout({
               <span className="radio" />
             </button>
           ))}
+          {/* Solo Mercado Pago necesita el email (viaja como payer.email a
+              la order). Con efectivo o transferencia ni se muestra. Vive
+              acá, junto al método que lo dispara, para que aparezca donde
+              el cliente está mirando cuando lo marca. */}
+          {isMp && (
+            <div className="field">
+              <label htmlFor="checkout-email">Email</label>
+              <input
+                id="checkout-email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                placeholder="nombre@correo.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <p className="hint">
+                Lo usamos para el pago con Mercado Pago y para contactarte por tu pedido.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="summary">
