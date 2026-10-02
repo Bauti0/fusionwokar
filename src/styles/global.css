@@ -162,6 +162,20 @@ a { color: var(--color-primary); }
 .landing__card h2 { font-family: var(--font-display); font-size: 20px; margin: 0 0 4px; text-transform: uppercase; }
 .landing__card p.step { margin: 0 0 20px; color: var(--color-text-soft); font-size: 14px; }
 
+/* Rótulo del selector de sucursal: mismo estilo que el título
+   "Arrancá tu pedido" (tipografía display, mayúsculas) para que se
+   lea como un subtítulo de paso y no como la etiqueta gris de un
+   campo (Nombre, Celular). Un punto más chico que el título para
+   jerarquizarlo sin competir. */
+.landing .landing__branchLabel {
+  font-family: var(--font-display);
+  font-size: 17px;
+  color: var(--color-text);
+  text-transform: uppercase;
+  letter-spacing: .2px;
+  margin-bottom: 8px;
+}
+
 /* Selector de sucursal */
 .branch-select { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
 .branch-option {

@@ -86,11 +86,11 @@ export default function Landing({ onStart, initialBranch, customer }) {
           <p className="step">
             {customer && !editData
               ? "Elegí tu local y confirmamos con tus datos guardados."
-              : "Sin contraseñas. Solo elegí tu local y dejá tus datos."}
+              : "Sin contraseñas. Dejá tus datos y listo."}
           </p>
 
           <div className="field">
-            <label>Sucursal</label>
+            <label className="landing__branchLabel">Elegí tu sucursal</label>
             <div className="branch-select">
               {BRANCH_LIST.map((b) => (
                 <button

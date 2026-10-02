@@ -37,4 +37,7 @@ opencode.json
 skills-lock.json
 .agents/
 .opencode/
+.superpowers/
+.docs/
+.test/
 .env
