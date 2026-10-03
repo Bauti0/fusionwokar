@@ -33,13 +33,12 @@ coverage/
 *.bak
 
 *.md
+*.test.js
 opencode.json
 skills-lock.json
 docs/
-test/
 .agents/
 .opencode/
 .superpowers/
 .docs/
-.test/
 .env
