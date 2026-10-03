@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { getOrdersByPhone } from "../api.js";
 import { formatPrice } from "../utils/format.js";
 import { combineOrders } from "../utils/orders.js";
+import { phonePlaceholderFor } from "../data/branches.js";
 import { IconClock, IconRepeat, IconEmptySearch } from "./ui/icons.jsx";
 
 const CACHE_KEY = "fw.myOrdersCache";
@@ -333,9 +334,11 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
               </h3>
               <form onSubmit={handlePhoneSubmit} style={{ display: "grid", gap: 10 }}>
                 <div className="field">
+                  {/* El ejemplo va en minúscula ("ej:") porque va dentro de la
+                      frase; el placeholder de la sucursal trae "Ej:". */}
                   <input
                     type="tel" inputMode="tel"
-                    placeholder="Tu celular (ej: 2262 555555)"
+                    placeholder={`Tu celular (${phonePlaceholderFor(branch).toLowerCase()})`}
                     value={phone} onChange={handlePhoneChange}
                     disabled={loading}
                     autoComplete="tel"

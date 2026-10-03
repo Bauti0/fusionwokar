@@ -4,6 +4,7 @@ import { validateCoupon, shippingQuote } from "../api.js";
 import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
 import { validateCheckoutForm } from "../utils/checkoutValidation.js";
 import { closedLabel } from "../utils/schedule.js";
+import { phonePlaceholderFor } from "../data/branches.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 
@@ -376,7 +377,7 @@ export default function Checkout({
               id="checkout-phone"
               type="tel"
               inputMode="tel"
-              placeholder="Ej: 2262 555555"
+              placeholder={phonePlaceholderFor(branch)}
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
             />

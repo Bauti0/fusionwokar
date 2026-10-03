@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BRAND, BRANCHES, BRANCH_LIST } from "../data/branches.js";
+import { BRAND, BRANCH_LIST, phonePlaceholderFor } from "../data/branches.js";
 import { isValidPhone } from "../utils/validation.js";
 import { isNowOpen, closedLabel } from "../utils/schedule.js";
 import { IconBowlSteam, IconChopsticks, HeroMotif } from "./ui/icons.jsx";
@@ -149,7 +149,7 @@ export default function Landing({ onStart, initialBranch, customer }) {
                   id="landing-phone"
                   type="tel"
                   inputMode="tel"
-                  placeholder={branchId && BRANCHES[branchId]?.areaCode ? `Ej: ${BRANCHES[branchId].areaCode} 555555` : "Ej: 2262 555555"}
+                  placeholder={phonePlaceholderFor(branchId)}
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                 />

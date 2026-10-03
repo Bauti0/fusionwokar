@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getMenu, adminCreateManualOrder } from "../api.js";
-import { BRANCH_LIST } from "../data/branches.js";
+import { BRANCH_LIST, phonePlaceholderFor } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
@@ -311,7 +311,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
           </div>
           <div className="field">
             <label htmlFor="new-order-phone">Celular</label>
-            <input id="new-order-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <input id="new-order-phone" type="tel" placeholder={phonePlaceholderFor(branchId)} value={phone} onChange={(e) => setPhone(e.target.value)} />
           </div>
           {orderMode === "delivery" && (
             <div className="field">

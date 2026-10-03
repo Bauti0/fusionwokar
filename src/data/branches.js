@@ -11,6 +11,10 @@ export const BRANCHES = {
     address: "Diagonal San Martín 1258, Necochea",
     whatsapp: "542262480511", // wa.me/542262480511
     areaCode: "2262",
+    // Ejemplo que se muestra en el campo "Celular". Va por sucursal porque
+    // antes estaba fijo en todos los formularios y le mostrábamos el código
+    // de área de Necochea a los clientes de Tandil.
+    phonePlaceholder: "Ej: 2262 555555",
     instagram: "fusionwoknecochea",
     // Acento de marca sutil: 🔴 rojo (como en su Instagram)
     accentColor: "#E5342E",
@@ -39,6 +43,9 @@ export const BRANCHES = {
     address: "Chacabuco 660, Tandil",
     whatsapp: "542494611402", // wa.me/542494611402
     areaCode: "249",
+    // Mismo ejemplo, con el código de área de Tandil (los celulares de
+    // Tandil son de 10 dígitos: 249 + 7).
+    phonePlaceholder: "Ej: 249 4555555",
     instagram: "fusionwoktandil",
     // Acento de marca sutil: ⚫ negro (como en su Instagram)
     accentColor: "#111111",
@@ -60,6 +67,19 @@ export const BRANCHES = {
 };
 
 export const BRANCH_LIST = Object.values(BRANCHES);
+
+// Placeholder del campo "Celular" cuando el componente todavía no sabe la
+// sucursal (ej: la Landing antes de que elijas una). Es el de Necochea,
+// que es lo que se mostró siempre.
+export const DEFAULT_PHONE_PLACEHOLDER = BRANCHES.necochea.phonePlaceholder;
+
+// Placeholder del campo "Celular" para una sucursal. Acepta el id (string) o
+// el objeto de sucursal completo, y cae en el ejemplo de Necochea si la
+// sucursal no existe o no define `phonePlaceholder`.
+export function phonePlaceholderFor(branch) {
+  const id = typeof branch === "string" ? branch : branch?.id;
+  return BRANCHES[id]?.phonePlaceholder || DEFAULT_PHONE_PLACEHOLDER;
+}
 
 // Instagram general de la marca (cuenta de ambas sucursales)
 export const BRAND = {
