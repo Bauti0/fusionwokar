@@ -54,7 +54,10 @@ export default [
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
-      globals: { ...globals.browser },
+      // __APP_COMMIT__: constante global que inyecta vite.config.js (ver
+      // "define") con el hash del commit del build. Declarada acá para que
+      // no-undef no la reporte: sin esto el gate de lint se cae.
+      globals: { ...globals.browser, __APP_COMMIT__: "readonly" },
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
     rules: {

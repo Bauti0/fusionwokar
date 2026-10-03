@@ -1,8 +1,28 @@
+import { execFileSync } from "node:child_process";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// Commit con el que se compiló la app (se muestra, chiquito, en el panel de
+// admin). Se lee una sola vez al arrancar Vite. Si no hay git disponible
+// (por ejemplo un build sin la carpeta .git) devuelve "?" y el panel no
+// dibuja nada: es información decorativa, nunca debe romper el arranque.
+function currentCommit() {
+  try {
+    return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: import.meta.dirname,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "?";
+  }
+}
+
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_COMMIT__: JSON.stringify(currentCommit()),
+  },
   server: {
     proxy: {
       // En desarrollo, las llamadas a /api van al backend Express

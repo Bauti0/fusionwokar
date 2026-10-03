@@ -2151,6 +2151,17 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .admin-nav__btn.is-active {
   background: var(--color-primary); border-color: var(--color-primary); color: #fff;
 }
+/* Commit en el que corre el panel: debajo de los botones, deliberadamente
+  	chiquito y al límite de la lectura (es info, no contenido). Usa el token
+   --color-text-mute (ya atenuado) SIN opacity encima, para que no quede
+   ilegible; el fallback es para cuando esto se use fuera de .admin, donde
+   ese token no está declarado. */
+.admin-nav__commit {
+  display: block; margin-top: 10px; padding-left: 4px;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1;
+  color: var(--color-text-mute, #8f8880);
+  user-select: text;
+}
 .admin-orders-head {
   display: flex; justify-content: space-between; align-items: center;
   gap: 12px; flex-wrap: wrap; padding-top: 16px;

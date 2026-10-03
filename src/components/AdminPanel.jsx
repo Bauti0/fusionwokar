@@ -69,6 +69,12 @@ function isActiveOrder(o) {
   return ACTIVE_STATUS_IDS.has(o.status) && o.paymentStatus !== "rejected" && !isFutureScheduled(o);
 }
 
+// Hash corto del commit con el que se compiló la app. vite.config.js lo
+// inyecta como constante global (ver "define") al arrancar el dev server o
+// al hacer el build; el "?" es el fallback cuando no se pudo leer el hash
+// (build sin la carpeta .git) y en ese caso no se dibuja nada.
+const BUILD_COMMIT = typeof __APP_COMMIT__ === "undefined" ? "?" : __APP_COMMIT__;
+
 // IDs ya vistos por el admin, persistidos para no repetir el sonido
 // en cada recarga de la página.
 const SEEN_KEY = "fw.admin.seenOrders";
@@ -428,6 +434,11 @@ export default function AdminPanel({ me, onLogout }) {
               🔐 Cuentas
             </button>
           )}
+          {/* Commit con el que se compiló la app (lo inyecta vite.config.js
+              al hacer el build). Sirve para saber de un vistazo qué versión
+              está corriendo el panel. Si no se pudo leer el hash ("?") no se
+              dibuja nada. */}
+          {BUILD_COMMIT !== "?" && <span className="admin-nav__commit">commit: {BUILD_COMMIT}</span>}
         </nav>
 
         <div className="container admin__body">
