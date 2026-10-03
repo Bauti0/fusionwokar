@@ -15,6 +15,7 @@
 // ============================================================
 
 import { createHmac } from "node:crypto";
+import { safeEqual } from "./auth.js";
 
 const MP_API = "https://api.mercadopago.com";
 // Cortamos la llamada si MP no responde: sin esto el pedido queda retenido
@@ -496,13 +497,30 @@ export function verifyWebhookSignature(req) {
   // (notificaciones viejas de Preferences). Los campos ausentes se omiten
   // del manifest, según la doc de MP.
   const dataId = dataIdForManifest(req);
+  // DECISIÓN: el ts entra al manifest pero NO se valida su antigüedad
+  // (no hay ventana de expiración). No podemos confirmar que Mercado Pago
+  // re-firme con un ts nuevo al reintentar una notificación que nos dio
+  // error (p. ej. un 500 durante un deploy anterior); si ese reintento
+  // legítimo llegara con el ts original y lo rechazáramos, un pago real
+  // quedaría sin confirmar, que es peor que el riesgo del replay. Y un
+  // replay tampoco puede aprobar nada falso: el estado del pago SIEMPRE
+  // se re-lee de la API de MP antes de tocar el pedido, así que una
+  // firma vieja solo puede reconfirmar algo que ya es verdad. La
+  // decisión está fijada en test/webhook-signature.test.js (el test del
+  // "ts viejo").
   const manifest = [
     dataId ? `id:${dataId};` : "",
     requestId ? `request-id:${requestId};` : "",
     `ts:${tsMatch[1]};`,
   ].join("");
   const hmac = createHmac("sha256", secret).update(manifest).digest("hex");
-  return hmac === v1Match[1].toLowerCase();
+  // Comparación en TIEMPO CONSTANTE, reutilizando safeEqual de auth.js
+  // (la misma del CSRF y del login del panel): re-hashea ambos lados a un
+  // SHA-256 de longitud fija y compara con timingSafeEqual, así ni el
+  // contenido ni el largo de la firma se filtran por diferencias de
+  // tiempo. El toLowerCase mantiene la comparación del hex
+  // case-insensitive (ver el test de la v1 en mayúsculas).
+  return safeEqual(hmac, v1Match[1].toLowerCase());
 }
 
 // Id del recurso notificado, ya en minúsculas (para el manifest de la firma).
