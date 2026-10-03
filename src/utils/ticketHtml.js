@@ -14,6 +14,12 @@ import { sanitizeForPrinter, sortItemsByQty } from "./printer.js";
 // térmica no puede representar (ver sanitizeForPrinter) y después escapa el
 // HTML. El orden de los ítems se arma de mayor a menor cantidad con
 // sortItemsByQty; el orden guardado en la base de datos no se toca.
+//
+// Ojo con lo que se escribe a mano en las plantillas: no pasa por esc() y por
+// eso se cuela. La sangría de los adicionales y de las notas la da padding-left
+// en la clase .sub, porque el &nbsp; (U+00A0) es exactamente el byte que el
+// driver chino convertía en ideograma. Y los comentarios no van dentro del
+// <style>: también son parte del HTML que viaja al navegador.
 // ============================================================
 
 // Limpia el texto para la impresora y lo escapa para el HTML. El escapado va
@@ -90,11 +96,11 @@ export function buildTicketHtml(order) {
       // y los sin costo en $0.
       if (it.extras?.length) {
         for (const e of it.extras) {
-          lines.push(`<tr><td class="sub">&nbsp;&nbsp;- ${esc(e.label)}</td><td class="right">${precio(e.price * it.qty)}</td></tr>`);
+          lines.push(`<tr><td class="sub">- ${esc(e.label)}</td><td class="right">${precio(e.price * it.qty)}</td></tr>`);
         }
       }
       if (it.notes) {
-        lines.push(`<tr><td colspan="2" class="sub">&nbsp;&nbsp;Nota: ${esc(it.notes)}</td></tr>`);
+        lines.push(`<tr><td colspan="2" class="sub">Nota: ${esc(it.notes)}</td></tr>`);
       }
       return lines.join("");
     })
@@ -113,7 +119,7 @@ export function buildTicketHtml(order) {
   table { width:100%; border-collapse:collapse; }
   td { vertical-align:top; padding:1px 0; word-break:break-word; }
   .right { text-align:right; white-space:nowrap; }
-  .sub { font-size:13px; color:#000; }
+  .sub { font-size:13px; color:#000; padding-left:7px; }
   .b { font-weight:bold; }
   .big { font-size:17px; }
   .mt { margin-top:8px; }
@@ -160,14 +166,14 @@ export function buildComandaHtml(order) {
       // Los opcionales (salsa, palitos, galletas) también van en la comanda:
       // la cocina necesita saber qué incluye cada plato.
       const extras = (it.extras || [])
-        .map((e) => `<tr><td class="qty"></td><td class="sub">&nbsp;- ${esc(e.label)}</td></tr>`)
+        .map((e) => `<tr><td class="qty"></td><td class="sub">- ${esc(e.label)}</td></tr>`)
         .join("");
       // La nota del ítem va debajo de sus variantes, con un asterisco para
       // distinguirla de un adicional. Como sale del .map() sobre los ítems ya
       // ordenados, la nota viaja con su plato.
       const notaItem = nota(it.notes);
       const filaNota = notaItem
-        ? `<tr><td class="qty"></td><td class="sub">&nbsp;* ${notaItem}</td></tr>`
+        ? `<tr><td class="qty"></td><td class="sub">* ${notaItem}</td></tr>`
         : "";
       return row + extras + filaNota;
     })
@@ -186,7 +192,7 @@ export function buildComandaHtml(order) {
   table { width:100%; border-collapse:collapse; }
   td { vertical-align:top; padding:2px 0; word-break:break-word; }
   .qty { width:22%; white-space:nowrap; }
-  .sub { font-size:15px; color:#000; }
+  .sub { font-size:15px; color:#000; padding-left:4px; }
   .b { font-weight:bold; }
   .big { font-size:21px; }
 </style></head><body>
