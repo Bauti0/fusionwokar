@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isOpenAtTime, nextOpening, toWallclock } from "../src/utils/schedule.js";
+import { isOpenAtTime, nextOpening, toWallclock, outsideHoursMessage } from "../src/utils/schedule.js";
+import { BRANCHES } from "../src/data/branches.js";
 
 // Todas las fechas se construyen con el constructor local
 // `new Date(y, m, d, h, min)`. Eso hace que los tests sean independientes de
@@ -164,6 +165,80 @@ describe("nextOpening", () => {
     const next = nextOpening("tandil", at(3, "12:00"));
     assert.notEqual(next, null);
     assert.ok(isOpenAtTime("tandil", next), "la proxima apertura deberia caer dentro de una ventana");
+  });
+});
+
+// ---------------------------------------------------------------------
+// BUG-04: el mensaje de "elegí otra fecha" que devuelve el server por
+// una fecha programada fuera de horario estaba escrito a mano y
+// hardcodeaba la cena de Tandil como si fuera todos los días 19:00-23:00.
+// El bug era peor que un texto feo: el servidor SI rechazaba bien el
+// viernes a las 19:15 (la ventana de fin de semana arranca 19:30), y
+// después le decía al cliente "podés pedir de 19:00 a 23:00". O sea,
+// el mensaje contradecía el rechazo que acababa de hacer. El texto sale
+// ahora de openWindows, así que no puede volver a mentir.
+// ---------------------------------------------------------------------
+describe("outsideHoursMessage — el texto sale de openWindows", () => {
+  it("necochea dice los horarios de siempre, todos los días", () => {
+    assert.equal(
+      outsideHoursMessage("necochea"),
+      "Elegí una fecha y hora dentro de nuestros horarios. Podemos recibir tu pedido todos los días 11:00 a 15:00 y 19:30 a 23:30."
+    );
+  });
+
+  it("tandil distingue la cena de día de semana de la de fin de semana", () => {
+    assert.equal(
+      outsideHoursMessage("tandil"),
+      "Elegí una fecha y hora dentro de nuestros horarios. Podemos recibir tu pedido Dom–Jue 11:30 a 15:30 y 19:00 a 23:00 · Vie y Sáb 11:30 a 15:30 y 19:30 a 23:30."
+    );
+  });
+
+  it("tandil NO dice 'todos los días': la cena cambia según el día", () => {
+    // Si algún día el mensaje vuelve a decir "todos los días", el cliente
+    // vuelve a recibir una ventana que no corresponde al día que eligió.
+    assert.doesNotMatch(outsideHoursMessage("tandil"), /todos los días/);
+  });
+
+  it("tandil muestra las dos cenas: la de día de semana y la de fin de semana", () => {
+    const msg = outsideHoursMessage("tandil");
+    assert.match(msg, /Dom–Jue/, "avisa el tramo dom-jue");
+    assert.match(msg, /19:00 a 23:00/, "cena de día de semana");
+    assert.match(msg, /Vie y Sáb/, "avisa el tramo vie-sáb");
+    assert.match(msg, /19:30 a 23:30/, "cena de fin de semana");
+  });
+
+  it("el texto menciona TODAS las ventanas de openWindows, sin inventar ninguna", () => {
+    // El invariante que ata el mensaje a la fuente de verdad: si alguien
+    // agrega, cambia o saca una ventana en branches.js, el texto la sigue.
+    for (const branchId of Object.keys(BRANCHES)) {
+      const msg = outsideHoursMessage(branchId);
+      for (const w of BRANCHES[branchId].openWindows) {
+        assert.ok(
+          msg.includes(`${w.from} a ${w.to}`),
+          `${branchId}: el mensaje no menciona la ventana ${w.from} a ${w.to}`
+        );
+      }
+    }
+  });
+
+  it("tandil abre los 7 dias pero con cena distinta: el texto no los agrupa", () => {
+    // Este es el caso exacto del BUG-04 y merece quedar escrito: Tandil abre
+    // TODOS los dias (los days de sus ventanas cubren 0..6), asi que un
+    // mensaje generado "con la logica de Necochea" digamos "todos los dias
+    // 11:30 a 15:30 y 19:00 a 23:30" y estaria mal en viernes y sabado. Lo
+    // que separa a Tandil de Necochea no es la cobertura semanal sino que la
+    // cena se corre: por eso el texto NO puede decir "todos los dias".
+    const days = new Set(BRANCHES.tandil.openWindows.flatMap((w) => w.days));
+    assert.strictEqual(days.size, 7, "tandil abre los 7 dias: la cobertura no es lo que cambia");
+    const cenas = BRANCHES.tandil.openWindows.filter((w) => w.from > "15:00").map((w) => `${w.from}-${w.to}`);
+    assert.deepStrictEqual(cenas, ["19:00-23:00", "19:30-23:30"], "las dos cenas son distintas");
+    assert.doesNotMatch(outsideHoursMessage("tandil"), /todos los días/);
+  });
+
+  it("una sucursal sin ventanas no rompe ni inventa horarios", () => {
+    const msg = outsideHoursMessage("no-existe");
+    assert.equal(msg, "Elegí una fecha y hora dentro de nuestros horarios.");
+    assert.doesNotMatch(msg, /\d{2}:\d{2}/, "no puede inventar un horario");
   });
 });
 

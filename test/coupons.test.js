@@ -8,6 +8,7 @@ import {
   releaseOrderCoupon,
   releaseOrphanReservation,
   releaseStaleCouponReservations,
+  expireAbandonedPayments,
 } from "../server/coupons.js";
 
 // La contabilidad de cupones se prueba contra un SQLite real en memoria
@@ -41,8 +42,11 @@ async function makeDb() {
       coupon_code TEXT NOT NULL DEFAULT '',
       coupon_released_at TEXT,
       payment_status TEXT NOT NULL DEFAULT 'pending',
+      payment_method TEXT NOT NULL DEFAULT 'mercadopago',
       status TEXT NOT NULL DEFAULT 'received',
+      mp_order_id TEXT,
       created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT '',
       branch TEXT NOT NULL DEFAULT ''
     );
   `);
@@ -55,16 +59,27 @@ async function addCoupon(db, { code = "VERDE", maxUses = 0, used = 0, active = 1
     .run(code, active, maxUses, used, type, value, branch);
 }
 
-async function addOrder(db, { code = "VERDE", payment = "pending", status = "received", ageMin = 0, branch = "" } = {}) {
+async function addOrder(
+  db,
+  { code = "VERDE", payment = "pending", status = "received", ageMin = 0, branch = "", method = "mercadopago", mpOrderId = null } = {}
+) {
   const r = await db
-    .prepare("INSERT INTO orders (coupon_code, payment_status, status, created_at, branch) VALUES (?, ?, ?, ?, ?)")
-    .run(code, payment, status, iso(-ageMin), branch);
+    .prepare(
+      `INSERT INTO orders (coupon_code, payment_status, status, payment_method, mp_order_id, created_at, updated_at, branch)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(code, payment, status, method, mpOrderId, iso(-ageMin), iso(-ageMin), branch);
   return r.lastInsertRowid;
 }
 
 async function usedCount(db, code = "VERDE") {
   const row = await db.prepare("SELECT used_count FROM coupons WHERE code = ?").get(code);
   return row ? Number(row.used_count) : -1;
+}
+
+async function orderRow(db, id) {
+  const row = await db.prepare("SELECT status, payment_status, coupon_released_at FROM orders WHERE id = ?").get(id);
+  return { status: row.status, payment: row.payment_status, released: !!row.coupon_released_at };
 }
 
 // ---------------------------------------------------------------------
@@ -228,6 +243,178 @@ describe("releaseOrderCoupon — exactamente una vez", () => {
     await releaseOrderCoupon(db, id, "VERDE");
     await releaseStaleCouponReservations(db);
     assert.equal(await usedCount(db), 0, "no se vuelve negativo");
+  });
+});
+
+// ---------------------------------------------------------------------
+// BUG-08: los pedidos de MP que el cliente abandonaba (nunca pagados) se
+// quedaban en pending_payment PARA SIEMPRE. No es solo que molestaran en
+// el panel: el cliente los dejaba de ver a las 2 h (MyOrders.jsx los
+// filtra) y el cupón ya lo había liberado el sweep de 30 min, asi que
+// quedaban filas huerfanas que nadie iba a cerrar nunca.
+// ---------------------------------------------------------------------
+describe("expireAbandonedPayments", () => {
+  const H = 60; // minutos por hora, para que las edades se lean en test
+  let db;
+  beforeEach(async () => { db = await makeDb(); });
+
+  it("cancela un pedido de MP de 25 h que sigue sin pago", async () => {
+    const id = await addOrder(db, { payment: "pending", status: "pending_payment", ageMin: 25 * H });
+    assert.equal(await expireAbandonedPayments(db), 1);
+    assert.equal((await orderRow(db, id)).status, "cancelled");
+  });
+
+  it("NO toca un pedido de 2 h: todavia esta dentro de la ventana", async () => {
+    // 24 h es el umbral. A las 2 h el cliente puede volver a abrir el link de
+    // pago de Mercado Pago, que sigue vivo.
+    const id = await addOrder(db, { payment: "pending", status: "pending_payment", ageMin: 2 * H });
+    assert.equal(await expireAbandonedPayments(db), 0);
+    assert.equal((await orderRow(db, id)).status, "pending_payment");
+  });
+
+  it("NUNCA toca un pedido aprobado, aunque sea viejo", async () => {
+    // El pago fue real: el pedido se cobra, se cocina y se entrega. Da igual
+    // cuantos dias tiene.
+    const id = await addOrder(db, { payment: "approved", status: "received", ageMin: 30 * H });
+    assert.equal(await expireAbandonedPayments(db), 0);
+    assert.equal((await orderRow(db, id)).status, "received");
+  });
+
+  it("no toca un pedido de efectivo ni de transferencia", async () => {
+    // Esos se crean ya aprobados (server/index.js isMp ? pending : approved),
+    // pero el filtro no se apoya en eso: mira el metodo de pago explicito.
+    const efectivo = await addOrder(db, {
+      payment: "pending", status: "pending_payment", method: "efectivo", ageMin: 30 * H,
+    });
+    const transf = await addOrder(db, {
+      payment: "pending", status: "pending_payment", method: "transferencia", ageMin: 30 * H,
+    });
+    assert.equal(await expireAbandonedPayments(db), 0);
+    assert.equal((await orderRow(db, efectivo)).status, "pending_payment");
+    assert.equal((await orderRow(db, transf)).status, "pending_payment");
+  });
+
+  it("libera el cupón del pedido que cancela", async () => {
+    // El caso normal: si el sweep de 30 min todavia no corrió (o si el
+    // pedido se creó sin cupon y se le agregó despues), cancelar tiene que
+    // devolver el uso.
+    await addCoupon(db, { used: 1 });
+    const id = await addOrder(db, { payment: "pending", status: "pending_payment", ageMin: 25 * H });
+    await expireAbandonedPayments(db);
+    assert.equal(await usedCount(db), 0, "el uso vuelve al cupón");
+    assert.equal((await orderRow(db, id)).released, true);
+  });
+
+  it("libera el cupón UNA sola vez aunque la expiración corra mil veces", async () => {
+    // El cupón de otro pedido no se gasta en una corrida repetida: la
+    // idempotencia de coupon_released_at tiene que aguantar también acá, no
+    // solo en el sweep de 30 min.
+    await addCoupon(db, { maxUses: 5, used: 1 });
+    await addOrder(db, { payment: "pending", status: "pending_payment", ageMin: 25 * H });
+
+    await expireAbandonedPayments(db);
+    assert.equal(await usedCount(db), 0);
+
+    // Llega el pedido B y reserva el suyo.
+    await reserveCoupon(db, "VERDE");
+    assert.equal(await usedCount(db), 1, "B sostiene su propio uso");
+
+    await expireAbandonedPayments(db);
+    await expireAbandonedPayments(db);
+    assert.equal(await usedCount(db), 1, "el uso de B no se gasta en corridas repetidas");
+  });
+
+  it("el sweep de 30 min y la expiración NO liberan dos veces el mismo uso", async () => {
+    // El orden real: el sweep de cupones corre cada 30 min y ya liberó hace
+    // rato; 24 h después la expiración pasa de nuevo por ese mismo pedido.
+    // Sin el filtro coupon_released_at se restarían dos usos del mismo pedido.
+    await addCoupon(db, { used: 1 });
+    const id = await addOrder(db, { payment: "pending", status: "pending_payment", ageMin: 25 * H });
+
+    await releaseStaleCouponReservations(db);
+    assert.equal(await usedCount(db), 0, "el sweep de 30 min lo liberó");
+
+    await expireAbandonedPayments(db);
+    assert.equal((await orderRow(db, id)).status, "cancelled", "igual se cancela");
+    assert.equal(await usedCount(db), 0, "y no vuelve a bajar el contador");
+  });
+
+  it("deja la fila coherente para el panel: cancelled + pending", async () => {
+    // Si solo se liberara el cupón, el pedido quedaria en pending_payment para
+    // siempre (el bug). La fila tiene que quedar limpia y sin mp_payment_id
+    // inventado: el pago nunca existio.
+    const id = await addOrder(db, {
+      code: "", payment: "pending", status: "pending_payment", ageMin: 25 * H, mpOrderId: null,
+    });
+    await expireAbandonedPayments(db);
+    const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    assert.equal(row.status, "cancelled");
+    assert.equal(row.payment_status, "pending");
+    assert.equal(row.mp_order_id, null);
+    assert.notEqual(row.updated_at, "", "updated_at se toca para que el panel lo vea");
+  });
+
+  it("es idempotente: el segundo pase no vuelve a cancelar", async () => {
+    const id = await addOrder(db, { payment: "pending", status: "pending_payment", ageMin: 25 * H });
+    assert.equal(await expireAbandonedPayments(db), 1, "la primera corrida cancela");
+    assert.equal(await expireAbandonedPayments(db), 0, "la segunda no encuentra nada que hacer");
+    assert.equal((await orderRow(db, id)).status, "cancelled");
+  });
+
+  it("funciona sin cupón", async () => {
+    // releaseOrderCoupon devuelve false con code vacío; no debe romper.
+    const id = await addOrder(db, { code: "", payment: "pending", status: "pending_payment", ageMin: 25 * H });
+    assert.equal(await expireAbandonedPayments(db), 1);
+    assert.equal((await orderRow(db, id)).status, "cancelled");
+  });
+
+  it("un pedido con mp_order_id de 25 h SE cancela igual (decisión explícita)", async () => {
+    // ESTE es el riesgo documentado de BUG-08, y por lo tanto va con test: si
+    // el webhook de MP se perdió y el pago estaba aprobado, esta función
+    // cancela un pedido pagado. Hoy se acepta: a las 24 h un checkout de MP
+    // sin pagar es, casi con seguridad, un abandono.
+    //
+    // La red que salva ese caso es la RECONCILIACIÓN de index.js
+    // (loadPublicOrder → shouldReconcile → reconcilePendingOrder), que
+    // consulta la order en MP y aplica el estado real. Pero OJO con lo que
+    // esa red NO cubre:
+    //   1) es perezosa: solo corre cuando un cliente pide el pedido por
+    //      GET /api/orders/:id. MyOrders.jsx deja de mostrar los
+    //      pending_payment de más de 2 h, asi que a las 24 h normalmente
+    //      NADIE lo está consultando.
+    //   2) se saltea entero si isDemoMode(), si mpAuthBroken, si falta
+    //      mp_order_id o si payment_status ya no es "pending".
+    //   3) NO resucita un pedido ya cancelado: applyMpOrderState solo
+    //      promueve el status cuando pre.status === "pending_payment". Si la
+    //      expiración corrió primero, la fila queda en
+    //      status="cancelled" con payment_status="approved".
+    //
+    // Este test existe para que esa consecuencia sea una decisión escrita y
+    // no una sorpresa. Si algún día se quiere corregir, el cambio es que la
+    // expiración consulte MP antes de cancelar (o que applyMpOrderState
+    // pueda promover un cancelled), y este test se cambia junto.
+    await addCoupon(db, { used: 1 });
+    const id = await addOrder(db, {
+      payment: "pending", status: "pending_payment", ageMin: 25 * H, mpOrderId: "mp-123456",
+    });
+    assert.equal(await expireAbandonedPayments(db), 1, "se cancela aunque tenga mp_order_id");
+    assert.equal((await orderRow(db, id)).status, "cancelled");
+  });
+
+  it("no explota si la tabla no existe", async () => {
+    // El sweep es oportunista: un error acá no puede tumbar la creación de un
+    // pedido ni el timer de background. Se avisa y se sigue.
+    const roto = createDb(createClient({ url: "file::memory:" }));
+    await roto.exec("CREATE TABLE otra (x INTEGER)");
+    const errores = [];
+    const original = console.error;
+    console.error = (...a) => errores.push(a.join(" "));
+    try {
+      assert.equal(await expireAbandonedPayments(roto), 0);
+    } finally {
+      console.error = original;
+    }
+    assert.equal(errores.length, 1, "avisa una vez y no propaga");
   });
 });
 

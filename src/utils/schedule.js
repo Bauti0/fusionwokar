@@ -73,6 +73,79 @@ export function closedLabel(branchId, now = new Date()) {
   return `Cerrado ahora · Abrimos ${day} a las ${time}`;
 }
 
+// ============================================================
+// Mensaje de "la fecha elegida cae fuera de horario".
+//
+// Sale de `openWindows` y de nada más (BUG-04: antes el server tenía el
+// texto escrito a mano, y para Tandil decía "todos los días de 19:00 a
+// 23:00" cuando la cena de viernes y sábado es 19:30-23:30. Peor: el
+// rechazo era correcto y el mensaje lo contradecía, porque el cliente
+// veía "podés pedir de 19:00 a 23:00" y el server le rechazaba las 19:15
+// del viernes). Si se cambia un horario en branches.js, el texto cambia
+// solo: no hay una segunda copia que quedar vieja.
+// ============================================================
+
+// 0=dom … 6=sáb. Es el mismo orden que `days` en branches.js.
+const DAY_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+const DAY_LONG = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+
+// "lunes" · "Dom–Jue" · "Vie y Sáb" · "todos los días" · "Sáb y Dom"
+function daysLabel(days) {
+  const set = new Set(days);
+  if (set.size === 7) return "todos los días";
+  // Se recorre en orden de semana y se agrupan los días corridos, así un
+  // tramo como [0,1,2,3,4] sale "Dom–Jue" y no "Dom, Lun, Mar, Mié, Jue".
+  const tramos = [];
+  let actual = null;
+  for (let d = 0; d < 7; d++) {
+    if (set.has(d)) {
+      if (actual) actual[1] = d;
+      else actual = [d, d];
+    } else if (actual) {
+      tramos.push(actual);
+      actual = null;
+    }
+  }
+  if (actual) tramos.push(actual);
+  if (tramos.length === 1 && tramos[0][0] === tramos[0][1]) return DAY_LONG[tramos[0][0]];
+  // Dos días van con "y" ("Vie y Sáb") y los tramos más largos con guion
+  // ("Dom–Jue"): es el mismo criterio con el que están escritas las chains
+  // `hours` de branches.js, para que el cartel y el mensaje del checkout
+  // se lean igual.
+  return tramos
+    .map(([a, b]) => {
+      if (a === b) return DAY_SHORT[a];
+      return b - a === 1 ? `${DAY_SHORT[a]} y ${DAY_SHORT[b]}` : `${DAY_SHORT[a]}–${DAY_SHORT[b]}`;
+    })
+    .join(" y ");
+}
+
+// "todos los días 11:00 a 15:00 y 19:30 a 23:30" ·
+// "Dom–Jue 11:30 a 15:30 y 19:00 a 23:00 · Vie y Sáb 11:30 a 15:30 y 19:30 a 23:30"
+export function hoursSummary(branchId) {
+  const windows = branchWindows(branchId);
+  if (!windows) return "";
+  // Se agrupan las ventanas que comparten los mismos días: el almuerzo y la
+  // cena de un mismo tramo salen en una sola frase.
+  const grupos = [];
+  for (const w of windows) {
+    const dias = [...new Set(w.days)].sort((a, b) => a - b).join(",");
+    const rango = `${w.from} a ${w.to}`;
+    const grupo = grupos.find((g) => g.dias === dias);
+    if (grupo) grupo.rangos.push(rango);
+    else grupos.push({ dias, etiqueta: daysLabel(w.days), rangos: [rango] });
+  }
+  return grupos.map((g) => `${g.etiqueta} ${g.rangos.join(" y ")}`).join(" · ");
+}
+
+// Texto completo para el 400 de una fecha programada fuera de horario.
+export function outsideHoursMessage(branchId) {
+  const base = "Elegí una fecha y hora dentro de nuestros horarios.";
+  const resumen = hoursSummary(branchId);
+  if (!resumen) return base; // sucursal sin horarios cargados: no se inventa nada
+  return `${base} Podemos recibir tu pedido ${resumen}.`;
+}
+
 // Convierte un instante a un Date local (wall clock) de una zona fija.
 // Sirve para validar horarios de apertura en la zona del negocio aunque
 // el runtime corra en UTC (cliente OK, server determinista).

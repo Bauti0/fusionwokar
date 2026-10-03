@@ -32,3 +32,21 @@ services:
         sync: false
       - key: MP_WEBHOOK_SECRET
         sync: false
+
+      # ---- Envío (Tandil) ----
+      # Todas con sync: false: se completan una vez en el dashboard y no se
+      # pisan en los redeploys. Los números que NO van acá (costos, cuadras,
+      # tope) son opcionales: el server usa los defaults de server/shipping.js
+      # si la variable no está seteada. Ver .env.example para qué hace cada una.
+      - key: ORS_API_KEY
+        sync: false
+      - key: SHIPPING_BASE_COST
+        sync: false
+      - key: SHIPPING_PER_BLOCK
+        sync: false
+      - key: SHIPPING_FLAT_BLOCKS
+        sync: false
+      - key: SHIPPING_BLOCK_METERS
+        sync: false
+      - key: SHIPPING_MAX_BLOCKS
+        sync: false

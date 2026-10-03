@@ -174,6 +174,82 @@ export async function releaseOrphanReservation(db, code, branch) {
   return true;
 }
 
+// ============================================================
+// Vencimiento de pagos abandonados (BUG-08)
+// ============================================================
+
+// Margen antes de dar por perdido un checkout de MP. 24 h es generoso a
+// propósito: el link de Mercado Pago sigue siendo válido mucho más allá y
+// una persona que arma el pedido, consulta el teléfono y recién a la
+// noche paga tiene que poder hacerlo igual.
+export const ABANDONED_PAYMENT_MS = 24 * 60 * 60 * 1000;
+
+// Cancela los pedidos de MP que el cliente empezó y nunca pagó.
+//
+// Por qué existe: esos pedidos se creaban con status "pending_payment" y no
+// había NADA que los cerrara. El sweep de cupones les liberaba el uso a los
+// 30 min, pero la fila se quedaba esperando un pago que nunca iba a llegar:
+// el cliente dejaba de verla en "Mis pedidos" a las 2 h (MyOrders.jsx filtra
+// los pending_payment viejos) y el panel acumulaba orders que nadie cerraba.
+//
+// Riesgo asumido a propósito (documentado con test en test/coupons.test.js):
+// si el webhook de MP se perdió y el pago estaba aprobado, esto cancela un
+// pedido pagado. La red es la reconciliación de index.js
+// (loadPublicOrder → shouldReconcile → reconcilePendingOrder), que consulta
+// la order en MP y aplica el estado real; PERO es perezosa (solo corre si
+// alguien consulta GET /api/orders/:id, y MyOrders.jsx deja de mostrar los
+// pending_payment de más de 2 h), se saltea si isDemoMode() o si mpAuthBroken,
+// y NO resucita un pedido ya cancelado (applyMpOrderState solo promueve el
+// status cuando pre.status === "pending_payment"). Asumimos que a las 24 h un
+// checkout sin pagar es un abandono; el test fija esa decisión para que no
+// sea accidental.
+//
+// Idempotencia: el UPDATE lleva la condición (status, payment_status) del
+// SELECT. Por un lado, correr dos veces no hace nada la segunda. Por otro, si
+// el webhook aprobó el pago entre el SELECT y el UPDATE, changes === 0 y el
+// pedido NO se cancela: no se pisa un pago que ya entró.
+//
+// El cupón se delega a releaseOrderCoupon, que ya es idempotente por
+// coupon_released_at. En el caso normal (el sweep de 30 min ya corrió) esa
+// llamada devuelve false y no vuelve a bajar el contador.
+//
+// Un fallo en UN pedido no puede cortar el barrido de los demás: se avisa y
+// se sigue con el siguiente. Solo se loguea err.message (viene del driver),
+// nunca datos del cliente.
+export async function expireAbandonedPayments(db) {
+  let cancelados = 0;
+  try {
+    const cutoff = new Date(Date.now() - ABANDONED_PAYMENT_MS).toISOString();
+    const rows = await db
+      .prepare(
+        `SELECT id, coupon_code AS code, branch FROM orders
+         WHERE payment_method = 'mercadopago'
+           AND status = 'pending_payment'
+           AND payment_status = 'pending'
+           AND created_at < ?`
+      )
+      .all(cutoff);
+    for (const r of rows) {
+      try {
+        const res = await db
+          .prepare(
+            `UPDATE orders SET status = 'cancelled', updated_at = ?
+             WHERE id = ? AND status = 'pending_payment' AND payment_status = 'pending'`
+          )
+          .run(now(), r.id);
+        if (res.changes === 0) continue; // otro lo canceló, o el pago entró
+        cancelados++;
+        await releaseOrderCoupon(db, r.id, r.code, r.branch);
+      } catch (err) {
+        console.error(`expireAbandonedPayments: el pedido ${r.id} no se pudo cancelar: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.error("expireAbandonedPayments:", err.message);
+  }
+  return cancelados;
+}
+
 // Libera reservas huérfanas: pedidos Mercado Pago en estados que nunca van
 // a cobrar (pending abandonados hace +30 min, rechazados, cancelados).
 // Sin esto, un cupón con límite de usos se quemaba para siempre con pedidos

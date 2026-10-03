@@ -34,7 +34,7 @@ import {
 } from "./mp.js";
 import { MENUS } from "../src/data/menus.js";
 import { enhanceHtml } from "./seo.js";
-import { isOpenAtTime, toWallclock } from "../src/utils/schedule.js";
+import { isOpenAtTime, toWallclock, outsideHoursMessage } from "../src/utils/schedule.js";
 import { computeShipping } from "./shipping.js";
 import {
   applyCoupon,
@@ -42,6 +42,7 @@ import {
   releaseOrderCoupon,
   releaseOrphanReservation,
   releaseStaleCouponReservations,
+  expireAbandonedPayments,
 } from "./coupons.js";
 import { applyRefunds, refundableAmount } from "./refunds.js";
 import {
@@ -777,12 +778,9 @@ async function validateOrderBody(body, { requireEmail = false } = {}) {
     // El pedido programado debe caer dentro de la apertura de la sucursal
     // (ventanas definidas en src/data/branches.js, hora local argentina)
     if (!isOpenAtTime(branch, toWallclock(iso, "America/Argentina/Buenos_Aires"))) {
-      return {
-        error:
-          "Elegí una fecha y hora dentro de nuestros horarios. Si querés, podés pedir " +
-          (branch === "tandil" ? "todos los días de 11:30 a 15:30 y de 19:00 a 23:00" : "todos los días de 11:00 a 15:00 y de 19:30 a 23:30") +
-          ".",
-      };
+      // El texto se arma desde openWindows de la sucursal (ver BUG-04 en
+      // src/utils/schedule.js): no hay horarios escritos a mano acá.
+      return { error: outsideHoursMessage(branch) };
     }
     scheduled = iso.toISOString();
   }
@@ -1063,8 +1061,10 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     // Reserva atómica del uso del cupón ANTES de cualquier await/insert:
     // evita que dos checkouts simultáneos consuman el mismo cupón limitado.
     // Primero se liberan reservas huérfanas de pedidos nunca pagados para que
-    // el cupo no se queme con pedidos en pending_payment abandonados.
+    // el cupo no se queme con pedidos en pending_payment abandonados, y de
+    // paso se cierran los que ya superaron las 24 h (BUG-08).
     await releaseStaleCouponReservations(db);
+    await expireAbandonedPayments(db);
     let couponReserved = false;
     if (couponCode) {
       if (!(await reserveCoupon(db, couponCode, branch))) {
@@ -1335,6 +1335,17 @@ async function reconcilePendingOrder(row) {
 setInterval(() => {
   const t = Date.now();
   for (const [k, v] of reconciledAt) if (t - v > 5 * 60 * 1000) reconciledAt.delete(k);
+}, 15 * 60 * 1000).unref();
+
+// Cierra los pedidos de MP que el cliente empezó y nunca pagó (BUG-08).
+// El sweep de cupones de arriba solo corre al crear un pedido, así que sin
+// este timer un pedido abandonado se quedaría en pending_payment hasta que
+// entrara otro pedido por el checkout — en un día flojo, nunca. No mantiene
+// vivo el proceso y no bloquea nada: la función avisa sus errores y sigue.
+setInterval(() => {
+  // El catch es por si la función llegara a rechazar: una promesa sin manejar
+  // dentro de un setInterval tumba el proceso entero (Node ≥15).
+  expireAbandonedPayments(db).catch((err) => console.error("expireAbandonedPayments:", err.message));
 }, 15 * 60 * 1000).unref();
 
 // Devuelve el pedido ya reconciliado con MP cuando corresponde (o la fila tal
