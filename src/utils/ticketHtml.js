@@ -42,6 +42,25 @@ function nota(value) {
   return limpio ? esc(limpio) : "";
 }
 
+// Pie de relleno: líneas en blanco después del último contenido real, en los
+// dos documentos.
+//
+// Por qué: el driver (o la app de impresión) convierte el HTML a texto plano y
+// descarta los espacios del final. Sin este pie la última línea real queda
+// retenida en el papel y el trabajo siguiente arranca pegado a ella ("Gracias
+// por tu pedido!FUSION WOK"), que es justo lo que se vio en las fotos.
+//
+// Son dos mecanismos porque no sabemos cuál de los dos aplica:
+//   · los <br> son un salto de línea real cuando todo se aplana a texto;
+//   · el <div> con alto fijo obliga a la hoja a soltar ese alto cuando el
+//     documento llega al driver como HTML de verdad.
+// Solo ASCII y nada de &nbsp;: el espacio duro (U+00A0) es justo el byte que el
+// driver chino convertía en ideograma, y el pie se escribe a mano, sin pasar
+// por sanitizeForPrinter().
+const PIE = `<div style="height:12mm"></div>
+  <br><br><br><br>
+  `;
+
 function fechaDe(order) {
   return new Date(order.createdAt).toLocaleString("es-AR", {
     day: "2-digit", month: "2-digit", year: "numeric",
@@ -123,7 +142,7 @@ export function buildTicketHtml(order) {
   ${order.notes ? `<div class="section"><b>${order.orderMode === "delivery" ? "Observaciones de entrega" : "Nota"}:</b> ${esc(order.notes)}</div>` : ""}
   <div class="line"></div>
   <div class="center">Gracias por tu pedido!</div>
-</body></html>`;
+  ${PIE}</body></html>`;
 }
 
 // Comanda de cocina: SOLO cantidades y nombre del producto, más lo que el plato
@@ -182,5 +201,5 @@ export function buildComandaHtml(order) {
   <table>${items}</table>${notaPedido ? `
   <div class="line"></div>
   <div>NOTA: ${notaPedido}</div>` : ""}
-</body></html>`;
+  ${PIE}</body></html>`;
 }

@@ -28,7 +28,10 @@ export default function TicketPrint({ order, onClose, variant = "ticket" }) {
       return;
     }
     win.document.write(variant === "comanda" ? buildComandaHtml(order) : buildTicketHtml(order));
-    win.close();
+    // document.close() cierra el documento y da por terminado lo que se está
+    // escribiendo. NO es lo mismo que window.close(): cerrar la ventana acá
+    // mataba el print() de abajo y el ticket no salía.
+    win.document.close();
     const t = setTimeout(() => {
       win.focus();
       win.print();
