@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { BRANCHES, BRAND } from "../data/branches.js";
 import { getMenu as getStaticMenu } from "../data/menus.js";
 import useCart from "../hooks/useCart.js";
-import { sendOrderByWhatsApp } from "../utils/whatsapp.js";
+import { buildWhatsAppOrderUrl } from "../utils/whatsapp.js";
 import { createOrder, getMenu as fetchMenu, getOrderByNumber, retryPaymentLink } from "../api.js";
 import { track } from "../utils/tracking.js";
 import Landing from "./Landing.jsx";
@@ -108,6 +108,11 @@ export default function StoreApp() {
   ///leerlo y decidir si reintenta el pago o pasa por WhatsApp.
   const [checkoutError, setCheckoutError] = useState(null);
   const [retryingLink, setRetryingLink] = useState(false);
+  // BUG-05: link de WhatsApp del último pedido efectivo/transferencia cuando
+  // el navegador bloqueó la ventana que se abre en el click (window.open
+  // devuelve null). La pantalla de éxito lo muestra como botón "Abrir
+  // WhatsApp": un <a target=_blank> tocado por el usuario nunca se bloquea.
+  const [whatsappFallbackUrl, setWhatsappFallbackUrl] = useState(null);
   const [toast, setToast] = useState(null); // feedback al agregar al carrito
   const toastTimer = useRef(null);
 
@@ -314,6 +319,15 @@ export default function StoreApp() {
 
       // Efectivo / Transferencia → pedido confirmado + WhatsApp
       const record = cart.placeOrder({ orderMode: mode, paymentMethod, address });
+      // BUG-05: Safari iOS (y otros navegadores) bloquean window.open() que
+      // ocurre después de un await: al salir del click el gesto del usuario
+      // ya expiró y wa.me cuenta como popup no solicitado. La ventana se
+      // abre ACÁ, vacía, en el mismo click, y recién se le carga la URL de
+      // WhatsApp cuando el pedido está listo. Si el navegador la bloquea
+      // igual (open devuelve null), el link queda como botón "Abrir
+      // WhatsApp" en la pantalla de éxito.
+      const waWindow = window.open("", "_blank");
+      setWhatsappFallbackUrl(null);
       let orderNumber = null;
       let serverDiscount = 0;
       let serverCoupon = "";
@@ -333,19 +347,45 @@ export default function StoreApp() {
         serverDiscount = couponDiscount || 0;
         serverCoupon = couponCode || "";
       }
-      sendOrderByWhatsApp({
-        branch,
-        order: record,
-        customer: cust,
-        orderMode: mode,
-        paymentMethod,
-        address,
-        deliveryNotes,
-        coupon: serverCoupon,
-        discount: serverDiscount,
-        scheduledFor: serverScheduled,
-        shipping,
-      });
+      let waUrl;
+      try {
+        waUrl = buildWhatsAppOrderUrl({
+          branch,
+          order: record,
+          customer: cust,
+          orderMode: mode,
+          paymentMethod,
+          address,
+          deliveryNotes,
+          coupon: serverCoupon,
+          discount: serverDiscount,
+          scheduledFor: serverScheduled,
+          shipping,
+        });
+      } catch (err) {
+        // Sin link no hay a dónde navegar: se cierra la ventana vacía y el
+        // error lo muestra el checkout (igual que antes, vía el catch de
+        // handleConfirm), sin dejar una pestaña en blanco colgando.
+        try {
+          waWindow?.close();
+        } catch {
+          /* el navegador ya la cerró */
+        }
+        throw err;
+      }
+      if (waWindow && !waWindow.closed) {
+        try {
+          // La ventana sigue en about:blank (mismo origen): se le carga el
+          // link y wa.me/WhatsApp hace el resto.
+          waWindow.location.href = waUrl;
+        } catch {
+          // No se pudo navegar (p. ej. el usuario ya la cerró): botón visible.
+          setWhatsappFallbackUrl(waUrl);
+        }
+      } else {
+        // El popup quedó bloqueado: el link se muestra como botón visible.
+        setWhatsappFallbackUrl(waUrl);
+      }
       cart.clearCart();
       setLastOrder({ orderNumber, paymentStatus: "approved", status: "received" });
       setView(VIEWS.success);
@@ -422,12 +462,16 @@ export default function StoreApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // "Repetir" desde Mis pedidos: carga el pedido en el carrito, abre el
+  // drawer y avisa con un toast (antes MyOrders llamaba a un global
+  // window.__storeApp_setCartOpen que nadie definía).
   const handleRepeat = useCallback(
     (order) => {
       cart.repeatOrder(order);
       setCartOpen(true);
+      showToast("Tu pedido quedó cargado en el carrito");
     },
-    [cart]
+    [cart, showToast]
   );
 
   // my-orders puede abrirse SIN sucursal (solo búsquedas).
@@ -496,6 +540,7 @@ export default function StoreApp() {
           cart={cart}
           branch={branch}
           onBack={() => setView(branch ? VIEWS.menu : VIEWS.landing)}
+          onRepeat={handleRepeat}
         />
       )}
 
@@ -506,8 +551,17 @@ export default function StoreApp() {
               <div className="success__icon">✓</div>
               <h1>Pedido enviado</h1>
               <p>
-                Abrimos WhatsApp con tu pedido para <strong>{branch.name}</strong>. Solo tenés que
-                presionar enviar para confirmarlo.
+                {whatsappFallbackUrl ? (
+                  <>
+                    Tu pedido quedó registrado, pero tu navegador bloqueó la ventana de WhatsApp.
+                    Tocá el botón para enviarlo a <strong>{branch.name}</strong>.
+                  </>
+                ) : (
+                  <>
+                    Abrimos WhatsApp con tu pedido para <strong>{branch.name}</strong>. Solo tenés que
+                    presionar enviar para confirmarlo.
+                  </>
+                )}
               </p>
               {lastOrder?.orderNumber && (
                 <div className="payment-result__meta">
@@ -522,6 +576,20 @@ export default function StoreApp() {
                 </div>
               )}
               <div style={{ display: "grid", gap: 10 }}>
+                {whatsappFallbackUrl && (
+                  // BUG-05: la ventana abierta en el click fue bloqueada. Un
+                  // <a target="_blank"> activado con un tap del usuario no
+                  // pasa por el bloqueador de popups, así que es la salida
+                  // garantizada al WhatsApp del local.
+                  <a
+                    className="btn btn--primary btn--block"
+                    href={whatsappFallbackUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    💬 Abrir WhatsApp
+                  </a>
+                )}
                 {lastOrder?.orderNumber && (
                   <Link className="btn btn--primary btn--block" to={`/track/${lastOrder.orderNumber}`}>
                     📍 Seguir mi pedido

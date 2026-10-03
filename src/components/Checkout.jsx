@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { formatPrice, lineTotal } from "../utils/format.js";
 import { validateCoupon, shippingQuote } from "../api.js";
 import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
-import { isValidPhone, isValidEmail } from "../utils/validation.js";
-import { isOpenAtTime, closedLabel } from "../utils/schedule.js";
+import { validateCheckoutForm } from "../utils/checkoutValidation.js";
+import { closedLabel } from "../utils/schedule.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 
@@ -17,6 +17,26 @@ const PAYMENT_METHODS = [
 // (el servicio de mapas tiene cuota diaria).
 const QUOTE_CACHE_TTL = 10 * 60 * 1000;
 const quoteCache = new Map(); // dirección (minúsc.) → { res | err, at }
+
+// UX-01: mapeo del campo inválido (la clave lógica que devuelve
+// validateCheckoutForm) al elemento del DOM al que hay que hacer scroll y
+// dar foco. "schedule" apunta al DateTimePicker: su botón es lo focusable.
+const FIELD_EL_IDS = {
+  firstName: "checkout-first-name",
+  lastName: "checkout-last-name",
+  phone: "checkout-phone",
+  email: "checkout-email",
+  address: "checkout-address",
+};
+
+function fieldElFor(field) {
+  if (field === "schedule") {
+    const wrap = document.getElementById("checkout-schedule-field");
+    return wrap?.querySelector("button") || wrap || null;
+  }
+  const id = FIELD_EL_IDS[field];
+  return id ? document.getElementById(id) : null;
+}
 
 // ============================================================
 // Checkout
@@ -80,6 +100,14 @@ export default function Checkout({
   const [quoteTick, setQuoteTick] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // UX-01: el mensaje de error (form-error) se renderiza al final de la
+  // página, lejos del botón que el cliente toca. Con estos refs la vista
+  // hace scroll suave hasta el campo inválido (o hasta el mensaje cuando no
+  // hay un campo concreto) y le da foco al campo para que el teclado del
+  // celular ya esté listo.
+  const errorBoxRef = useRef(null); // <div class="form-error">
+  const serverErrorBoxRef = useRef(null); // <div class="checkout-note--error">
+  const pendingFieldRef = useRef(""); // campo inválido del error que se viene
 
   const { items, total, count } = cart;
   const isMp = paymentMethod === "mercadopago";
@@ -166,6 +194,29 @@ export default function Checkout({
     return () => clearTimeout(t);
   }, [wantsDelivery, isTandil, address, branch.id, quoteTick]);
 
+  // UX-01: el <div class="form-error"> existe recién después del render que
+  // muestra el error, así que el scroll se hace acá y no en el momento del
+  // setError. Va al campo inválido si lo conocemos (falló la validación); si
+  // no (falló la creación), baja hasta el mensaje. El foco usa
+  // preventScroll para que el navegador no pise el scroll suave.
+  useEffect(() => {
+    if (!error) return;
+    const field = pendingFieldRef.current;
+    pendingFieldRef.current = "";
+    const el = fieldElFor(field) || errorBoxRef.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (typeof el.focus === "function") el.focus({ preventScroll: true });
+  }, [error]);
+
+  // El error del último intento (p. ej. el link de Mercado Pago que no se
+  // pudo generar) llega desde StoreApp y se muestra al final del checkout:
+  // sin scroll, el cliente se queda mirando el botón sin ver qué falló.
+  useEffect(() => {
+    if (!serverError) return;
+    serverErrorBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [serverError]);
+
   // Mínimo "ahora + 10 min" en HORA LOCAL (no UTC): toISOString() corre el
   // reloj a UTC y a las 23h en Argentina el picker deshabilitaba el día de hoy.
   function minScheduled() {
@@ -196,70 +247,28 @@ export default function Checkout({
     // Un intento nuevo borra el error del anterior: si sigue visible, el
     // cliente no puede distinguir si el botón funcionó.
     onClearServerError?.();
-    if (!firstName.trim() || !lastName.trim()) {
-      setError("Completá tu nombre y apellido para confirmar.");
+    // La validación vive en una función pura (ver test/checkout-validation.test.js):
+    // devuelve el PRIMER campo inválido con su mensaje, en el mismo orden y
+    // con los mismos textos que siempre. El efecto de [error] hace scroll
+    // suave hasta el campo y le da foco.
+    const invalid = validateCheckoutForm({
+      firstName,
+      lastName,
+      phone,
+      email,
+      address,
+      paymentMethod,
+      orderMode,
+      branchId: branch.id,
+      shipping,
+      shippingError,
+      scheduleMode,
+      scheduledAt,
+    });
+    if (invalid) {
+      pendingFieldRef.current = invalid.field;
+      setError(invalid.message);
       return;
-    }
-    if (!phone.trim()) {
-      setError("Completá tu celular para confirmar.");
-      return;
-    }
-    if (!isValidPhone(phone)) {
-      setError("El celular no parece válido. Ej: 2262 555555.");
-      return;
-    }
-    // El email solo lo pide Mercado Pago (lo usa como payer.email); con
-    // efectivo o transferencia el campo ni se muestra ni se exige.
-    if (isMp) {
-      if (!email.trim()) {
-        setError("Ingresá tu email para confirmar el pedido.");
-        return;
-      }
-      if (!isValidEmail(email)) {
-        setError("El email no parece válido. Ej: nombre@correo.com.");
-        return;
-      }
-    }
-    if (orderMode === "delivery" && !address.trim()) {
-      setError("Ingresá tu dirección de entrega.");
-      return;
-    }
-    if (orderMode === "delivery" && isTandil) {
-      if (address.trim().length < 8) {
-        setError("La dirección es muy corta. Ingresá la calle y el número.");
-        return;
-      }
-      if (shippingError) {
-        // Mercado Pago: sin costo final no se puede cobrar → se bloquea.
-        if (isMp) {
-          setError(shippingError);
-          return;
-        }
-        // Efectivo/transferencia: se pasa con envío a confirmar por WhatsApp.
-      } else if (!shipping) {
-        setError("Estamos calculando el costo de envío…");
-        return;
-      }
-    }
-    if (scheduleMode === "scheduled" && !scheduledAt) {
-      setError("Elegí la fecha y hora para tu pedido.");
-      return;
-    }
-    if (scheduleMode === "scheduled" && scheduledAt) {
-      const when = new Date(scheduledAt);
-      if (isNaN(when.getTime())) {
-        setError("Elegí una fecha y hora válidas.");
-        return;
-      }
-      const minTime = Date.now() + 10 * 60000;
-      if (when.getTime() < minTime) {
-        setError("Elegí una hora con al menos 10 minutos de anticipación.");
-        return;
-      }
-      if (!isOpenAtTime(branch.id, when)) {
-        setError("Elegí una hora dentro de nuestra apertura para programar el pedido.");
-        return;
-      }
     }
     setBusy(true);
     setError("");
@@ -291,6 +300,9 @@ export default function Checkout({
         couponDiscount: coupon?.discount || 0,
       });
     } catch (err) {
+      // Falló la creación y no hay un campo culpable: el scroll del efecto
+      // va directo al mensaje de error.
+      pendingFieldRef.current = "";
       setError(err.message || "No se pudo confirmar el pedido.");
     } finally {
       setBusy(false);
@@ -416,7 +428,7 @@ export default function Checkout({
             </button>
           </div>
           {scheduleMode === "scheduled" && (
-            <div className="field">
+            <div className="field" id="checkout-schedule-field">
               <label>Fecha y hora</label>
               <DateTimePicker
                 value={scheduledAt}
@@ -556,10 +568,14 @@ export default function Checkout({
           </div>
         </div>
 
-        {error && <div className="form-error">{error}</div>}
+        {error && (
+          <div className="form-error" ref={errorBoxRef} role="alert">
+            {error}
+          </div>
+        )}
 
         {serverError && (
-          <div className="checkout-note checkout-note--error" role="alert">
+          <div className="checkout-note checkout-note--error" role="alert" ref={serverErrorBoxRef}>
             <span>
               {serverError.message}
               {serverError.orderNumber && (

@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+// Alias obligatorio: adentro del hook, `cartKey` es la clave de localStorage
+// del carrito y taparía a esta función si se importara con el mismo nombre.
+import { cartKey as makeCartKey } from "../utils/format.js";
 
 // ============================================================
 // useCart — carrito + historial de pedidos en localStorage
@@ -47,14 +50,13 @@ export default function useCart(branchId) {
   }, [historyKey, history]);
 
   // Agrega un producto (con extras ya resueltos) al carrito.
-  // Si ya existe una línea idéntica, suma cantidad.
+  // Si ya existe una línea idéntica, suma cantidad. La clave incluye la nota
+  // (normalizada con trim): dos líneas iguales con notas distintas quedan
+  // separadas y ninguna pisa la nota de la otra.
   const addItem = useCallback(
     (product, { extras = [], notes = "", qty = 1 } = {}) => {
       setItems((prev) => {
-        const key = `${product.id}|${extras
-          .map((e) => e.id)
-          .sort()
-          .join(",")}`;
+        const key = makeCartKey({ productId: product.id, extras, notes });
         const existing = prev.find((it) => it.key === key);
         if (existing) {
           return prev.map((it) =>
@@ -147,15 +149,14 @@ export default function useCart(branchId) {
 
   // Repite un pedido anterior (vuelve a cargar sus items al carrito).
   // Suma sobre lo que ya haya en el carrito en vez de reemplazarlo:
-  // las líneas idénticas se fusionan (misma key) y el resto se agrega.
+  // las líneas idénticas se fusionan (misma key, que incluye la nota) y el
+  // resto se agrega. La key se recalcula con cartKey porque la del carrito
+  // viejo no viaja en el historial ni en los pedidos del server.
   const repeatOrder = useCallback((order) => {
     setItems((prev) => {
       const byKey = new Map(prev.map((it) => [it.key, it]));
       for (const it of order.items || []) {
-        const key = `${it.productId}|${(it.extras || [])
-          .map((e) => e.id)
-          .sort()
-          .join(",")}`;
+        const key = makeCartKey(it);
         const line = {
           key,
           productId: it.productId,

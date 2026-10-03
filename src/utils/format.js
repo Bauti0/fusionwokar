@@ -22,5 +22,9 @@ export function cartKey(item) {
     .map((e) => e.id)
     .sort()
     .join(",");
-  return `${item.productId}|${extrasKey}`;
+  // La nota forma parte de la clave: dos líneas iguales con notas distintas
+  // son líneas separadas (antes se fusionaban y la segunda pisaba la nota
+  // de la primera). Se normaliza con trim para que "sin cebolla" y
+  // " sin cebolla " no generen dos líneas.
+  return `${item.productId}|${extrasKey}|${(item.notes || "").trim()}`;
 }

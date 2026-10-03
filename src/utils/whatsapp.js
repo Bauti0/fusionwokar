@@ -63,11 +63,19 @@ export function buildOrderMessage({ branch, order, customer, orderMode, paymentM
   return `${header}*DETALLE*\n${items}${totals}${customerBlock}${payment}\n\nEnviado desde fusionwok.net`;
 }
 
+// Link de wa.me con el mensaje prellenado, SIN abrir ninguna ventana.
+// Es la parte pura de sendOrderByWhatsApp: el flujo efectivo/transferencia
+// la usa para abrir la ventana en el mismo click del usuario y cargarle
+// la URL cuando el pedido ya existe (Safari iOS bloquea window.open
+// después de un await).
+export function buildWhatsAppOrderUrl(orderData) {
+  const message = buildOrderMessage(orderData);
+  return `https://wa.me/${orderData.branch.whatsapp}?text=${encodeURIComponent(message)}`;
+}
+
 // Abre WhatsApp con el mensaje prellenado hacia el número de la sucursal
 export function sendOrderByWhatsApp({ branch, order, customer, orderMode, paymentMethod, address, deliveryNotes, coupon, discount, scheduledFor, shipping }) {
-  const message = buildOrderMessage({ branch, order, customer, orderMode, paymentMethod, address, deliveryNotes, coupon, discount, scheduledFor, shipping });
-  const url = `https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(message)}`;
-  window.open(url, "_blank");
+  window.open(buildWhatsAppOrderUrl({ branch, order, customer, orderMode, paymentMethod, address, deliveryNotes, coupon, discount, scheduledFor, shipping }), "_blank");
 }
 
 // Link de WhatsApp para cuando el pedido YA quedó guardado en la base pero el

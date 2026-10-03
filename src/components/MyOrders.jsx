@@ -58,7 +58,7 @@ function filterPendingPaymentOrders(orders) {
   });
 }
 
-export default function MyOrders({ cart, branch, onBack }) {
+export default function MyOrders({ cart, branch, onBack, onRepeat }) {
   const navigate = useNavigate();
   const [serverOrders, setServerOrders] = useState([]);
   const [localHistory, setLocalHistory] = useState([]);
@@ -70,6 +70,10 @@ export default function MyOrders({ cart, branch, onBack }) {
   const [refreshCooldown, setRefreshCooldown] = useState(false);
   const [fetchFailed, setFetchFailed] = useState(false);
   const cooldownTimer = useRef(null);
+  // Momento en que arrancó el cooldown actual: el "Reintentar en Xs" se
+  // recalcula siempre desde acá, así nunca deriva ni queda en negativo.
+  const cooldownStartedAt = useRef(0);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
 
   // Cargar historial local
   useEffect(() => {
@@ -142,9 +146,27 @@ export default function MyOrders({ cart, branch, onBack }) {
   const handleRefresh = useCallback(() => {
     if (refreshCooldown || !phone) return;
     fetchOrders(phone, true);
+    cooldownStartedAt.current = Date.now();
     setRefreshCooldown(true);
-    cooldownTimer.current = setTimeout(() => setRefreshCooldown(false), REFRESH_COOLDOWN_MS);
+    cooldownTimer.current = setTimeout(() => {
+      setRefreshCooldown(false);
+      setCooldownRemaining(0);
+    }, REFRESH_COOLDOWN_MS);
   }, [phone, refreshCooldown, fetchOrders]);
+
+  // Cuenta regresiva visible del cooldown: los segundos restantes se derivan
+  // del timestamp de inicio (nunca de un contador independiente), clamp a 0 y
+  // redondeo hacia arriba.
+  useEffect(() => {
+    if (!refreshCooldown) return undefined;
+    const update = () => {
+      const remainingMs = REFRESH_COOLDOWN_MS - (Date.now() - cooldownStartedAt.current);
+      setCooldownRemaining(Math.max(0, Math.ceil(remainingMs / 1000)));
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [refreshCooldown]);
 
   // Guardar teléfono en fw.lookupPhone (si no está en fw.customer)
   const handlePhoneSubmit = useCallback((e) => {
@@ -218,7 +240,7 @@ export default function MyOrders({ cart, branch, onBack }) {
         <p style={{ color: "var(--color-text-soft)", fontSize: 13, margin: "0 0 12px" }}>{error}</p>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn--primary" onClick={handleRefresh} disabled={refreshCooldown}>
-            {refreshCooldown ? `Reintentar en ${Math.ceil((REFRESH_COOLDOWN_MS - (Date.now() - (cooldownTimer.current?.startTime || 0))) / 1000)}s` : "Reintentar"}
+            {refreshCooldown ? `Reintentar en ${cooldownRemaining}s` : "Reintentar"}
           </button>
           {phoneSource === "lookup" && (
             <button className="btn btn--ghost" onClick={() => {
@@ -268,8 +290,8 @@ export default function MyOrders({ cart, branch, onBack }) {
               <button className="btn btn--primary btn--block" onClick={(e) => { e.preventDefault(); navigate(`/track/${order.orderNumber}`); }}>
                 Seguir
               </button>
-              {canRepeat && cart && (
-                <button className="btn btn--outline" onClick={(e) => { e.preventDefault(); cart.repeatOrder(order); if (window.__storeApp_setCartOpen) window.__storeApp_setCartOpen(true); }}>
+              {canRepeat && cart && onRepeat && (
+                <button className="btn btn--outline" onClick={(e) => { e.preventDefault(); onRepeat(order); }}>
                   <IconRepeat style={{ width: 18, height: 18 }} /> Repetir
                 </button>
               )}
@@ -284,8 +306,8 @@ export default function MyOrders({ cart, branch, onBack }) {
           </div>
           <p className="order-card__lines">{order.items?.map((it) => `${it.qty}× ${it.name}`).join(" · ") || (source === "server" ? "—" : "Detalle no disponible")}</p>
           <div className="cart-item__line">
-            {canRepeat && order.items?.length && cart && (
-              <button className="btn btn--outline" onClick={() => { cart.repeatOrder(order); if (window.__storeApp_setCartOpen) window.__storeApp_setCartOpen(true); }}>
+            {canRepeat && order.items?.length && cart && onRepeat && (
+              <button className="btn btn--outline" onClick={() => onRepeat(order)}>
                 <IconRepeat style={{ width: 18, height: 18 }} /> Repetir pedido
               </button>
             )}
