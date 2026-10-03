@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { adminSales, adminCashRegister, adminOpenCashRegister, adminCloseCashRegister } from "../api.js";
 import { BRANCH_LIST } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
-import { periodRange, dayShort } from "../utils/dates.js";
+import { periodRange, dayShort, dayLabel, dateShort, dateTimeShort, isToday } from "../utils/dates.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import DateRangePicker from "./ui/DateRangePicker.jsx";
 
@@ -42,6 +42,16 @@ export default function AdminSales({ me }) {
   }, [branch, period, from, to]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Datos del gráfico. `byDay` viene ordenado por fecha y sólo trae días CON
+  // ventas. El mayor de todos es el 100% de la altura del plot.
+  const days = sales?.byDay || [];
+  const dayMax = days.length > 0 ? Math.max(...days.map((d) => d.total), 1) : 1;
+  // Con muchos días la columna del gráfico se angosta: primero achicamos el
+  // monto y, si aun así no entra, lo ocultamos (queda en el title de la barra).
+  const barsClass = ["sales-chart__bars", days.length >= 8 ? "is-dense" : "", days.length >= 12 ? "is-compact" : ""]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <section className="admin-sales">
@@ -93,8 +103,12 @@ export default function AdminSales({ me }) {
           </div>
 
           <div className="payment-breakdown">
-            <h4>Por método de pago</h4>
-            <p className="hint">Suma bruta por método, sin descontar las devoluciones.</p>
+            {/* La nota va en la misma línea que el título, a la derecha; el
+                texto sigue siendo un .hint pero alineado a la izquierda. */}
+            <div className="payment-breakdown__head">
+              <h4>Por método de pago</h4>
+              <p className="hint payment-breakdown__note">Bruto, sin descontar devoluciones</p>
+            </div>
             {sales.byMethod.length === 0 ? (
               <p className="hint">No hay ventas en este período.</p>
             ) : (
@@ -112,19 +126,29 @@ export default function AdminSales({ me }) {
 
           <div className="sales-chart">
             <h4>📈 Ventas por día</h4>
-            {sales.byDay.length === 0 ? (
-              <p className="hint">No hay ventas en este período.</p>
+            {days.length === 0 ? (
+              <p className="hint">Sin ventas en este período.</p>
             ) : (
-              <div className="sales-chart__bars">
-                {sales.byDay.map((d) => {
-                  const max = Math.max(...sales.byDay.map((x) => x.total), 1);
+              <div className={barsClass}>
+                {days.map((d) => {
+                  const hoy = isToday(d.date);
                   return (
-                    <div className="sales-chart__bar" key={d.date} title={`${d.date} · ${d.count} pedidos · ${formatPrice(d.total)}`}>
-                      <span
-                        className="sales-chart__fill"
-                        style={{ height: `${Math.max((d.total / max) * 100, 2)}%` }}
-                      />
-                      <span className="sales-chart__day">{dayShort(d.date)}</span>
+                    <div
+                      className={`sales-chart__bar${hoy ? " is-today" : ""}`}
+                      key={d.date}
+                      title={`${dayShort(d.date)} ${dayLabel(d.date)} · ${d.count} pedidos · ${formatPrice(d.total)}`}
+                    >
+                      <span className="sales-chart__amount">{formatPrice(d.total)}</span>
+                      <span className="sales-chart__plot">
+                        <span
+                          className={`sales-chart__fill${d.total > 0 ? "" : " is-zero"}`}
+                          style={{ height: `${(d.total / dayMax) * 100}%` }}
+                        />
+                      </span>
+                      <span className="sales-chart__day">
+                        <span className="sales-chart__dow">{dayShort(d.date)}&nbsp;</span>
+                        {dayLabel(d.date)}
+                      </span>
                     </div>
                   );
                 })}
@@ -221,6 +245,14 @@ function CashRegister({ branch }) {
 
   if (!data) return null;
 
+  // El server NO manda el efectivo cobrado como campo: manda `expectedNow`,
+  // que ya es apertura + cobrado (server/admin-queries.js). La diferencia es
+  // exactamente ese monto, sin recalcular nada. Si no hay caja abierta el
+  // cálculo no se hace.
+  const cobrado = Number.isFinite(data.open?.expectedNow)
+    ? data.open.expectedNow - data.open.openingAmount
+    : 0;
+
   return (
     <div className="cash-register">
       <h4>🧾 Arqueo de caja</h4>
@@ -246,18 +278,24 @@ function CashRegister({ branch }) {
         </form>
       ) : (
         <div className="cash-register__open-state">
-          <div className="cash-register__row">
-            <span>Apertura</span>
-            <strong>{formatPrice(data.open.openingAmount)}</strong>
+          {/* La cuenta de la caja: apertura + cobrado = esperado ahora. Los
+              signos "+" y "=" van por CSS (::before) y el total en rojo. */}
+          <div className="cash-register__ledger">
+            <div className="cash-register__row">
+              <span>Apertura</span>
+              <strong>{formatPrice(data.open.openingAmount)}</strong>
+            </div>
+            <div className="cash-register__row cash-register__row--add">
+              <span>Efectivo cobrado</span>
+              <strong>{formatPrice(cobrado)}</strong>
+            </div>
+            <div className="cash-register__row cash-register__row--highlight cash-register__row--total">
+              <span>Esperado ahora</span>
+              <strong>{formatPrice(data.open.expectedNow)}</strong>
+            </div>
           </div>
-          <div className="cash-register__row">
-            <span>Desde</span>
-            <span>{new Date(data.open.openedAt).toLocaleString("es-AR")}</span>
-          </div>
-          <div className="cash-register__row cash-register__row--highlight">
-            <span>Esperado ahora (apertura + efectivo)</span>
-            <strong>{formatPrice(data.open.expectedNow)}</strong>
-          </div>
+
+          <p className="cash-register__since">Caja abierta desde {dateTimeShort(data.open.openedAt)}</p>
 
           {!closing ? (
             <button className="btn btn--ghost btn--block" onClick={() => setClosing(true)}>
@@ -314,16 +352,24 @@ function CashRegister({ branch }) {
       {data.history.length > 0 && (
         <div className="cash-register__history">
           <h5>Historial</h5>
-          {data.history.map((h) => (
-            <div className="cash-register__hrow" key={h.id}>
-              <span>{new Date(h.closedAt).toLocaleDateString("es-AR")}</span>
-              <span>Apertura {formatPrice(h.openingAmount)}</span>
-              <span>Contado {formatPrice(h.closingCounted)}</span>
-              <strong className={h.difference === 0 ? "" : h.difference > 0 ? "is-over" : "is-under"}>
-                {h.difference === 0 ? "Exacta" : h.difference > 0 ? `+${formatPrice(h.difference)}` : `-${formatPrice(Math.abs(h.difference))}`}
-              </strong>
-            </div>
-          ))}
+          {data.history.map((h) => {
+            const dif = Number(h.difference) || 0;
+            // Reutiliza los badges de estado de pago: ya tienen verde / ámbar /
+            // rojo en el tema oscuro del admin. Sobra = ámbar, falta = rojo.
+            const badge = dif === 0 ? "badge--pay-approved" : dif > 0 ? "badge--pay-pending" : "badge--pay-rejected";
+            return (
+              <div className="cash-register__hrow" key={h.id}>
+                <span className="cash-register__hdate">{dateShort(h.closedAt)}</span>
+                <span className="cash-register__hmoney">
+                  <span>Apertura <b>{formatPrice(h.openingAmount)}</b></span>
+                  <span>Contado <b>{formatPrice(h.closingCounted)}</b></span>
+                </span>
+                <span className={`badge ${badge}`}>
+                  {dif === 0 ? "Exacta" : `${dif > 0 ? "+" : "−"}${formatPrice(Math.abs(dif))}`}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

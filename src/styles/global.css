@@ -16,6 +16,10 @@
 
   --font-display: "Archivo Black", "Arial Black", sans-serif;
   --font-body: "Barlow", system-ui, -apple-system, sans-serif;
+  /* Solo para identificadores largos (IDs de Mercado Pago) en el detalle
+     del pedido del admin, donde copiar el string a mano es lo habitual. */
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
 
   --radius: 16px;
   --radius-sm: 10px;
@@ -798,7 +802,6 @@ body:has(.admin-login) { background: var(--color-secondary); }
   border-radius: var(--radius);
   padding: 12px;
 }
-.admin .pay-card .pay-card__meta { font-size: 12.5px; color: var(--color-text-mute); }
 
 /* Historial */
 .admin .refunds { border-color: var(--color-border); }
@@ -861,9 +864,9 @@ body:has(.admin-login) { background: var(--color-secondary); }
   color: var(--color-success-text);
 }
 
-/* Botón que abre el modal de devoluciones */
+/* Bloque "Devolver dinero" (el hover ahora vive en el botón, porque el
+   contenedor ya no es clickeable). */
 .admin .refund-open { border-color: var(--color-border-control); background: var(--color-surface); }
-.admin .refund-open:hover { border-color: var(--color-primary); background: var(--color-surface-hi); }
 .admin .refund-open__label { color: var(--color-primary); }
 .admin .refund-open__hint { color: var(--color-text-mute); }
 
@@ -1113,9 +1116,25 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .admin .payment-breakdown__count { color: var(--color-text-soft); }
 .admin .payment-breakdown__row strong { color: var(--color-price); }
 .admin .sales-chart h4 { color: var(--color-text); }
-.admin .sales-chart__bar { background: var(--color-surface); }
-.admin .sales-chart__fill { background: linear-gradient(90deg, var(--color-primary), var(--color-price)); }
-.admin .sales-chart__day { color: var(--color-text-soft); }
+.admin .sales-chart__bars { background: var(--color-surface); border-color: var(--color-border); }
+/* Días sin emphasis: gris legible, para que la barra de HOY sea lo único
+   que se lee de un vistazo pero el resto siga estando.
+   Antes era --color-surface-hi (#242424) sobre la tarjeta #1a1a1a: 1.15:1,
+   prácticamente invisible. Este color-mix da un gris ~#666 (≈3:1 contra la
+   tarjeta) sin competir con el rojo de HOY.
+   El respaldo va PRIMERO: si el motor no entiende color-mix, queda el borde
+   claro en vez de la barra sin fondo. */
+.admin .sales-chart__fill {
+  background: var(--color-border-hi);
+  background: color-mix(in srgb, var(--color-text-mute) 65%, transparent);
+}
+.admin .sales-chart__bar.is-today .sales-chart__fill {
+  background: linear-gradient(180deg, var(--color-price), var(--color-primary));
+}
+.admin .sales-chart__amount { color: var(--color-text-soft); }
+.admin .sales-chart__bar.is-today .sales-chart__amount { color: var(--color-price); }
+.admin .sales-chart__day { color: var(--color-text-mute); }
+.admin .sales-chart__bar.is-today .sales-chart__day { color: var(--color-text); }
 
 /* Cash Register */
 .admin .cash-register {
@@ -1155,9 +1174,12 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .admin .cash-register__history h5 { color: var(--color-text-soft); }
 .admin .cash-register__hrow { color: var(--color-text-soft); }
-.admin .cash-register__hrow strong { color: var(--color-text); }
-.admin .cash-register__hrow .is-over { color: var(--color-success-text); }
-.admin .cash-register__hrow .is-under { color: var(--color-danger-text); }
+.admin .cash-register__since { color: var(--color-text-mute); }
+/* "Apertura $20.000" / "Contado $18.500" del historial: los montos se
+  vzuelven a --color-text-soft y la fecha queda en mute. */
+.admin .cash-register__hmoney { color: var(--color-text-mute); }
+.admin .cash-register__hmoney b { color: var(--color-text-soft); }
+.admin .cash-register__hdate { color: var(--color-text-soft); }
 
 /* Admin New Order */
 .admin .admin-new-order__success {
@@ -2413,6 +2435,149 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .modal-backdrop .modal { border-radius: 20px 20px 0 0; max-width: 560px; }
 
+/* ============================================================
+   Detalle del pedido (admin) — layout propio
+   Es el único modal con datos largos (IDs de Mercado Pago, dirección,
+   notas, productos), así que lleva clase propia en vez de tocar
+   `.modal`, que también usa el modal de devoluciones (420px) y el de
+   productos del menú.
+
+   Las cuatro reglas que garantizan que NO desborde horizontalmente:
+   1. `.modal-backdrop .modal--order` ensancha el modal (el de 560px
+      obligaba al grid de 3 columnas a repartir ~165px por columna).
+   2. `overflow-x: hidden` en el contenedor con scroll vertical.
+   3. `minmax(0, 1fr)` / `min-width: 0` en los hijos de grid y flex:
+      sin esto el track toma el ancho mínimo del contenido y el ID de
+      MP ensancha la columna.
+   4. `overflow-wrap: anywhere` en los identificadores largos.
+   ============================================================ */
+.modal--order {
+  max-width: none;
+  overflow-x: hidden;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+}
+/* Móvil: sheet casi a todo el ancho, con 10px de aire a los lados
+   (el resto de la app ya es mobile first).
+   El `max-width: none` va con el prefijo `.modal-backdrop` a propósito:
+   `.modal-backdrop .modal { max-width: 560px }` tiene la misma
+   especificidad y si el selector fuera `.modal--order` a secas no
+   llegaría a anularlo. */
+.modal-backdrop .modal--order {
+  max-width: none;
+  width: calc(100% - 20px);
+  margin: 0 auto 10px;
+}
+
+/* Header: número + badges (flex-wrap, no empujan al cerrar) / cerrar */
+.modal__head--order { align-items: flex-start; }
+.order-head {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 8px; flex: 1; min-width: 0;
+}
+.order-head__num {
+  margin: 0; line-height: 1.2;
+  font-family: var(--font-display); font-size: 20px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+/* Cliente / Sucursal: 2 columnas en desktop, 1 en móvil.
+   `minmax(0, …)` en vez de `1fr` a secas porque `1fr` es `minmax(auto, 1fr)`:
+   el track nunca baja del min-content del hijo, y un input con ancho
+   intrínseco (o un ID sin wrap) ensancha la columna. */
+.detail-grid.detail-grid--order {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 8px;
+}
+.modal--order .detail-grid > * { min-width: 0; }
+@media (min-width: 640px) {
+  .modal-backdrop .modal--order {
+    width: min(94vw, 860px);
+    margin-bottom: 0;
+    padding: 24px 24px 28px;
+  }
+  .detail-grid.detail-grid--order { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.detail-strong { font-weight: 700; color: var(--color-text); }
+.detail-wrap { overflow-wrap: anywhere; }
+.modal--order .modal__body > .detail-block { margin-bottom: 16px; }
+
+/* Chips de entrega (envío a confirmar / programado) */
+.order-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.order-chips:empty { display: none; }
+
+/* Inputs de "cargar envío confirmado": los <input type="number"> tienen un
+   ancho intrínseco (~190px) que, con el grid en `1fr 1fr` de la regla base,
+   estiraba la columna de Sucursal y era la otra mitad del scroll
+   horizontal del modal. `min-width: 0` + `width: 100%` los deja seguir el
+   track y `minmax(0, 1fr)` deja que el track se encoja. */
+.modal--order .shipping-confirm__fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.modal--order .shipping-confirm__fields input { min-width: 0; width: 100%; }
+
+/* Tarjeta de pago: identificadores en filas label/valor con wrap */
+.pay-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pay-card__ids { display: grid; gap: 10px; margin: 12px 0 0; }
+.pay-card__id { display: grid; gap: 4px; min-width: 0; }
+.pay-card__id dt {
+  margin: 0;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--color-text-soft);
+}
+.pay-card__id dd {
+  display: flex; align-items: flex-start;
+  gap: 8px; margin: 0; min-width: 0;
+}
+.pay-card__code {
+  flex: 1; min-width: 0;
+  padding: 7px 10px;
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.45;
+  color: var(--color-text);
+  overflow-wrap: anywhere; word-break: break-word;
+}
+.copy-btn {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 34px; padding: 7px 12px;
+  border: 1px solid var(--color-border-control); border-radius: var(--radius-sm);
+  background: var(--color-surface-hi); color: var(--color-text);
+  font-family: var(--font-body); font-size: 12px; font-weight: 700;
+  white-space: nowrap; cursor: pointer;
+  transition: border-color .15s var(--ease), background .15s var(--ease), color .15s var(--ease);
+}
+.copy-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+.copy-btn.is-copied {
+  background: var(--color-success-soft);
+  border-color: var(--color-success-border);
+  color: var(--color-success-text);
+}
+
+/* Productos: nombre flexible + precio pegado a la derecha, total destacado */
+.summary--order { margin: 0; padding: 14px 16px; }
+.summary--order .summary__row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px; align-items: baseline;
+}
+.summary--order .summary__name { min-width: 0; overflow-wrap: anywhere; }
+.summary--order .summary__price {
+  white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums;
+}
+.summary--order .summary__row--total {
+  margin-top: 10px; padding-top: 12px;
+  font-size: 19px; font-weight: 800; color: var(--color-text);
+}
+
+/* Acciones del pedido: 3 botones en fila cuando entra en columnas */
+@media (min-width: 640px) {
+  .modal--order .modal__footer--order {
+    display: grid; gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+}
+
 /* Carrito como bottom-sheet (drawer) sobre el menú */
 .drawer { position: fixed; inset: 0; z-index: 140; }
 .drawer__backdrop {
@@ -2470,17 +2635,33 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .refunds__amount { font-weight: 600; color: var(--color-text); }
 .refunds__date { font-variant-numeric: tabular-nums; }
 
-/* Botón que abre el modal de devoluciones */
+/* Bloque "Devolver dinero": sub-sección punteada con el texto a la
+   izquierda y la acción a la derecha (apiladas en móvil). Antes era un
+   <button> que envolvía las dos líneas y quedaba apretado en la
+   columna de pago. */
 .refund-open {
-  display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
-  width: 100%; margin-top: 12px; padding: 12px 14px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 12px; width: 100%; margin-top: 12px; padding: 12px 14px;
   border: 1px dashed var(--color-border); border-radius: var(--radius-sm);
-  background: var(--color-bg); text-align: left; cursor: pointer;
-  transition: border-color .15s var(--ease), background .15s var(--ease);
+  background: var(--color-bg); text-align: left;
 }
-.refund-open:hover { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.refund-open__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .refund-open__label { font-size: 14px; font-weight: 700; color: var(--color-primary); }
 .refund-open__hint { font-size: 13px; color: var(--color-text-soft); }
+.refund-open__btn {
+  flex-shrink: 0;
+  padding: 10px 16px; border-radius: var(--radius-sm);
+  border: 2px solid var(--color-primary);
+  background: transparent; color: var(--color-primary);
+  font-family: var(--font-body); font-size: 13.5px; font-weight: 700;
+  white-space: nowrap; cursor: pointer;
+  transition: background .15s var(--ease);
+}
+.refund-open__btn:hover { background: var(--color-primary-soft); }
+@media (max-width: 639px) {
+  .refund-open { flex-direction: column; align-items: stretch; }
+  .refund-open__btn { width: 100%; }
+}
 
 /* Modal de devoluciones */
 .refund-modal { max-width: 420px; }
@@ -2792,7 +2973,18 @@ body:has(.admin-login) { background: var(--color-secondary); }
    AdminSales — ventas + arqueo de caja
    ============================================================ */
 .payment-breakdown { margin-top: 20px; }
-.payment-breakdown h4 { margin: 0 0 10px; font-size: 14px; }
+/* Título a la izquierda, nota a la derecha en la misma línea (baseline).
+   En ≤480px no entra en una línea y la nota pasa abajo, siempre a la
+   izquierda: el panel entero está alineado a la izquierda. */
+.payment-breakdown__head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  flex-wrap: wrap; gap: 4px 14px; margin: 0 0 10px;
+}
+.payment-breakdown__head h4 { margin: 0; min-width: 0; font-size: 14px; }
+.payment-breakdown__note {
+  margin: 0; min-width: 0; text-align: left;
+  font-size: 12px; color: var(--color-text-mute);
+}
 .payment-breakdown__list { display: flex; flex-direction: column; gap: 6px; }
 .payment-breakdown__row {
   display: flex; align-items: center; gap: 10px;
@@ -2802,17 +2994,110 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .payment-breakdown__count { color: var(--color-text-soft); font-size: 12px; }
 .payment-breakdown__row strong { margin-left: auto; }
 
-.cash-register { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--color-border); }
-.cash-register h4 { margin: 0 0 12px; font-size: 15px; }
-.cash-register__open, .cash-register__close { display: flex; flex-direction: column; gap: 12px; max-width: 360px; }
-.cash-register__open-state { display: flex; flex-direction: column; gap: 10px; }
-.cash-register__row { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; padding: 4px 0; }
+/* ------------------------------------------------------------
+   Ventas por día — barras verticales en CSS puro.
+
+   El bug: faltaba por completo el layout. .sales-chart__bars no
+   tenía regla (los <div> de cada día se apilaban como bloques al
+   100% del ancho = la "caja gris") y .sales-chart__fill era un
+   <span> inline, donde `height` no se aplica → barra de altura 0
+   aunque el JSX mandara el porcentaje correcto.
+
+   La clave de que el `height: %` resuelva es .sales-chart__plot:
+   es la caja de altura DEFINIDA (flex: 1 dentro de una columna de
+   height fija) contra la que se mide la barra.
+   ------------------------------------------------------------ */
+.sales-chart { margin-top: 20px; }
+.sales-chart h4 { margin: 0 0 10px; font-size: 14px; }
+.sales-chart__bars {
+  display: flex; align-items: stretch; gap: 6px;
+  height: 176px; padding: 12px 10px 10px;
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.sales-chart__bar {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+/* Monto arriba de la barra. Se recorta con elipsis antes de romper
+   el ancho de la columna: el dato íntegro queda en el title. */
+.sales-chart__amount {
+  flex: 0 0 auto; max-width: 100%; min-width: 0;
+  font-size: 12px; font-weight: 700; line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sales-chart__plot {
+  flex: 1 1 0; min-height: 0;
+  width: 100%; max-width: 56px;
+  display: flex; align-items: flex-end;
+}
+.sales-chart__fill {
+  width: 100%; min-height: 4px;
+  border-radius: 6px 6px 3px 3px;
+  transition: height .2s var(--ease);
+}
+/* Un día con venta $0 no dibuja ni el mínimo: el mínimo es para que
+   una venta chica se vea, no para fingir que ese día vendió. */
+.sales-chart__fill.is-zero { min-height: 0; }
+.sales-chart__day {
+  flex: 0 0 auto; max-width: 100%; min-width: 0;
+  font-size: 11.5px; line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Con muchos días la columna se angosta. Primero se achica el monto,
+   y sólo si tampoco entra (is-compact) se oculta: queda en el title.
+   El gap y el padding también bajan porque a 390px la columna de 7
+   días queda en ~45px, apenas lo que mide "$130.000" a 10px. */
+@media (max-width: 480px) {
+  .sales-chart__bars { gap: 3px; height: 156px; padding: 10px 4px 8px; }
+  .sales-chart__amount { font-size: 10px; letter-spacing: -.2px; }
+  .sales-chart__bars.is-dense .sales-chart__amount { font-size: 9.5px; }
+  .sales-chart__bars.is-compact .sales-chart__amount { display: none; }
+  .sales-chart__dow { display: none; }
+}
+
+/* ------------------------------------------------------------
+   Arqueo de caja — una sola tarjeta: cuenta, dato secundario,
+   acción e historial, en ese orden.
+   ------------------------------------------------------------ */
+.cash-register {
+  margin-top: 22px; padding: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.cash-register h4 { margin: 0 0 14px; font-size: 15px; }
+/* Tope de ancho: sin esto el input y el botón de "Abrir caja" se estiraban
+   a los ~950px de la tarjeta en desktop y quedaban desproporcionados al lado
+   del título. En mobile el tope nunca entra (la tarjeta es más angosta), así
+   que el comportamiento de apilado queda igual. */
+.cash-register__open, .cash-register__close { display: flex; flex-direction: column; gap: 12px; max-width: 420px; }
+.cash-register__open-state { display: flex; flex-direction: column; gap: 14px; }
+/* La cuenta: apertura + cobrado = esperado ahora. */
+.cash-register__ledger {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 4px 0 10px; border-bottom: 1px solid var(--color-border);
+}
+.cash-register__row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; min-width: 0; font-size: 14px; padding: 5px 0;
+}
+.cash-register__row > span { min-width: 0; }
+.cash-register__row strong { min-width: 0; white-space: nowrap; }
+/* El signo va por CSS (::before) para que la fila siga siendo un
+   label/valor normal en el DOM. */
+.cash-register__row--add > span::before { content: "+ "; color: var(--color-text-mute); }
+.cash-register__row--total > span::before { content: "= "; color: inherit; }
 .cash-register__row--highlight {
   background: var(--color-primary-soft); border-radius: var(--radius-sm);
-  padding: 10px 12px; font-weight: 700;
+  padding: 12px; font-weight: 700; margin-top: 8px;
 }
+.cash-register__row--highlight > span { font-size: 13px; font-weight: 600; }
+.cash-register__row--highlight strong { font-size: 22px; line-height: 1.2; }
+/* "Desde": dato de contexto, no una fila de la cuenta. */
+.cash-register__since { margin: -6px 0 0; font-size: 12px; color: var(--color-text-mute); }
 .cash-register__close-actions { display: flex; gap: 8px; }
-.cash-register__close-actions .btn { flex: 1; }
+.cash-register__close-actions .btn { flex: 1; min-width: 0; }
 .cash-register__result {
   margin-top: 14px; padding: 12px 14px; border-radius: var(--radius-sm);
   display: flex; flex-direction: column; gap: 3px; font-size: 14px;
@@ -2820,15 +3105,35 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .cash-register__result.is-ok { background: rgba(52,168,83,.12); color: var(--color-success); }
 .cash-register__result.is-over { background: rgba(52,168,83,.12); color: var(--color-success); }
 .cash-register__result.is-under { background: var(--color-primary-soft); color: var(--color-primary-dark); }
-.cash-register__history { margin-top: 20px; }
-.cash-register__history h5 { margin: 0 0 8px; font-size: 12.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--color-text-soft); }
+.cash-register__history { margin-top: 18px; }
+.cash-register__history h5 { margin: 0 0 6px; font-size: 12.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--color-text-soft); }
+/* Fecha | apertura/contado | badge. min-width:0 en las dos columnas
+   de texto para que el monto largo no empuje el badge fuera. */
 .cash-register__hrow {
-  display: flex; align-items: center; gap: 10px; font-size: 12.5px;
-  padding: 8px 0; border-bottom: 1px solid var(--color-border);
+  display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: center; gap: 10px; font-size: 12.5px;
+  padding: 7px 0; border-bottom: 1px solid var(--color-border);
 }
-.cash-register__hrow strong { margin-left: auto; }
-.cash-register__hrow .is-over { color: var(--color-success); }
-.cash-register__hrow .is-under { color: var(--color-primary); }
+.cash-register__hrow:last-child { border-bottom: none; }
+.cash-register__hdate { white-space: nowrap; color: var(--color-text-soft); }
+.cash-register__hmoney {
+  min-width: 0; display: flex; gap: 4px; flex-wrap: wrap;
+  color: var(--color-text-mute);
+}
+.cash-register__hmoney b { color: var(--color-text-soft); font-weight: 600; }
+.cash-register__hrow .badge { justify-self: end; }
+@media (max-width: 480px) {
+  .cash-register { padding: 14px; }
+  .cash-register__hrow {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-areas: "fecha badge" "montos montos";
+    row-gap: 4px;
+  }
+  .cash-register__hdate { grid-area: fecha; }
+  .cash-register__hmoney { grid-area: montos; }
+  .cash-register__hrow .badge { grid-area: badge; justify-self: end; }
+  .cash-register__row--highlight strong { font-size: 20px; }
+}
 
 /* ============================================================
    AdminNewOrder — carga manual (WhatsApp / mostrador)

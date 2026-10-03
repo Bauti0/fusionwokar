@@ -127,6 +127,9 @@ export default function AdminPanel({ me, onLogout }) {
   const [refundInput, setRefundInput] = useState("");
   const [refundConfirm, setRefundConfirm] = useState(null); // { amount, full }
   const [refundForm, setRefundForm] = useState(false);
+  // Clave del identificador recién copiado ("order" / "payment"), para el
+  // "✓ Copiado" del botón. Vacío = ninguno copiado.
+  const [copiedId, setCopiedId] = useState("");
   const pageRef = useRef(1);
   const seenRef = useRef(loadSeen());
   const [unseenIds, setUnseenIds] = useState(() => new Set());
@@ -301,6 +304,20 @@ export default function AdminPanel({ me, onLogout }) {
       ? Math.max(0, (selected.total || 0) - (selected.refundedAmount || 0))
       : 0;
   const canRefund = selected?.paymentStatus === "approved" && refundable > 0;
+
+  // Copia un identificador (Order MP / ID de pago) al portapapeles.
+  // Es solo feedback visual: si el portapapeles falla (contexto http
+  // sin API segura, permiso denegado, navegador viejo) el catch se
+  // traga el error y no muestra la confirmación, sin romper el modal.
+  async function copyId(value, key) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedId(key);
+      setTimeout(() => setCopiedId(""), 1500);
+    } catch {
+      /* sin portapapeles: no se confirma nada */
+    }
+  }
 
   function openRefundConfirm(amount) {
     // Sin monto → devolución total de lo que queda.
@@ -651,7 +668,7 @@ const renderOrder = (o) => {
       {selected && (
         <div className="modal-backdrop" onClick={() => setSelected(null)}>
           <div
-            className="modal"
+            className="modal modal--order"
             role="dialog"
             aria-modal="true"
             aria-labelledby="order-modal-title"
@@ -659,32 +676,49 @@ const renderOrder = (o) => {
             tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal__head">
-              <h3 id="order-modal-title">{selected.orderNumber}</h3>
+            <div className="modal__head modal__head--order">
+              <div className="order-head">
+                <h3 id="order-modal-title" className="order-head__num">
+                  {selected.orderNumber}
+                </h3>
+                <span className="badge">
+                  {statusEmoji(selected.status)} {statusLabel(selected.status)}
+                </span>
+                <span className={`badge badge--pay badge--pay-${selected.paymentStatus}`}>
+                  {selected.paymentMethod === "mercadopago" ? "💳 " : "💰 "}
+                  {paymentLabel(selected.paymentStatus)}
+                </span>
+              </div>
               <button className="modal__close" onClick={() => setSelected(null)} aria-label="Cerrar">✕</button>
             </div>
             <div className="modal__body">
-              <div className="detail-grid">
+              <div className="detail-grid detail-grid--order">
                 <div className="detail-block">
                   <h4>Cliente</h4>
-                  <p>{selected.customer.name}</p>
+                  <p className="detail-strong">{selected.customer.name}</p>
                   <p>{selected.customer.phone}</p>
                   {selected.orderMode === "delivery" && selected.address && (
-                    <p>📍 {selected.address}</p>
+                    <p className="detail-wrap">📍 {selected.address}</p>
                   )}
                   {selected.orderMode === "delivery" && selected.notes && (
-                    <p className="detail-note">📝 {selected.notes}</p>
+                    <p className="detail-note detail-wrap">📝 {selected.notes}</p>
                   )}
                 </div>
                 <div className="detail-block">
                   <h4>Sucursal / Entrega</h4>
-                  <p>{BRANCHES[selected.branch]?.name}</p>
+                  <p className="detail-strong">{BRANCHES[selected.branch]?.name}</p>
                   <p>{selected.orderMode === "delivery" ? "🛵 Delivery" : "🥡 Retiro"}</p>
-                  {selected.shipping?.pending && <p className="badge badge--shipping-pending">⚠️ Envío a confirmar</p>}
                   <p>{new Date(selected.createdAt).toLocaleString("es-AR")}</p>
-                  {selected.scheduledFor && (
-                    <p className="badge">🕒 Programado: {new Date(selected.scheduledFor).toLocaleString("es-AR")}</p>
-                  )}
+                  <div className="order-chips">
+                    {selected.shipping?.pending && (
+                      <span className="badge badge--shipping-pending">⚠️ Envío a confirmar</span>
+                    )}
+                    {selected.scheduledFor && (
+                      <span className="badge">
+                        🕒 Programado: {new Date(selected.scheduledFor).toLocaleString("es-AR")}
+                      </span>
+                    )}
+                  </div>
                   {selected.shipping?.pending && (
                     <div className="shipping-confirm">
                       <h4>Cargar envío confirmado</h4>
@@ -722,100 +756,148 @@ const renderOrder = (o) => {
                     </div>
                   )}
                 </div>
-                <div className="detail-block">
-                  <h4>Pago</h4>
-                  <div className="pay-card">
-                    <p className={`badge badge--pay badge--pay-${selected.paymentStatus}`}>
+              </div>
+
+              {/* Pago: tarjeta de ancho completo. Antes vivía como tercera
+                  columna del grid, que a 560px de modal lo dejaba en ~165px y
+                  los IDs de Mercado Pago (sin wrap) ensanchaban la columna:
+                  de ahí el scroll horizontal del modal. */}
+              <div className="detail-block">
+                <h4>Pago</h4>
+                <div className="pay-card">
+                  <div className="pay-card__head">
+                    <span className={`badge badge--pay badge--pay-${selected.paymentStatus}`}>
                       {paymentLabel(selected.paymentStatus)} · {selected.paymentMethod}
-                    </p>
-                    {selected.mpOrderId && (
-                      <p className="pay-card__meta">Order MP: {selected.mpOrderId}</p>
-                    )}
-                    {selected.mpPaymentId && (
-                      <p className="pay-card__meta">ID pago: {selected.mpPaymentId}</p>
-                    )}
+                    </span>
+                  </div>
+
+                  {(selected.mpOrderId || selected.mpPaymentId) && (
+                    <dl className="pay-card__ids">
+                      {selected.mpOrderId && (
+                        <div className="pay-card__id">
+                          <dt>Order MP</dt>
+                          <dd>
+                            <code className="pay-card__code">{selected.mpOrderId}</code>
+                            <button
+                              type="button"
+                              className={`copy-btn ${copiedId === "order" ? "is-copied" : ""}`}
+                              aria-label="Copiar Order MP"
+                              onClick={() => copyId(selected.mpOrderId, "order")}
+                            >
+                              {copiedId === "order" ? "✓ Copiado" : "Copiar"}
+                            </button>
+                          </dd>
+                        </div>
+                      )}
+                      {selected.mpPaymentId && (
+                        <div className="pay-card__id">
+                          <dt>ID pago</dt>
+                          <dd>
+                            <code className="pay-card__code">{selected.mpPaymentId}</code>
+                            <button
+                              type="button"
+                              className={`copy-btn ${copiedId === "payment" ? "is-copied" : ""}`}
+                              aria-label="Copiar ID de pago"
+                              onClick={() => copyId(selected.mpPaymentId, "payment")}
+                            >
+                              {copiedId === "payment" ? "✓ Copiado" : "Copiar"}
+                            </button>
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+                  )}
 
                     {selected.refunds?.length > 0 && (
-                      <div className="refunds">
-                        {selected.refunds.map((r) => (
-                          <div className="refunds__row" key={r.id}>
-                            <span className="refunds__arrow">↩</span>
-                            <span className="refunds__amount">{formatPrice(r.amount)}</span>
-                            <span className="refunds__date">
-                              {new Date(r.at).toLocaleString("es-AR", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                hour12: false,
-                              })}
-                            </span>
-                          </div>
-                        ))}
-                        <div
-                          className="refunds__bar"
-                          aria-hidden="true"
-                          style={{
-                            "--refunds-pct": `${Math.min(
-                              100,
-                              Math.round(
-                                ((selected.refundedAmount || 0) / (selected.total || 1)) * 100
-                              )
-                            )}%`,
-                          }}
-                        >
-                          <span className="refunds__bar-fill" />
+                    <div className="refunds">
+                      {selected.refunds.map((r) => (
+                        <div className="refunds__row" key={r.id}>
+                          <span className="refunds__arrow">↩</span>
+                          <span className="refunds__amount">{formatPrice(r.amount)}</span>
+                          <span className="refunds__date">
+                            {new Date(r.at).toLocaleString("es-AR", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: false,
+                            })}
+                          </span>
                         </div>
-                        <p className="refunds__total">
-                          Devuelto: {formatPrice(selected.refundedAmount)} de {formatPrice(selected.total)}
-                        </p>
-                      </div>
-                    )}
-
-                    {canRefund && (
-                      <button
-                        type="button"
-                        className="refund-open"
-                        onClick={() => setRefundForm(true)}
+                      ))}
+                      <div
+                        className="refunds__bar"
+                        aria-hidden="true"
+                        style={{
+                          "--refunds-pct": `${Math.min(
+                            100,
+                            Math.round(
+                              ((selected.refundedAmount || 0) / (selected.total || 1)) * 100
+                            )
+                          )}%`,
+                        }}
                       >
+                        <span className="refunds__bar-fill" />
+                      </div>
+                      <p className="refunds__total">
+                        Devuelto: {formatPrice(selected.refundedAmount)} de{" "}
+                        {formatPrice(selected.total)}
+                      </p>
+                    </div>
+                  )}
+
+                  {canRefund && (
+                    <div className="refund-open">
+                      <div className="refund-open__text">
                         <span className="refund-open__label">Devolver dinero</span>
                         <span className="refund-open__hint">
                           Quedan {formatPrice(refundable)} por devolver
                         </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="refund-open__btn"
+                        onClick={() => setRefundForm(true)}
+                      >
+                        Devolver
                       </button>
-                    )}
+                    </div>
+                  )}
 
-                    {selected.paymentMethod === "mercadopago" &&
-                      selected.paymentStatus === "approved" &&
-                      !canRefund && (
-                        <p className="refund-done">✓ Pedido devuelto por completo</p>
-                      )}
-                  </div>
+                  {selected.paymentMethod === "mercadopago" &&
+                    selected.paymentStatus === "approved" &&
+                    !canRefund && (
+                      <p className="refund-done">✓ Pedido devuelto por completo</p>
+                    )}
                 </div>
               </div>
 
               <div className="detail-block">
                 <h4>Productos</h4>
-                <div className="summary">
+                <div className="summary summary--order">
                   {selected.items.map((item) => (
                     <div className="summary__row" key={item.key || `${item.productId}-${item.name}`}>
-                      <span>
+                      <span className="summary__name">
                         {item.qty}× {item.name}
                         {item.extras?.length
                           ? ` (${item.extras.map((e) => e.label).join(", ")})`
                           : ""}
                         {item.notes ? ` — "${item.notes}"` : ""}
                       </span>
-                      <span>{formatPrice(item.unitPrice * item.qty)}</span>
+                      <span className="summary__price">
+                        {formatPrice(item.unitPrice * item.qty)}
+                      </span>
                     </div>
                   ))}
                   {selected.discount > 0 && (
                     <div className="summary__row">
-                      <span>Descuento ({selected.couponCode})</span>
-                      <span>−{formatPrice(selected.discount)}</span>
+                      <span className="summary__name">
+                        Descuento ({selected.couponCode})
+                      </span>
+                      <span className="summary__price">−{formatPrice(selected.discount)}</span>
                     </div>
                   )}
                   <div className="summary__row summary__row--total">
-                    <span>Total</span>
-                    <span>{formatPrice(selected.total)}</span>
+                    <span className="summary__name">Total</span>
+                    <span className="summary__price">{formatPrice(selected.total)}</span>
                   </div>
                 </div>
               </div>
@@ -841,7 +923,7 @@ const renderOrder = (o) => {
                 </div>
               </div>
 
-              <div className="modal__footer">
+              <div className="modal__footer modal__footer--order">
                 <button
                   className="btn btn--primary btn--block"
                   onClick={() => setPrintOrder(selected)}

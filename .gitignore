@@ -35,6 +35,8 @@ coverage/
 *.md
 opencode.json
 skills-lock.json
+docs/
+test/
 .agents/
 .opencode/
 .superpowers/

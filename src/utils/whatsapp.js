@@ -60,7 +60,7 @@ export function buildOrderMessage({ branch, order, customer, orderMode, paymentM
 
   const payment = `\n💳 Pago: ${paymentMethod}`;
 
-  return `${header}*DETALLE*\n${items}${totals}${customerBlock}${payment}\n\nEnviado desde fusionwok.ar`;
+  return `${header}*DETALLE*\n${items}${totals}${customerBlock}${payment}\n\nEnviado desde fusionwok.net`;
 }
 
 // Abre WhatsApp con el mensaje prellenado hacia el número de la sucursal
