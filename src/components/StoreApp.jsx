@@ -145,20 +145,53 @@ export default function StoreApp() {
   // El menú viene de la API (BD, editable desde el panel). Si falla, se usa
   // el estático como respaldo para que la tienda nunca quede vacía.
   const [menu, setMenu] = useState(null);
+  // Pausa de pedidos de ESTA sucursal ({ paused, until, message }), tal como
+  // la devuelve el server. Es el mismo estado que viaja en el menú
+  // (GET /api/menu incluye pause) y el que actualiza un 423 del checkout.
+  const [pause, setPause] = useState(null);
   useEffect(() => {
     let alive = true;
     if (!branchId) {
       setMenu(null);
+      setPause(null);
       return;
     }
     setMenu(null);
+    setPause(null);
     fetchMenu(branchId)
-      .then((m) => alive && setMenu(m))
-      .catch(() => alive && setMenu(getStaticMenu(branchId)));
+      .then((m) => {
+        if (!alive) return;
+        setMenu(m);
+        setPause(m.pause || null);
+      })
+      .catch(() => {
+        if (!alive) return;
+        // Menú estático de respaldo: sin estado de pausa conocido, no se
+        // muestra ningún aviso (no se bloquea nada que el server no bloquee).
+        setMenu(getStaticMenu(branchId));
+        setPause(null);
+      });
     return () => {
       alive = false;
     };
   }, [branchId]);
+
+  // Reapertura automática EN PANTALLA: si la pausa que se está viendo tiene
+  // vencimiento y el cliente se queda mirando el menú/checkout hasta que
+  // venza, el estado local vence solo (el server ya lo calcula así al leer).
+  // Sin esto, el botón de confirmar quedaría bloqueado con la sucursal ya
+  // reabierta hasta el próximo refresh del menú. Si el local re-pausara en el
+  // medio, el próximo 423 vuelve a actualizar el estado.
+  useEffect(() => {
+    if (!pause?.paused || !pause.until) return undefined;
+    const ms = pause.until - Date.now() + 2000; // margen por relojes desviados
+    if (ms <= 0) {
+      setPause({ paused: false, until: null, message: "" });
+      return undefined;
+    }
+    const t = setTimeout(() => setPause({ paused: false, until: null, message: "" }), ms);
+    return () => clearTimeout(t);
+  }, [pause]);
 
   const cart = useCart(branchId || "none");
 
@@ -350,6 +383,11 @@ export default function StoreApp() {
           // conserva: el reintento tiene que recuperar el pedido que el server
           // quizá alcanzó a guardar.
           if (isOrderRejected(err)) orderAttemptRef.current = null;
+          // La pausa llegó mientras el cliente estaba en el checkout: el
+          // estado local se actualiza al instante, así el botón queda
+          // deshabilitado con el motivo y el banner del menú aparece al
+          // volver, sin esperar un refresh del menú.
+          if (err.code === "orders_paused" && err.pause) setPause(err.pause);
           // El error se muestra EN el checkout (no en un toast que se borra):
           // si el pedido llegó a guardarse, se muestra también su número para
           // que el cliente pueda escribir por WhatsApp con el número correcto.
@@ -399,6 +437,9 @@ export default function StoreApp() {
         };
       } catch (err) {
         failure = decideDirectOrderOutcome(err);
+        // Igual que en el camino de Mercado Pago: un 423 de pausa actualiza
+        // el estado local al instante.
+        if (err.code === "orders_paused" && err.pause) setPause(err.pause);
       }
       if (failure && !failure.openWhatsApp) {
         // Rechazo del server (4xx con `error`): el pedido NO existe, así que
@@ -598,7 +639,7 @@ export default function StoreApp() {
 
       {view === VIEWS.menu && (
         <>
-          <Menu menu={menu} branch={branch} orderMode={orderMode} onAdd={handleAdd} />
+          <Menu menu={menu} branch={branch} pause={pause} orderMode={orderMode} onAdd={handleAdd} />
           <CartBar count={cart.count} total={cart.total} onView={() => setCartOpen(true)} />
         </>
       )}
@@ -627,6 +668,7 @@ export default function StoreApp() {
           onClearServerError={() => setCheckoutError(null)}
           onRetryPaymentLink={handleRetryPaymentLink}
           retryingLink={retryingLink}
+          pause={pause}
         />
       )}
 

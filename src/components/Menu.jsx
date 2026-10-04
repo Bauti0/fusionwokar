@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import ProductCard from "./ProductCard.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
-import { closedLabel } from "../utils/schedule.js";
+import { closedLabel, pauseNotice } from "../utils/schedule.js";
 import { IconSearch, IconClock, IconEmptySearch } from "./ui/icons.jsx";
 
 // ============================================================
@@ -47,7 +47,7 @@ function mergeGroupRuns(groups) {
   return runs;
 }
 
-const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
+const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode }) {
   const [query, setQuery] = useState("");
   const [customizing, setCustomizing] = useState(null);
   const [activeCat, setActiveCat] = useState(() => menu.categories[0]?.id || "");
@@ -101,6 +101,10 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
 
   const topIds = menu.topProductIds || [];
   const closed = closedLabel(branch.id);
+  // Pausa de pedidos de esta sucursal (viene del menú o de un 423 del
+  // checkout). Se muestra el pill y la línea con el motivo y la hora
+  // de reapertura; el botón de confirmar se bloquea en el checkout.
+  const paused = !!pause?.paused;
 
   return (
     <div className="menu">
@@ -127,6 +131,15 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
                 {closed}
               </span>
             )}
+            {paused && (
+              <span className="menu__closed">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="6" y="5" width="4" height="14" rx="1" />
+                  <rect x="14" y="5" width="4" height="14" rx="1" />
+                </svg>
+                Pausado
+              </span>
+            )}
             <span className="menu__address">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M12 21s-7-5.1-7-11a7 7 0 1 1 14 0c0 5.9-7 11-7 11z" />
@@ -135,6 +148,12 @@ const Menu = memo(function Menu({ menu, branch, onAdd, orderMode }) {
               {branch.address}
             </span>
           </p>
+          {paused && (
+            <p className="menu__paused">
+              <IconClock className="menu__hours-icon" />
+              <span>{pauseNotice(pause)}</span>
+            </p>
+          )}
           {branch.deliveryInfo && (
             <p className="menu__delivery">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

@@ -3,7 +3,7 @@ import { formatPrice, lineTotal } from "../utils/format.js";
 import { validateCoupon, shippingQuote } from "../api.js";
 import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
 import { validateCheckoutForm } from "../utils/checkoutValidation.js";
-import { closedLabel } from "../utils/schedule.js";
+import { closedLabel, pauseNotice } from "../utils/schedule.js";
 import { phonePlaceholderFor } from "../data/branches.js";
 import { shouldCacheQuoteError } from "../utils/shippingCache.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
@@ -68,6 +68,7 @@ export default function Checkout({
   onClearServerError,
   onRetryPaymentLink,
   retryingLink = false,
+  pause = null,
 }) {
   // Nombre y apellido separados: Mercado Pago los quiere así (payer.first_name
   // / last_name) y el server compone el "Nombre Apellido" de siempre para no
@@ -130,6 +131,11 @@ export default function Checkout({
   const orderWaLink = serverError
     ? waLinkForUnpaidOrder(branch, { orderNumber: serverError.orderNumber, reason: serverError.message })
     : "";
+  // La sucursal está pausada (el local frenó la toma de pedidos un rato).
+  // El `until` ya vencido no bloquea: el server reabre solo al vencer y el
+  // estado local también expira (StoreApp), pero por si el cliente quedó con
+  // la pantalla abierta, el botón no se bloquea con una pausa vencida.
+  const paused = !!pause?.paused && (pause.until == null || pause.until > Date.now());
 
   // Cotización de envío con debounce (no satura la API). Espera una dirección
   // con un mínimo de texto y nunca encola una segunda consulta mientras una va
@@ -618,6 +624,12 @@ export default function Checkout({
           </div>
         )}
 
+        {paused && (
+          <div className="checkout-note checkout-note--error" role="alert">
+            <span>{pauseNotice(pause)}</span>
+          </div>
+        )}
+
         <div className="trust-strip" aria-label="Garantías de tu pedido">
           <span>🔒 Pago seguro</span>
           <span>✅ Confirmación al instante</span>
@@ -637,17 +649,19 @@ export default function Checkout({
                 ? onRetryPaymentLink
                 : handleConfirm
             }
-            disabled={busy || retryingLink || (!!serverError?.orderId && !serverError.canRetry)}
+            disabled={busy || retryingLink || paused || (!!serverError?.orderId && !serverError.canRetry)}
           >
             {busy || retryingLink
               ? "Procesando…"
-              : serverError?.orderId && !serverError.canRetry
-                ? "Mercado Pago no disponible"
-                : serverError?.orderId
-                  ? "Reintentar el pago"
-                  : isMp
-                    ? "Pagar con Mercado Pago"
-                    : "Confirmar pedido por WhatsApp"}
+              : paused
+                ? "Pedidos pausados"
+                : serverError?.orderId && !serverError.canRetry
+                  ? "Mercado Pago no disponible"
+                  : serverError?.orderId
+                    ? "Reintentar el pago"
+                    : isMp
+                      ? "Pagar con Mercado Pago"
+                      : "Confirmar pedido por WhatsApp"}
           </button>
           {serverError?.orderId && !serverError.canRetry && (
             // Reenviar el checkout crearía otro pedido (el anterior ya está

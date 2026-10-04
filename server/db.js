@@ -176,6 +176,27 @@ await db.exec(`
     updated_at TEXT NOT NULL
   );
 
+  -- Estado operativo por sucursal. Hoy solo la pausa de pedidos
+  -- (server/branch-pause.js): el panel la activa cuando el local no
+  -- puede tomar más pedidos por un rato. Una fila por sucursal como
+  -- máximo; SIN fila = sin pausa (no se siembra nada).
+  --   paused_until          → epoch ms de la reapertura, o NULL
+  --                           (indefinida / ya venció)
+  --   paused_indefinitely   → 1 = "hasta reanudar" (el flag manda
+  --                           por encima de un until viejo)
+  --   pause_message         → texto opcional del local para el
+  --                           cliente, sin HTML ni saltos de línea
+  -- La reapertura es automática y SIN cron: paused_until se evalúa
+  -- al leer (pauseState), así que una pausa vencida es lo mismo que
+  -- no estar pausado.
+  CREATE TABLE IF NOT EXISTS branch_settings (
+    branch TEXT PRIMARY KEY,
+    paused_until INTEGER,
+    paused_indefinitely INTEGER NOT NULL DEFAULT 0,
+    pause_message TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_orders_number ON orders(order_number);
   CREATE INDEX IF NOT EXISTS idx_orders_branch ON orders(branch);
   CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);

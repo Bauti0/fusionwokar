@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BRAND, BRANCH_LIST, phonePlaceholderFor } from "../data/branches.js";
 import { SOCIAL } from "../data/social.js";
 import { isValidPhone } from "../utils/validation.js";
-import { isNowOpen, closedLabel } from "../utils/schedule.js";
+import { isNowOpen, closedLabel, arClockLabel } from "../utils/schedule.js";
+import { getPause } from "../api.js";
 import { IconBowlSteam, IconChopsticks, HeroMotif } from "./ui/icons.jsx";
 
 // ============================================================
@@ -18,6 +19,20 @@ export default function Landing({ onStart, initialBranch, customer }) {
   const [phone, setPhone] = useState(customer?.phone || "");
   const [editData, setEditData] = useState(!customer);
   const [error, setError] = useState("");
+  // Estado de pausa de pedidos por sucursal ({ <id>: { paused, until, message } }).
+  // Se pide SOLO al mostrar la portada (endpoint público chico), para avisar
+  // "Pausado" antes de que el cliente entre al menú. Si falla, no se muestra
+  // nada: el menú sigue avisando igual.
+  const [pauses, setPauses] = useState({});
+  useEffect(() => {
+    let alive = true;
+    getPause()
+      .then((d) => alive && setPauses(d.branches || {}))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   function handleStart(e) {
     e.preventDefault();
@@ -145,7 +160,19 @@ export default function Landing({ onStart, initialBranch, customer }) {
           <div className="field">
             <label className="landing__branchLabel">Elegí tu sucursal</label>
             <div className="branch-select">
-              {BRANCH_LIST.map((b) => (
+              {BRANCH_LIST.map((b) => {
+                const pause = pauses[b.id];
+                const paused = !!pause?.paused;
+                // El estado por tarjeta: "Pausado" (con la hora de vuelta si la
+                // hay) reemplaza a abierto/cerrado, y el puntito queda gris: la
+                // pausa no es ni abierto ni cerrado, es "no estamos tomando
+                // pedidos por ahora".
+                const statusText = paused
+                  ? `Pausado${pause.until ? ` · Volvemos a las ${arClockLabel(pause.until)}` : ""}`
+                  : isNowOpen(b.id)
+                    ? "Abierto ahora"
+                    : (closedLabel(b.id) || "Cerrado hoy");
+                return (
                 <button
                   type="button"
                   key={b.id}
@@ -157,13 +184,14 @@ export default function Landing({ onStart, initialBranch, customer }) {
                   <span className="branch-copy">
                     <span className="branch-name">{b.name}</span>
                     <span className="branch-meta">{b.address}</span>
-                    <span className={`branch-status ${isNowOpen(b.id) ? "is-open" : ""}`}>
+                    <span className={`branch-status ${!paused && isNowOpen(b.id) ? "is-open" : ""}`}>
                       <span className="branch-status__dot" aria-hidden="true" />
-                      {isNowOpen(b.id) ? "Abierto ahora" : (closedLabel(b.id) || "Cerrado hoy")}
+                      {statusText}
                     </span>
                   </span>
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
 

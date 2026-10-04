@@ -46,6 +46,14 @@ import {
 } from "./coupons.js";
 import { applyRefunds, refundableAmount } from "./refunds.js";
 import {
+  getPause,
+  getAllPauses,
+  setPause,
+  clearPause,
+  parsePauseRequest,
+  pauseMessage,
+} from "./branch-pause.js";
+import {
   parseClientRequestId,
   orderFingerprint,
   findOrderByClientRequestId,
@@ -87,6 +95,7 @@ import { isValidPhone, isValidEmail, isValidIdentification } from "../src/utils/
 //   GET   /api/orders/number/:orderNumber   → tracking del cliente
 //   GET   /api/orders/by-phone/:phone       → pedidos del cliente por teléfono
 //   GET   /api/menu/:branchId               → menú de una sucursal (desde la BD)
+//   GET   /api/pause                        → estado de pausa de las sucursales (landing)
 //   POST  /api/events                       → registro de eventos (analytics)
 //   POST  /api/coupons/validate             → validar cupón de descuento
 //   POST  /api/shipping/quote               → calcular costo de envío (Tandil)
@@ -125,6 +134,8 @@ import { isValidPhone, isValidEmail, isValidIdentification } from "../src/utils/
 //   POST  /api/admin/cash-register/open      → abrir caja
 //   POST  /api/admin/cash-register/:id/close → cerrar caja (calcula diferencia)
 //   POST  /api/admin/orders/manual           → cargar pedido de WhatsApp/mostrador
+//   GET   /api/admin/branch-pause           → estado de pausa de pedidos por sucursal
+//   PUT   /api/admin/branch-pause           → pausar (minutos/indefinida) o reanudar
 //   GET   /api/admin/users                  → cuentas de admin de sucursal (solo superadmin)
 //   POST  /api/admin/users                  → crear cuenta de sucursal
 //   PUT   /api/admin/users/:id/password     → cambiar contraseña de una cuenta
@@ -690,6 +701,33 @@ async function getTopProductIds(branchId) {
     console.error("getTopProductIds:", err.message);
     return [];
   }
+}
+
+// ---------- pausa de pedidos por sucursal (branch_settings) ----------
+// El local puede frenar la toma de pedidos un rato (sin cajitas, cocina
+// saturada) sin cerrar el local. El estado vive en la base (sobrevive a
+// reinicios de Render) y la reapertura es automática: paused_until se
+// evalúa al leer, sin cron (server/branch-pause.js).
+//
+// Lecturas públicas (menú y /api/pause): caché por sucursal con TTL
+// corto, así la tienda no golpea la base en cada request. La
+// invalidación al pausar/reanudar es del PROCESO que atiende el PUT;
+// con dos instancias (rolling deploy de Render) la otra converge
+// dentro del TTL. Eso solo afecta el aviso que se VE: el chequeo de
+// POST /api/orders no pasa por esta caché.
+const PAUSE_TTL_MS = 10 * 1000;
+const pauseCache = new Map(); // branch -> { at, state }
+
+function invalidatePauseCache() {
+  pauseCache.clear();
+}
+
+async function cachedPauseFor(branchId) {
+  const cached = pauseCache.get(branchId);
+  if (cached && Date.now() - cached.at < PAUSE_TTL_MS) return cached.state;
+  const state = await getPause(db, branchId, Date.now());
+  pauseCache.set(branchId, { at: Date.now(), state });
+  return state;
 }
 
 // Slugs únicos por sucursal (para nuevos productos)
@@ -1294,6 +1332,36 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
     const clientRequestId = parsedKey.id;
     const fingerprint = clientRequestId ? orderFingerprint(req.body) : "";
     if (await replayExistingOrder(req, res, { clientRequestId, fingerprint })) return;
+
+    // ---------- pausa de la sucursal (panel) ----------
+    // El local puede frenar la toma de pedidos un rato. Va DESPUÉS del
+    // replay de idempotencia (un reintento de un pedido que YA se creó
+    // tiene que recuperar ese pedido aunque la sucursal se haya pausado
+    // en el medio) y ANTES de validar el catálogo y de reservar el
+    // cupón (un pedido que se va a rechazar no tiene que quemar ni un
+    // uso de cupón ni un evento).
+    //
+    // 423 (Locked): el recurso "crear pedido" está bloqueado por el
+    // local. Es 4xx, así que el frontend lo trata como rechazo (no abre
+    // WhatsApp, no vacía el carrito, no registra historial), y un code
+    // propio lo distingue del 409 de la clave de idempotencia. `pause`
+    // viaja en el body para que el checkout muestre hasta cuándo sin
+    // una segunda request.
+    //
+    // La pausa se lee FRESCA (sin la caché de 10 s de las lecturas
+    // públicas): una pausa recién hecha desde el panel tiene que frenar
+    // el próximo pedido, no el de dentro de 10 s. El gate de sucursal
+    // es el mismo que validateOrderBody (CATALOG): una branch inválida
+    // no se chequea acá y cae en el 400 de siempre.
+    const pauseBranch = req.body?.branch;
+    if (typeof pauseBranch === "string" && CATALOG[pauseBranch]) {
+      const pause = await getPause(db, pauseBranch, Date.now());
+      if (pause.paused) {
+        const message = pauseMessage(pause, { scheduled: Boolean(req.body?.scheduledFor) });
+        warnOrder(ORDER_ROUTE, 423, { ...orderCtxFromBody(req.body), code: "orders_paused" }, message);
+        return res.status(423).json({ error: message, code: "orders_paused", pause });
+      }
+    }
 
     // El email lo exige SOLO Mercado Pago (viaja como payer.email de la
     // order); con efectivo o transferencia el checkout ni lo muestra.
@@ -2000,9 +2068,32 @@ app.get("/api/menu/:branchId", rateLimit({ max: 120, name: "menu" }), async (req
     const branchId = String(req.params.branchId || "").trim();
     const menu = await getMenuFromDb(branchId);
     if (!menu.categories.length) return res.status(404).json({ error: "Sucursal no encontrada" });
-    res.json(menu);
+    // El estado de pausa va por afuera del menú cacheado (30 s): una
+    // pausa nueva tiene que verse en el próximo refresh de la tienda,
+    // no cuando vence la caché del menú.
+    res.json({ ...menu, pause: await cachedPauseFor(branchId) });
   } catch (err) {
     console.error("GET /api/menu/:branchId:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- pausa de pedidos (público, para la landing) ----------
+// Solo el estado { paused, until, message } de cada sucursal: es lo que
+// muestra la portada antes de que exista un menú del cual pedir (y no
+// vale bajar dos menús completos para dos estados). Pisa la MISMA
+// caché corta que el menú y el mismo rate limit: no agrega superficie
+// ni costos nuevos. Sin datos sensibles: el mensaje lo escribe el
+// local para que los clientes lo lean.
+app.get("/api/pause", rateLimit({ max: 120, name: "menu" }), async (req, res) => {
+  try {
+    const branches = {};
+    for (const id of Object.keys(MENUS)) {
+      branches[id] = await cachedPauseFor(id);
+    }
+    res.json({ branches });
+  } catch (err) {
+    console.error("GET /api/pause:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });
@@ -2812,6 +2903,79 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("POST /api/admin/orders/manual:", err.message);
     res.status(500).json({ error: "No se pudo crear el pedido" });
+  }
+});
+
+// ---------- pausa de pedidos por sucursal (panel) ----------
+// GET: estado de pausa visible para quien pide. Un branch_admin ve SOLO
+//      la suya; el superadmin, todas. La respuesta siempre tiene la
+//      misma forma ({ branches: { <id>: { paused, until, message } } })
+//      para que el panel no bifurque por rol.
+// PUT: pausa (minutos o "hasta reanudar", con mensaje opcional para el
+//      cliente) o reanuda. La sucursal sale de la SESIÓN: un
+//      branch_admin opera SIEMPRE la suya (body.branch se ignora) y el
+//      superadmin elige, con el mismo 400 indistinguible que el resto
+//      del panel para una sucursal inexistente. La validación de
+//      minutos/mensaje es de server/branch-pause.js (pura, testeada).
+//
+// La pausa NO bloquea este endpoint ni los pedidos manuales: el local
+// pausa justamente para cargar a mano los que ya había negociado.
+app.get("/api/admin/branch-pause", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    if (scope) {
+      res.json({ branches: { [scope]: await getPause(db, scope, Date.now()) } });
+    } else {
+      res.json(await getAllPauses(db, Date.now()));
+    }
+  } catch (err) {
+    console.error("GET /api/admin/branch-pause:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.put("/api/admin/branch-pause", requireAdmin, async (req, res) => {
+  try {
+    const branchResult = effectiveBranch(req.admin, req.body?.branch);
+    if (branchResult.error) return res.status(400).json({ error: branchResult.error });
+    const branch = branchResult.branch;
+    const parsed = parsePauseRequest(req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+    const nowMs = Date.now();
+    if (parsed.action === "resume") {
+      await clearPause(db, { branch, nowIso: now() });
+    } else {
+      await setPause(db, {
+        branch,
+        // Vencimiento en epoch ms desde ahora; "hasta reanudar" va con NULL.
+        until: parsed.indefinite ? null : nowMs + parsed.minutes * 60000,
+        indefinite: parsed.indefinite,
+        message: parsed.message,
+        nowIso: now(),
+      });
+    }
+    // La pausa nueva tiene que verse YA en este proceso (el menú y
+    // /api/pause). La otra instancia de un rolling deploy la levanta
+    // cuando vence el TTL de 10 s.
+    invalidatePauseCache();
+    const state = await getPause(db, branch, nowMs);
+    // Rastro del cambio en los logs del server (único canal de
+    // observabilidad). El mensaje ya viene validado sin saltos de
+    // línea ni HTML, así que la línea no se puede partir.
+    console.log(
+      `[branch-pause] branch=${branch} ` +
+        (state.paused
+          ? state.until
+            ? `pausada hasta ${new Date(state.until).toISOString()}`
+            : "pausada hasta reanudar"
+          : "reanudada") +
+        (state.message ? ` msg="${state.message}"` : "")
+    );
+    res.json({ ok: true, branch, pause: state });
+  } catch (err) {
+    console.error("PUT /api/admin/branch-pause:", err.message);
+    res.status(500).json({ error: "Error interno" });
   }
 });
 

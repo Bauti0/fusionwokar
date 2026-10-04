@@ -146,6 +146,41 @@ export function outsideHoursMessage(branchId) {
   return `${base} Podemos recibir tu pedido ${resumen}.`;
 }
 
+// ============================================================
+// Pausa de pedidos (estado operativo del local, server/branch-pause.js)
+// ============================================================
+
+// "14:30" — la hora argentina de un instante, sin importar la zona del
+// runtime (el server de Render corre en UTC; el navegador del cliente,
+// en su zona). Mismo truco que usa el server para validar los pedidos
+// programados: se pasa el instante a wall clock argentino y se lo
+// formatea en la zona local, así siempre sale la hora del local.
+export function arClockLabel(ms) {
+  const d = toWallclock(new Date(ms), "America/Argentina/Buenos_Aires");
+  return d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+// Aviso de pausa que se muestra en la TIENDA (menú, checkout, landing).
+// El texto del RECHAZO del server (pauseMessage en server/branch-pause.js)
+// es otro: acá no se repite "Por el momento no estamos tomando pedidos"
+// en cada vista; cada componente muestra el aviso con su tono (pill del
+// menú, nota del checkout, estado de la landing).
+//
+// El mensaje del local se renderiza como TEXTO de React en todos los
+// componentes que usan esto (nunca dangerouslySetInnerHTML), así que un
+// "<b>" se vería literal y no puede ejecutar nada.
+export function pauseNotice(pause) {
+  if (!pause?.paused) return "";
+  const parts = ["No estamos tomando pedidos por ahora."];
+  // El mensaje del local es texto libre: si no cierra con puntuación, se
+  // le agrega el punto para que no se pegue con lo que sigue.
+  if (pause.message) {
+    parts.push(/[.!?…]$/.test(pause.message.trim()) ? pause.message : `${pause.message}.`);
+  }
+  if (pause.until) parts.push(`Volvemos a las ${arClockLabel(pause.until)}.`);
+  return parts.join(" ");
+}
+
 // Convierte un instante a un Date local (wall clock) de una zona fija.
 // Sirve para validar horarios de apertura en la zona del negocio aunque
 // el runtime corra en UTC (cliente OK, server determinista).

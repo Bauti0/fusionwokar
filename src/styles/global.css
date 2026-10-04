@@ -1386,6 +1386,16 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .menu__delivery svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; opacity: .7; }
 
+/* Aviso de pausa de pedidos: la misma línea y el mismo tono apagado del
+   aviso de envío (.menu__delivery); solo cambia el contenido (motivo y
+   hora de reapertura). Sin colores nuevos. */
+.menu__paused {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 12px 0 0;
+  color: rgba(255,255,255,.65); font-size: 13px; line-height: 1.45;
+}
+.menu__paused svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; opacity: .7; }
+
 /* Buscador + chips de categorías (sticky, a todo el ancho) */
 .menu__sticky {
   position: sticky; top: var(--header-h); z-index: 40;
@@ -2175,6 +2185,13 @@ body:has(.admin-login) { background: var(--color-secondary); }
   padding: 0;
 }
 .admin-orders-head .admin-day { margin-top: 2px; }
+/* Pausa de pedidos por sucursal (fila propia entre la cabecera y los
+   filtros: en mobile se apila debajo del resumen del día y de "Nuevo
+   pedido"). Reusa los badges y los botones existentes; esto solo
+   ordena la fila. */
+.admin-pause { display: grid; gap: 10px; padding-top: 4px; }
+.admin-pause__item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.admin-pause__msg { font-size: 12.5px; color: var(--color-text-soft); }
 .admin-filters {
   display: grid; grid-template-columns: 1fr; gap: 10px; padding: 16px 0; margin-bottom: 4px;
 }
@@ -2682,6 +2699,8 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .refund-modal { max-width: 420px; }
 .refund-modal__lead { margin: 0 0 14px; font-size: 14.5px; color: var(--color-text-soft); }
 .refund-modal__lead strong { color: var(--color-text); font-weight: 700; }
+/* Pausa de pedidos: mismo estilo de bajada que el modal de devolución. */
+.pause-modal__lead { margin: 0 0 14px; font-size: 14.5px; color: var(--color-text-soft); }
 .refund-modal__field {
   display: flex; align-items: center; gap: 8px;
   border: 2px solid var(--color-border); border-radius: var(--radius-sm);

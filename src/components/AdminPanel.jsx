@@ -8,8 +8,11 @@ import {
   adminSetShipping,
   adminRefund,
   adminStats,
+  adminBranchPause,
+  adminSetBranchPause,
 } from "../api.js";
 import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
+import { arClockLabel } from "../utils/schedule.js";
 import {
   ORDER_STATUSES,
   STATUS_CANCELLED,
@@ -24,6 +27,7 @@ import { IconEmptySearch, IconRepeat, IconPlus } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
+import PauseModal from "./ui/PauseModal.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import AdminStats from "./AdminStats.jsx";
 import AdminProducts from "./AdminProducts.jsx";
@@ -140,6 +144,12 @@ export default function AdminPanel({ me, onLogout }) {
   const seenRef = useRef(loadSeen());
   const [unseenIds, setUnseenIds] = useState(() => new Set());
   const [today, setToday] = useState(null);
+  // ---------- pausa de pedidos por sucursal ----------
+  // Estado ({ <id>: { paused, until, message } }) y branch del modal de
+  // pausa abierto (null = cerrado). "Reanudar" es directo (sin modal).
+  const [branchPauses, setBranchPauses] = useState({});
+  const [pauseTarget, setPauseTarget] = useState(null);
+  const [pauseBusyId, setPauseBusyId] = useState("");
   const dialogRef = useDialogA11y({ onClose: () => setSelected(null), isActive: !!selected });
 
   // "Rehacer": abre "Nuevo pedido" precargado con los productos, cantidades,
@@ -196,15 +206,56 @@ export default function AdminPanel({ me, onLogout }) {
     [branch, status, payment, search, includePending, onLogout]
   );
 
+  // ---------- pausa de pedidos por sucursal ----------
+  // El GET responde solo las sucursales visibles para la sesión: el
+  // branch_admin la suya, el superadmin las dos.
+  const loadPauses = useCallback(async () => {
+    try {
+      const d = await adminBranchPause();
+      setBranchPauses(d.branches || {});
+    } catch {
+      // Sin estado de pausa no se muestra nada: el panel sigue funcionando
+      // igual (la pausa se controla igual desde el server).
+    }
+  }, []);
+
+  // Aplica una pausa o una reanudación y actualiza el estado AL INSTANTE
+  // con la respuesta del server: un "Reanudar" tiene que reabrir la vista
+  // en el mismo click, sin esperar al polling de 10 s. Si falla, el error
+  // se propaga: el modal lo muestra adentro, "Reanudar" lo muestra en el
+  // form-error de la pestaña.
+  async function applyPause(payload) {
+    const res = await adminSetBranchPause(payload);
+    setBranchPauses((prev) => ({ ...prev, [res.branch]: res.pause }));
+    return res;
+  }
+
+  async function handleResume(branchId) {
+    setPauseBusyId(branchId);
+    try {
+      await applyPause({ branch: branchId, action: "resume" });
+    } catch (err) {
+      setError(err.message || "No se pudo reanudar los pedidos");
+    } finally {
+      setPauseBusyId("");
+    }
+  }
+
   // Carga inicial + auto-refresh cada 10 segundos. Se dispara también cuando
   // cambia la identidad de `load` (es decir, cambió un filtro), así el panel
   // NUNCA consulta con filtros viejos (antes había llamadas inmediatas en los
   // onChange del filtro que viajaban con el valor anterior al estado).
+  // El polling también refresca las pausas: refleja cambios hechos desde
+  // otra pestaña o por el admin de la otra sucursal.
   useEffect(() => {
     load();
-    const t = setInterval(() => load({ showSpinner: false }), 10000);
+    loadPauses();
+    const t = setInterval(() => {
+      load({ showSpinner: false });
+      loadPauses();
+    }, 10000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, loadPauses]);
 
   // Detecta pedidos "en curso" nuevos (no vistos todavía) y suena un
   // aviso corto. No suena en la primera carga de la página, solo
@@ -497,6 +548,45 @@ export default function AdminPanel({ me, onLogout }) {
               <IconPlus style={{ width: 14, height: 14 }} /> Nuevo pedido
             </button>
           </div>
+        </div>
+
+        {/* Pausa de pedidos: un control por sucursal visible para la sesión
+            (el branch_admin ve solo la suya; el superadmin, una por cada
+            una). Fila propia debajo de la cabecera, para que se vea en
+            mobile sin pelearle el lugar al resumen del día. */}
+        <div className="admin-pause">
+          {(isBranchAdmin ? [me.branch] : BRANCH_LIST.map((b) => b.id)).map((id) => {
+            const state = branchPauses[id];
+            return (
+              <div key={id} className="admin-pause__item">
+                {!isBranchAdmin && <span className="badge badge--branch">{BRANCHES[id]?.name || id}</span>}
+                {state?.paused ? (
+                  <>
+                    <span className="badge badge--shipping-pending">
+                      ⏸ Pedidos pausados{state.until ? ` · hasta las ${arClockLabel(state.until)}` : " · hasta reanudar"}
+                    </span>
+                    {state.message && <span className="admin-pause__msg">“{state.message}”</span>}
+                    <button
+                      type="button"
+                      className="btn btn--danger-outline btn--sm"
+                      onClick={() => handleResume(id)}
+                      disabled={pauseBusyId === id}
+                    >
+                      {pauseBusyId === id ? "Reanudando…" : "Reanudar pedidos"}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    onClick={() => setPauseTarget(id)}
+                  >
+                    ⏸ Pausar pedidos
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
         <div className="admin-filters">
           <input
@@ -1046,9 +1136,21 @@ const renderOrder = (o) => {
         <TicketPrint order={printComanda} variant="comanda" onClose={() => setPrintComanda(null)} />
       )}
 
+      {/* Pausa de pedidos: el branch del modal abierto (solo pausar; reanudar
+          es directo desde la cabecera). El error del server se muestra
+          adentro del modal, igual que PromptModal. */}
+      {pauseTarget && (
+        <PauseModal
+          branchName={BRANCHES[pauseTarget]?.name || pauseTarget}
+          onSubmit={async ({ minutes, indefinite, message }) => {
+            await applyPause({ branch: pauseTarget, action: "pause", minutes, indefinite, message });
+          }}
+          onClose={() => setPauseTarget(null)}
+        />
+      )}
+
       {refundConfirm && (
-        <ConfirmModal
-          variant="danger"
+        <ConfirmModal          variant="danger"
           title={refundConfirm.full ? "Devolver el total" : "Devolver un monto"}
           message={
             refundConfirm.full ? (

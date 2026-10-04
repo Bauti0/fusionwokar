@@ -18,7 +18,7 @@ function csrfHeader() {
 // el link de pago (503) se mostraba con el mensaje de "no pudimos calcular el
 // envío" y el cliente nunca veía el número de pedido que ya se había guardado.
 class ApiError extends Error {
-  constructor(message, { status = 0, code = "", orderId = null, orderNumber = "", contactWhatsApp = false, retryable = false } = {}) {
+  constructor(message, { status = 0, code = "", orderId = null, orderNumber = "", contactWhatsApp = false, retryable = false, pause = null } = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
@@ -27,6 +27,10 @@ class ApiError extends Error {
     this.orderNumber = orderNumber;
     this.contactWhatsApp = contactWhatsApp;
     this.retryable = retryable;
+    // Estado de pausa de la sucursal cuando el server rechaza con 423
+    // (orders_paused): el checkout lo usa para actualizar el aviso al
+    // instante, sin una segunda request.
+    this.pause = pause;
   }
 }
 
@@ -47,6 +51,7 @@ function toApiError(data, status) {
     orderNumber: data?.orderNumber || "",
     contactWhatsApp: !!data?.contactWhatsApp,
     retryable: !!data?.retryable,
+    pause: data?.pause || null,
   });
 }
 
@@ -112,6 +117,13 @@ export function getOrdersByPhone(phone) {
 // Menú de una sucursal (fuente: BD, editable desde el panel)
 export function getMenu(branchId) {
   return request(`/api/menu/${encodeURIComponent(branchId)}`);
+}
+
+// Estado de pausa de pedidos de todas las sucursales (público). Lo pide
+// solo la landing, para avisar "Pausado" antes de entrar a un menú:
+// { branches: { <id>: { paused, until, message } } }
+export function getPause() {
+  return request("/api/pause");
 }
 
 // Registra un evento de analytics
@@ -368,6 +380,25 @@ export function adminCloseCashRegister(id, closingCounted, notes) {
 export function adminCreateManualOrder(payload) {
   return request("/api/admin/orders/manual", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---- pausa de pedidos por sucursal (admin) ----
+// Estado de pausa de las sucursales visibles para la sesión: un
+// branch_admin recibe solo la suya, el superadmin las dos. Mismo shape
+// que el público: { branches: { <id>: { paused, until, message } } }.
+export function adminBranchPause() {
+  return request("/api/admin/branch-pause");
+}
+
+// Pausa o reanuda. Pausar: { branch, action: "pause", minutes } o
+// { branch, action: "pause", indefinite: true }, con `message` opcional.
+// Reanudar: { branch, action: "resume" }. El branch_admin manda su
+// sucursal igual: el server la ignora y usa la de la sesión.
+export function adminSetBranchPause(payload) {
+  return request("/api/admin/branch-pause", {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }
