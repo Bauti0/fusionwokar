@@ -32,7 +32,8 @@ export default function Landing({ onStart, initialBranch, customer }) {
       return;
     }
     if (!isValidPhone(finalPhone)) {
-      setError("El celular no parece válido. Ej: 2262 555555.");
+      // El ejemplo va por sucursal: antes estaba fijo en el de Necochea.
+      setError(`El celular no parece válido. ${phonePlaceholderFor(branchId)}.`);
       return;
     }
     onStart({ branchId, customer: { name: finalName, phone: finalPhone } });

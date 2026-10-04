@@ -13,6 +13,10 @@
 // ============================================================
 import { isValidPhone, isValidEmail } from "./validation.js";
 import { isOpenAtTime } from "./schedule.js";
+// El ejemplo del celular va por sucursal (2262 en Necochea, 249 en Tandil):
+// estaba fijo en "Ej: 2262 555555" y le mostrábamos el código de área de
+// Necochea a los clientes de Tandil. Cae en el de Necochea si no hay sucursal.
+import { phonePlaceholderFor } from "../data/branches.js";
 
 export function validateCheckoutForm(
   {
@@ -45,7 +49,7 @@ export function validateCheckoutForm(
     return { field: "phone", message: "Completá tu celular para confirmar." };
   }
   if (!isValidPhone(phone)) {
-    return { field: "phone", message: "El celular no parece válido. Ej: 2262 555555." };
+    return { field: "phone", message: `El celular no parece válido. ${phonePlaceholderFor(branchId)}.` };
   }
   // El email solo lo pide Mercado Pago (lo usa como payer.email); con
   // efectivo o transferencia el campo ni se muestra ni se exige.

@@ -105,29 +105,25 @@ export default function useCart(branchId) {
   const total = subtotal + extrasTotal;
   const count = items.reduce((acc, it) => acc + it.qty, 0);
 
-  // Registra un pedido en el historial (al confirmar)
-  const placeOrder = useCallback(
-    (orderMeta) => {
-      const record = {
-        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        date: new Date().toISOString(),
-        items: items.map(({ key, ...rest }) => rest),
-        total,
-        ...orderMeta,
-      };
-      setHistory((prev) => [record, ...prev].slice(0, 30));
-      return record;
-    },
+  // Snapshot del pedido (items + total + meta) SIN tocar el historial. El flujo
+  // efectivo/transferencia lo arma ANTES de llamar al server y recién lo
+  // registra con registerOrder cuando el server confirmó el pedido: si el
+  // server lo rechaza (400 "Producto no disponible") o no responde, el
+  // historial del cliente no queda con un pedido que el local nunca recibió.
+  const buildOrderRecord = useCallback(
+    (orderMeta) => ({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      date: new Date().toISOString(),
+      items: items.map(({ key, ...rest }) => rest),
+      total,
+      ...orderMeta,
+    }),
     [items, total]
   );
 
-  // Completa el orderNumber del último registro local (id) cuando el servidor responde.
-  // Se usa en el flujo efectivo/transferencia: placeOrder corre ANTES de createOrder;
-  // si el servidor falla, el pedido igual sale por WhatsApp y queda en historial.
-  const attachOrderNumber = useCallback((recordId, orderNumber) => {
-    setHistory((prev) =>
-      prev.map((r) => (r.id === recordId ? { ...r, orderNumber } : r))
-    );
+  // Registra en el historial un snapshot ya armado (buildOrderRecord).
+  const registerOrder = useCallback((record) => {
+    setHistory((prev) => [record, ...prev].slice(0, 30));
   }, []);
 
   // Guarda un pedido del flujo Mercado Pago (ya tiene orderNumber del servidor)
@@ -185,8 +181,8 @@ export default function useCart(branchId) {
     total,
     count,
     history,
-    placeOrder,
-    attachOrderNumber,
+    buildOrderRecord,
+    registerOrder,
     placeOrderWithNumber,
     repeatOrder,
   };

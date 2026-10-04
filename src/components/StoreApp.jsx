@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { BRANCHES, BRAND } from "../data/branches.js";
 import { getMenu as getStaticMenu } from "../data/menus.js";
 import useCart from "../hooks/useCart.js";
-import { buildWhatsAppOrderUrl } from "../utils/whatsapp.js";
+import { buildWhatsAppOrderUrl, decideDirectOrderOutcome } from "../utils/whatsapp.js";
 import { createOrder, getMenu as fetchMenu, getOrderByNumber, retryPaymentLink } from "../api.js";
 import { track } from "../utils/tracking.js";
 import Landing from "./Landing.jsx";
@@ -68,6 +68,17 @@ function describeOrderError(err) {
       };
     default:
       return { message: err.message || "No se pudo iniciar el pago.", canRetry: true };
+  }
+}
+
+// Cierra la ventana vacía que BUG-05 abre en el click cuando al final no se
+// va a usar: el server rechazó el pedido (4xx) o no se pudo confirmar que lo
+// guardó. Sin esto queda una pestaña en blanco colgando.
+function closeWaWindow(win) {
+  try {
+    win?.close();
+  } catch {
+    /* el navegador ya la cerró */
   }
 }
 
@@ -318,7 +329,11 @@ export default function StoreApp() {
       }
 
       // Efectivo / Transferencia → pedido confirmado + WhatsApp
-      const record = cart.placeOrder({ orderMode: mode, paymentMethod, address });
+      // El historial local se registra SOLO si el server confirma el pedido:
+      // decideDirectOrderOutcome (función pura, testeada) separa los dos tipos
+      // de falla. Antes el catch de createOrder se comía cualquier error igual
+      // y un 400 "Producto no disponible" igual abría WhatsApp, vaciaba el
+      // carrito y dejaba el pedido en el historial como confirmado.
       // BUG-05: Safari iOS (y otros navegadores) bloquean window.open() que
       // ocurre después de un await: al salir del click el gesto del usuario
       // ya expiró y wa.me cuenta como popup no solicitado. La ventana se
@@ -328,25 +343,47 @@ export default function StoreApp() {
       // WhatsApp" en la pantalla de éxito.
       const waWindow = window.open("", "_blank");
       setWhatsappFallbackUrl(null);
-      let orderNumber = null;
-      let serverDiscount = 0;
-      let serverCoupon = "";
-      let serverScheduled = scheduledFor || "";
+      // Snapshot del carrito para armar el mensaje: todavía NO está en el
+      // historial (recién entra con registerOrder si el server lo confirma).
+      const record = cart.buildOrderRecord({ orderMode: mode, paymentMethod, address });
+      let confirmed = null; // { orderNumber, discount, couponCode, scheduledFor }
+      let failure = null; // decisión de decideDirectOrderOutcome
       try {
         const res = await createOrder(payload);
-        orderNumber = res.orderNumber;
-        serverDiscount = res.discount || 0;
-        serverCoupon = res.couponCode || "";
-        serverScheduled = res.scheduledFor || serverScheduled;
-        // Completar el orderNumber en el historial local (attachOrderNumber)
-        cart.attachOrderNumber(record.id, orderNumber);
-      } catch {
-        // El pedido igual se arma por WhatsApp. Si el server no validó el cupón,
-        // se usa el descuento ya validado en el cliente para que el mensaje no
-        // cobre de más al que el cliente confirmó en pantalla.
-        serverDiscount = couponDiscount || 0;
-        serverCoupon = couponCode || "";
+        confirmed = {
+          orderNumber: res.orderNumber,
+          discount: res.discount || 0,
+          couponCode: res.couponCode || "",
+          scheduledFor: res.scheduledFor || scheduledFor || "",
+        };
+      } catch (err) {
+        failure = decideDirectOrderOutcome(err);
       }
+      if (failure && !failure.openWhatsApp) {
+        // Rechazo del server (4xx con `error`): el pedido NO existe, así que
+        // no hay nada que mandar por WhatsApp. Se cierra la ventana vacía que
+        // BUG-05 abrió en el click y el cliente vuelve al checkout con el
+        // mensaje EXACTO del server y su carrito intacto.
+        closeWaWindow(waWindow);
+        setCheckoutError({
+          message: failure.message,
+          note: failure.note,
+          orderMode: mode,
+          address: mode === "delivery" ? address : "",
+        });
+        setView(VIEWS.checkout);
+        return;
+      }
+      // Server caído (red/timeout/5xx): puede que el pedido SÍ se haya
+      // creado y se haya perdido la respuesta. No se navega la ventana ni se
+      // manda nada solo: se cierra y el cliente elige (reintentar o avisar por
+      // WhatsApp). El pedido no entra al historial. Si el server no validó el
+      // cupón, se usa el descuento ya validado en el cliente para que el
+      // mensaje no cobre de más al que el cliente confirmó en pantalla.
+      const orderNumber = confirmed?.orderNumber || "";
+      const serverDiscount = confirmed ? confirmed.discount : couponDiscount || 0;
+      const serverCoupon = confirmed ? confirmed.couponCode : couponCode || "";
+      const serverScheduled = confirmed ? confirmed.scheduledFor : scheduledFor || "";
       let waUrl;
       try {
         waUrl = buildWhatsAppOrderUrl({
@@ -361,33 +398,45 @@ export default function StoreApp() {
           discount: serverDiscount,
           scheduledFor: serverScheduled,
           shipping,
+          orderNumber,
+          notRegistered: !confirmed,
         });
       } catch (err) {
         // Sin link no hay a dónde navegar: se cierra la ventana vacía y el
         // error lo muestra el checkout (igual que antes, vía el catch de
         // handleConfirm), sin dejar una pestaña en blanco colgando.
-        try {
-          waWindow?.close();
-        } catch {
-          /* el navegador ya la cerró */
-        }
+        closeWaWindow(waWindow);
         throw err;
       }
-      if (waWindow && !waWindow.closed) {
-        try {
-          // La ventana sigue en about:blank (mismo origen): se le carga el
-          // link y wa.me/WhatsApp hace el resto.
-          waWindow.location.href = waUrl;
-        } catch {
-          // No se pudo navegar (p. ej. el usuario ya la cerró): botón visible.
+      if (confirmed) {
+        // Éxito: el pedido está en la base con su número (viaja también en el
+        // mensaje de WhatsApp para que el local lo cruce con el panel).
+        // Recién ahora se registra en el historial, ya con el número.
+        if (waWindow && !waWindow.closed) {
+          try {
+            // La ventana sigue en about:blank (mismo origen): se le carga el
+            // link y wa.me/WhatsApp hace el resto.
+            waWindow.location.href = waUrl;
+          } catch {
+            // No se pudo navegar (p. ej. el usuario ya la cerró): botón visible.
+            setWhatsappFallbackUrl(waUrl);
+          }
+        } else {
+          // El popup quedó bloqueado: el link se muestra como botón visible.
           setWhatsappFallbackUrl(waUrl);
         }
+        cart.registerOrder({ ...record, orderNumber });
+        cart.clearCart();
+        setLastOrder({ orderNumber, paymentStatus: "approved", status: "received" });
       } else {
-        // El popup quedó bloqueado: el link se muestra como botón visible.
+        // No se navega la ventana: el pedido puede haberse creado igual y la
+        // decisión es del cliente. Se cierra y quedan dos salidas en pantalla:
+        // reintentar (vuelve al checkout con el carrito intacto) o el <a> de
+        // WhatsApp, que él toca. El link queda siempre disponible.
+        closeWaWindow(waWindow);
         setWhatsappFallbackUrl(waUrl);
+        setLastOrder({ orderNumber: "", notRegistered: true, notice: failure.message });
       }
-      cart.clearCart();
-      setLastOrder({ orderNumber, paymentStatus: "approved", status: "received" });
       setView(VIEWS.success);
     },
     [branch, cart, showToast]
@@ -549,9 +598,15 @@ export default function StoreApp() {
           <div className="container">
             <div className="success">
               <div className="success__icon">✓</div>
-              <h1>Pedido enviado</h1>
+              <h1>{lastOrder?.notRegistered ? "Pedido sin confirmar" : "Pedido enviado"}</h1>
               <p>
-                {whatsappFallbackUrl ? (
+                {lastOrder?.notRegistered ? (
+                  // El server nunca confirmó el pedido: la pantalla no puede
+                  // decir "pedido enviado". El aviso completo (con el motivo
+                  // y la aclaración de que NO está confirmado hasta que el
+                  // local responda) lo arma decideDirectOrderOutcome.
+                  lastOrder.notice
+                ) : whatsappFallbackUrl ? (
                   <>
                     Tu pedido quedó registrado, pero tu navegador bloqueó la ventana de WhatsApp.
                     Tocá el botón para enviarlo a <strong>{branch.name}</strong>.
@@ -576,24 +631,49 @@ export default function StoreApp() {
                 </div>
               )}
               <div style={{ display: "grid", gap: 10 }}>
-                {whatsappFallbackUrl && (
-                  // BUG-05: la ventana abierta en el click fue bloqueada. Un
-                  // <a target="_blank"> activado con un tap del usuario no
-                  // pasa por el bloqueador de popups, así que es la salida
-                  // garantizada al WhatsApp del local.
-                  <a
-                    className="btn btn--primary btn--block"
-                    href={whatsappFallbackUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    💬 Abrir WhatsApp
-                  </a>
-                )}
-                {lastOrder?.orderNumber && (
-                  <Link className="btn btn--primary btn--block" to={`/track/${lastOrder.orderNumber}`}>
-                    📍 Seguir mi pedido
-                  </Link>
+                {lastOrder?.notRegistered ? (
+                  // El server no confirmó el pedido (puede que lo haya creado):
+                  // NO se manda nada solo. El cliente reintenta con el botón
+                  // (vuelve al checkout con el carrito intacto) o avisa por
+                  // WhatsApp tocando el <a>, que nunca pasa por el bloqueador
+                  // de popups.
+                  <>
+                    <button className="btn btn--primary btn--block" onClick={() => setView(VIEWS.checkout)}>
+                      Reintentar el pedido
+                    </button>
+                    {whatsappFallbackUrl && (
+                      <a
+                        className="btn btn--ghost btn--block"
+                        href={whatsappFallbackUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        💬 Avisar por WhatsApp
+                      </a>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {whatsappFallbackUrl && (
+                      // BUG-05: la ventana abierta en el click fue bloqueada.
+                      // Un <a target="_blank"> activado con un tap del usuario
+                      // no pasa por el bloqueador de popups, así que es la
+                      // salida garantizada al WhatsApp del local.
+                      <a
+                        className="btn btn--primary btn--block"
+                        href={whatsappFallbackUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        💬 Abrir WhatsApp
+                      </a>
+                    )}
+                    {lastOrder?.orderNumber && (
+                      <Link className="btn btn--primary btn--block" to={`/track/${lastOrder.orderNumber}`}>
+                        📍 Seguir mi pedido
+                      </Link>
+                    )}
+                  </>
                 )}
                 <button className="btn btn--primary btn--block" onClick={() => setView(VIEWS.menu)}>
                   Volver al menú
