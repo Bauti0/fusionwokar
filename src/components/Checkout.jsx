@@ -5,6 +5,7 @@ import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
 import { validateCheckoutForm } from "../utils/checkoutValidation.js";
 import { closedLabel } from "../utils/schedule.js";
 import { phonePlaceholderFor } from "../data/branches.js";
+import { shouldCacheQuoteError } from "../utils/shippingCache.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 
@@ -184,8 +185,13 @@ export default function Checkout({
           setShippingError("");
         }
       } catch (err) {
-        quoteCache.set(key, { err: err.message, at: Date.now() });
-        if (addressRef.current.trim() === addr) setShippingError(err.message);
+        const msg = err.message || "";
+        // Cachear el error depende del código del ApiError (transient / unknown /
+        // zone), no del texto del mensaje: ver utils/shippingCache.js.
+        if (shouldCacheQuoteError(err)) {
+          quoteCache.set(key, { err: msg, at: Date.now() });
+        }
+        if (addressRef.current.trim() === addr) setShippingError(msg);
       } finally {
         shippingBusyRef.current = false;
         setShippingBusy(false);
