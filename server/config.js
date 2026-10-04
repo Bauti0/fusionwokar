@@ -44,8 +44,27 @@ const PLACEHOLDER_FRAGMENTS = [
   "00000000",
 ];
 
+// Mínimo del secret del cron externo (PAY-04): autentica el header
+// X-Cron-Secret de POST /api/cron/reconcile. 24 caracteres hex = 96 bits
+// para un secret que viaja por Internet con un rate limit de 6 intentos
+// cada 10 min; más corto le regala margen a la fuerza bruta.
+export const MIN_CRON_SECRET_LENGTH = 24;
+
+// Por qué el secret del cron NO sirve, o "" si sirve. Mismo patrón que
+// webhookSecretProblem: separa "falta" de "corto" porque el arreglo es
+// distinto (hay que generarlo y pegarlo, vs. regenerarlo más largo).
+// A diferencia del de MP, este NUNCA corta el arranque: CRON_SECRET es
+// opcional y sin él el endpoint queda apagado (404) y el barrido lo
+// dispara solo el timer interno de 15 min.
+export function cronSecretProblem(secret) {
+  const value = String(secret || "").trim();
+  if (!value) return "falta";
+  if (value.length < MIN_CRON_SECRET_LENGTH) return "corto";
+  return "";
+}
+
 // Mismas reglas que isDemoMode() de mp.js, pero sobre un env pasado por
-// parÃƒÂ¡metro para poder probarlas sin tocar process.env.
+// parámetro para poder probarlas sin tocar process.env.
 export function isDemo(env = process.env) {
   return env.DEMO_MODE === "true" || !env.MP_ACCESS_TOKEN;
 }
@@ -144,6 +163,25 @@ export function validateConfig(env = process.env) {
     REQUIRED(
       false,
       'ADMIN_PASSWORD sin configurar o con el valor por defecto ("fusionwok"): /admin quedarÃƒÂ­a abierto a cualquiera.'
+    );
+  }
+
+  // ---------- barrido de reconciliación (cron externo, PAY-04) ----------
+  // CRON_SECRET autentica el header X-Cron-Secret de POST /api/cron/reconcile.
+  // Es OPCIONAL y nunca corta el arranque (ni en producción): sin él (o
+  // corto), el endpoint queda apagado (404) y el barrido lo sigue
+  // disparando el timer interno de 15 min. Este warning es el aviso único
+  // que se loguea al arrancar; nunca imprime el valor del secret.
+  const cronProblem = cronSecretProblem(env.CRON_SECRET);
+  if (cronProblem) {
+    const detalle = {
+      falta: "no está configurado",
+      corto: `es demasiado corto (${String(env.CRON_SECRET || "").trim().length} caracteres; mínimo ${MIN_CRON_SECRET_LENGTH})`,
+    }[cronProblem];
+    warnings.push(
+      `CRON_SECRET ${detalle}: el endpoint de barrido POST /api/cron/reconcile queda apagado (404) ` +
+        "y la reconciliación la dispara solo el timer interno de 15 min. Para habilitarlo, generá un secret " +
+        `de ${MIN_CRON_SECRET_LENGTH}+ caracteres con: node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
     );
   }
 

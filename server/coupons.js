@@ -194,15 +194,20 @@ export const ABANDONED_PAYMENT_MS = 24 * 60 * 60 * 1000;
 //
 // Riesgo asumido a propósito (documentado con test en test/coupons.test.js):
 // si el webhook de MP se perdió y el pago estaba aprobado, esto cancela un
-// pedido pagado. La red es la reconciliación de index.js
+// pedido pagado. Las redes son la reconciliación de index.js
 // (loadPublicOrder → shouldReconcile → reconcilePendingOrder), que consulta
-// la order en MP y aplica el estado real; PERO es perezosa (solo corre si
-// alguien consulta GET /api/orders/:id, y MyOrders.jsx deja de mostrar los
-// pending_payment de más de 2 h), se saltea si isDemoMode() o si mpAuthBroken,
-// y NO resucita un pedido ya cancelado (applyMpOrderState solo promueve el
-// status cuando pre.status === "pending_payment"). Asumimos que a las 24 h un
-// checkout sin pagar es un abandono; el test fija esa decisión para que no
-// sea accidental.
+// la order en MP y aplica el estado real, y desde PAY-04 el barrido
+// periódico (server/reconcile.js), que corre ANTES que esta función en el
+// ciclo del timer y hace que el ciclo saltee los mp_order_id si no pudo
+// hablar con MP. Desde PAY-04 el checkout ya no corre por acá con los pedidos
+// que tienen mp_order_id (pasa CHECKOUT_EXPIRE_OPTIONS): su expiración queda
+// en manos del timer. El riesgo que sigue siendo
+// perezoso el del polling (solo corre si alguien consulta GET /api/orders/:id,
+// y MyOrders.jsx deja de mostrar los pending_payment de más de 2 h), se
+// saltea si isDemoMode() o si mpAuthBroken, y NO resucita un pedido ya
+// cancelado (applyMpOrderState solo promueve el status cuando pre.status
+// === "pending_payment"). Asumimos que a las 24 h un checkout sin pagar es
+// un abandono; el test fija esa decisión para que no sea accidental.
 //
 // Idempotencia: el UPDATE lleva la condición (status, payment_status) del
 // SELECT. Por un lado, correr dos veces no hace nada la segunda. Por otro, si
@@ -216,7 +221,26 @@ export const ABANDONED_PAYMENT_MS = 24 * 60 * 60 * 1000;
 // Un fallo en UN pedido no puede cortar el barrido de los demás: se avisa y
 // se sigue con el siguiente. Solo se loguea err.message (viene del driver),
 // nunca datos del cliente.
-export async function expireAbandonedPayments(db) {
+//
+// { skipWithMpOrder } (PAY-04): cuando la llama el ciclo del timer, después
+// del barrido de reconciliación (server/reconcile.js), se pasa en true si el
+// barrido no pudo confirmar el estado en MP (abortó por credenciales rotas o
+// hubo errores de red). En ese ciclo NO se cancelan los pedidos con
+// mp_order_id: un "pendiente" puede ser un pago APROBADO con el webhook
+// perdido, y cancelarlo es regalar la comida — quedan para el próximo ciclo.
+// Los que no tienen mp_order_id (el link de pago nunca se generó) se cierran
+// igual en todos los casos: nunca hubo un pago posible.
+// Contrato del checkout (POST /api/orders) para la expiración: en ese camino NO
+// hay barrido de reconciliación previo, así que solo se cierran los pedidos que
+// nunca tuvieron una order en MP (nunca hubo pago posible). Los que sí la tienen
+// quedan para el timer, que corre el barrido ANTES de expirar (PAY-04):
+// cancelar acá un pendiente de 24 h con el pago aprobado y el webhook perdido
+// es regalar la comida a alguien que pagó, y applyMpOrderState no resucita un
+// cancelled. Se exporta para que el test fije esta decision sin importar el
+// server entero.
+export const CHECKOUT_EXPIRE_OPTIONS = Object.freeze({ skipWithMpOrder: true });
+
+export async function expireAbandonedPayments(db, { skipWithMpOrder = false } = {}) {
   let cancelados = 0;
   try {
     const cutoff = new Date(Date.now() - ABANDONED_PAYMENT_MS).toISOString();
@@ -226,7 +250,8 @@ export async function expireAbandonedPayments(db) {
          WHERE payment_method = 'mercadopago'
            AND status = 'pending_payment'
            AND payment_status = 'pending'
-           AND created_at < ?`
+           AND created_at < ?
+           ${skipWithMpOrder ? "AND mp_order_id IS NULL" : ""}`
       )
       .all(cutoff);
     for (const r of rows) {

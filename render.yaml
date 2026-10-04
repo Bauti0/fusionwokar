@@ -32,6 +32,10 @@ services:
         sync: false
       - key: MP_WEBHOOK_SECRET
         sync: false
+      # Cron externo del barrido de reconciliación (POST /api/cron/reconcile).
+      # Opcional: sin ella el endpoint da 404 y solo corre el timer interno.
+      - key: CRON_SECRET
+        sync: false
 
       # ---- Envío (Tandil) ----
       # Todas con sync: false: se completan una vez en el dashboard y no se

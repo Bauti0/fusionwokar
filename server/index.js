@@ -43,8 +43,10 @@ import {
   releaseOrphanReservation,
   releaseStaleCouponReservations,
   expireAbandonedPayments,
+  CHECKOUT_EXPIRE_OPTIONS,
 } from "./coupons.js";
 import { applyRefunds, refundableAmount } from "./refunds.js";
+import { sweepPendingPayments, sweepFailed, cronRequestAuthorized } from "./reconcile.js";
 import {
   listOrders,
   getOrderScoped,
@@ -81,6 +83,7 @@ import { isValidPhone, isValidEmail, isValidIdentification } from "../src/utils/
 //   POST  /api/shipping/quote               → calcular costo de envío (Tandil)
 //   POST  /api/webhooks/mercadopago         → webhook de pago (verifica + actualiza)
 //   POST  /api/payments/demo/:id/:action    → simular aprobación/rechazo (solo demo)
+//   POST  /api/cron/reconcile               → barrido de reconciliación (auth: header X-Cron-Secret)
 //   POST  /api/admin/login                  → login del panel (cookie httpOnly)
 //   POST  /api/admin/logout                 → cierre de sesión
 //   GET   /api/admin/me                     → sesión del panel
@@ -1062,9 +1065,13 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     // evita que dos checkouts simultáneos consuman el mismo cupón limitado.
     // Primero se liberan reservas huérfanas de pedidos nunca pagados para que
     // el cupo no se queme con pedidos en pending_payment abandonados, y de
-    // paso se cierran los que ya superaron las 24 h (BUG-08).
+    // paso se cierran los que ya superaron las 24 h (BUG-08). OJO: acá solo se
+    // cancelan los pedidos SIN mp_order_id (CHECKOUT_EXPIRE_OPTIONS): el checkout
+    // no tiene barrido previo que confirme el estado real en MP, y un pendiente
+    // de 24 h puede ser un pago aprobado con el webhook perdido. Esos los
+    // cancela el timer, que barre antes de expirar (PAY-04).
     await releaseStaleCouponReservations(db);
-    await expireAbandonedPayments(db);
+    await expireAbandonedPayments(db, CHECKOUT_EXPIRE_OPTIONS);
     let couponReserved = false;
     if (couponCode) {
       if (!(await reserveCoupon(db, couponCode, branch))) {
@@ -1337,6 +1344,59 @@ setInterval(() => {
   for (const [k, v] of reconciledAt) if (t - v > 5 * 60 * 1000) reconciledAt.delete(k);
 }, 15 * 60 * 1000).unref();
 
+// ---------- barrido periódico de reconciliación (PAY-04) ----------
+// El webhook es el camino normal, pero si se pierde y el cliente cerró la
+// pestaña, la reconciliación perezosa del polling (loadPublicOrder) no
+// alcanza: solo corre si alguien consulta el pedido, y MyOrders deja de
+// mostrar los pending_payment pasadas las 2 h. Este barrido recorre
+// periódicamente los candidatos (server/reconcile.js) y les aplica el
+// estado REAL de MP, ANTES de que la expiración de 24 h los cancele por
+// abandono. Ese orden es el invariante del ciclo: primero se reconcilia,
+// después se expira — cancelar un pago aprobado con el webhook perdido es
+// regalar la comida, y applyMpOrderState no resucita un cancelled.
+let reconcileInFlight = false;
+
+// getOrder del barrido: mismo criterio que reconcilePendingOrder — si MP
+// rechaza las credenciales en vivo, el flag queda marcado para todo el
+// server (el polling también deja de intentarlo).
+async function sweepGetOrder(mpOrderId) {
+  try {
+    return await getOrder(mpOrderId);
+  } catch (err) {
+    if (err instanceof MpError && err.isAuthError) mpAuthBroken = true;
+    throw err;
+  }
+}
+
+// Una corrida del barrido con el lock compartido por el timer y el endpoint
+// de cron: nunca dos barridos a la vez pisando los mismos pedidos.
+// Devuelve null si ya hay una en curso, o los contadores si corrió. Loguea
+// UNA línea por corrida con los contadores, nada más: sin datos de clientes
+// ni ids de MP (los aprobados ya los anuncia applyMpOrderState).
+async function runSweepWithLock() {
+  if (reconcileInFlight) return null;
+  reconcileInFlight = true;
+  try {
+    const result = await sweepPendingPayments({
+      db,
+      getOrder: sweepGetOrder,
+      // Reutilizados tal como existen: shouldReconcile filtra por fila
+      // (demo, credenciales rotas, cooldowns del polling) y
+      // applyMpOrderState es la ÚNICA máquina de estados del pago.
+      applyState: applyMpOrderState,
+      shouldReconcile,
+      isAuthBroken: () => mpAuthBroken,
+    });
+    console.log(`[reconcile] barrido: ${JSON.stringify(result)}`);
+    return result;
+  } finally {
+    reconcileInFlight = false;
+  }
+}
+
+// Ciclo del timer (PAY-04): PRIMERO el barrido de reconciliación y DESPUÉS
+// la expiración. Si el barrido abortó o tuvo errores de MP, este ciclo no
+// cancela pedidos con mp_order_id (quedan para el siguiente).
 // Cierra los pedidos de MP que el cliente empezó y nunca pagó (BUG-08).
 // El sweep de cupones de arriba solo corre al crear un pedido, así que sin
 // este timer un pedido abandonado se quedaría en pending_payment hasta que
@@ -1345,8 +1405,44 @@ setInterval(() => {
 setInterval(() => {
   // El catch es por si la función llegara a rechazar: una promesa sin manejar
   // dentro de un setInterval tumba el proceso entero (Node ≥15).
-  expireAbandonedPayments(db).catch((err) => console.error("expireAbandonedPayments:", err.message));
+  (async () => {
+    const sweepResult = await runSweepWithLock();
+    if (!sweepResult) return; // ya había una corrida (cron externo): este ciclo no expira nada
+    await expireAbandonedPayments(db, { skipWithMpOrder: sweepFailed(sweepResult) });
+  })().catch((err) => console.error("ciclo de reconciliación:", err.message));
 }, 15 * 60 * 1000).unref();
+
+// Segundo disparador del barrido: un cron externo (p. ej. cron-job.org cada
+// 10 min), para no depender solo del timer de arriba. FUERA de /api/admin: no
+// usa sesión ni CSRF, se autentica con el header X-Cron-Secret contra
+// CRON_SECRET. Ausente, incorrecto, o con el secret sin configurar/corto →
+// el MISMO 404 que una ruta inexistente: no se confirma que la ruta exista.
+app.post(
+  "/api/cron/reconcile",
+  (req, res, next) => {
+    if (!cronRequestAuthorized({ secret: process.env.CRON_SECRET, header: req.get("x-cron-secret") })) {
+      return res.status(404).json({ error: "Ruta no encontrada" });
+    }
+    next();
+  },
+  // Rate limit propio (el cron legítimo pide 1 vez cada 10 min): un job mal
+  // configurado no puede aplastar a MP ni a la base.
+  rateLimit({ max: 6, windowMs: 10 * 60 * 1000, name: "cronreconcile" }),
+  async (req, res) => {
+    try {
+      const result = await runSweepWithLock();
+      // Ya hay una corrida en curso (el timer o un cron anterior): no se
+      // encola, el job reintenta en su próxima pasada.
+      if (!result) return res.status(409).json({ busy: true });
+      // Solo contadores, nunca datos de clientes ni ids de MP.
+      res.set("Cache-Control", "no-store");
+      return res.json(result);
+    } catch (err) {
+      console.error("POST /api/cron/reconcile:", err.message);
+      return res.status(500).json({ error: "Error interno" });
+    }
+  }
+);
 
 // Devuelve el pedido ya reconciliado con MP cuando corresponde (o la fila tal
 // cual). El 304 se evalúa DESPUÉS, sobre la fila actualizada: si se evaluara
