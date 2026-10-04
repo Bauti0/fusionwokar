@@ -68,6 +68,16 @@ await db.exec(`
     refunded_amount INTEGER NOT NULL DEFAULT 0,
     refunds_json TEXT NOT NULL DEFAULT '[]',
     coupon_released_at TEXT,
+    -- Clave de idempotencia del INTENTO de pedido (ver
+    -- server/order-idempotency.js): la manda el cliente y se reusa en cada
+    -- reintento, para que un reintento tras una respuesta perdida devuelva el
+    -- pedido que ya existe en vez de crear un segundo. NULL en todos los
+    -- pedidos viejos: el índice único es PARCIAL justamente para eso.
+    client_request_id TEXT,
+    -- Huella (sha256) del contenido del pedido al que pertenece esa clave.
+    -- que ata la clave al pedido: la misma clave con otra huella es otro
+    -- pedido y responde 409 en vez de devolver un pedido ajeno.
+    client_request_fingerprint TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -215,6 +225,33 @@ await ensureColumn("orders", "coupon_released_at", "coupon_released_at TEXT");
 // Dinero devuelto por Mercado Pago (suma) y detalle de cada devolución.
 await ensureColumn("orders", "refunded_amount", "refunded_amount INTEGER NOT NULL DEFAULT 0");
 await ensureColumn("orders", "refunds_json", "refunds_json TEXT NOT NULL DEFAULT '[]'");
+
+// Idempotencia de la creación de pedidos (server/order-idempotency.js): la
+// clave que el cliente manda por intento de pedido, para que reintentar tras una
+// respuesta perdida (red caída, 5xx, deploy) devuelva el pedido que YA existe en
+// lugar de crear un segundo y quemar otro uso de cupón. El índice se crea
+// DESPUÉS de agregar las columnas (sino falla en la DB vieja).
+await ensureColumn("orders", "client_request_id", "client_request_id TEXT");
+await ensureColumn("orders", "client_request_fingerprint", "client_request_fingerprint TEXT");
+try {
+  await db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_client_request
+    ON orders(client_request_id) WHERE client_request_id IS NOT NULL;
+  `);
+} catch (err) {
+  // ⚠️ NO se corta el arranque. Sin el índice, el reintento NORMAL (que consulta
+  // la clave antes de insertar) sigue funcionando igual: el índice solo es la
+  // defensa final para dos requests EXACTAMENTE simultáneos con la misma clave,
+  // la única ventana en la que el chequeo previo no alcanza. Sin esa defensa,
+  // dos requests simultáneos podrían abrir dos filas: por eso el aviso dice
+  // exactamente qué se perdió.
+  console.warn(
+    "⚠️  No se pudo crear uq_orders_client_request: la protección contra dos pedidos " +
+      "SIMULTÁNEOS con la misma clave de idempotencia está INACTIVA (reintentos normales " +
+      "siguen deduplicados).",
+    err.message
+  );
+}
 
 // Cupones por sucursal (T14): '' = global (vale en ambas), 'necochea'/
 // 'tandil' = local. Los cupones existentes quedan globales sin tocar

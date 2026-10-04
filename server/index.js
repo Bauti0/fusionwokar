@@ -40,12 +40,20 @@ import {
   applyCoupon,
   reserveCoupon,
   releaseOrderCoupon,
-  releaseOrphanReservation,
   releaseStaleCouponReservations,
   expireAbandonedPayments,
   CHECKOUT_EXPIRE_OPTIONS,
 } from "./coupons.js";
 import { applyRefunds, refundableAmount } from "./refunds.js";
+import {
+  parseClientRequestId,
+  orderFingerprint,
+  findOrderByClientRequestId,
+  sameAttempt,
+  insertOrderWithIdempotency,
+  replayPayload,
+  CONFLICT_ERROR as REQUEST_CONFLICT_ERROR,
+} from "./order-idempotency.js";
 import { sweepPendingPayments, sweepFailed, cronRequestAuthorized } from "./reconcile.js";
 import {
   listOrders,
@@ -65,6 +73,7 @@ import {
   isCouponCodeTaken,
 } from "./admin-queries.js";
 import { validateConfig } from "./config.js";
+import { orderLogLine } from "./order-log.js";
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone, isValidEmail, isValidIdentification } from "../src/utils/validation.js";
@@ -532,8 +541,15 @@ function isSecureRequest(req) {
 }
 
 // ---------- rate limiting simple (en memoria) ----------
+// Mensaje único de rate limit: lo usan todos los endpoints, así también el
+// log de observabilidad del checkout (que loguea SIEMPRE el mismo texto que
+// se le respondió al cliente) puede referenciarlo sin duplicar el literal.
+const RATE_LIMIT_ERROR = "Demasiadas solicitudes, intentá más tarde";
 const rateBuckets = new Map();
-function rateLimit({ windowMs = 60000, max = 30, name = "api" } = {}) {
+// onLimit: callback opcional para dejar rastro cuando se rechaza (solo logs:
+// no cambia ni el cuerpo ni el código de la respuesta). Lo usan los
+// endpoints de pedido, que antes contestaban 429 sin dejar NADA en Render.
+function rateLimit({ windowMs = 60000, max = 30, name = "api", onLimit = null } = {}) {
   return (req, res, next) => {
     const ip = req.ip || req.socket.remoteAddress || "unknown";
     const key = `${name}:${ip}`;
@@ -545,7 +561,8 @@ function rateLimit({ windowMs = 60000, max = 30, name = "api" } = {}) {
     }
     bucket.count += 1;
     if (bucket.count > max) {
-      return res.status(429).json({ error: "Demasiadas solicitudes, intentá más tarde" });
+      if (onLimit) onLimit(req);
+      return res.status(429).json({ error: RATE_LIMIT_ERROR });
     }
     return next();
   };
@@ -565,7 +582,7 @@ function rateLimitByKey(keyFn, { windowMs = 10 * 60 * 1000, max = 8, name = "key
     }
     bucket.count += 1;
     if (bucket.count > max) {
-      return res.status(429).json({ error: "Demasiadas solicitudes, intentá más tarde" });
+      return res.status(429).json({ error: RATE_LIMIT_ERROR });
     }
     return next();
   };
@@ -851,7 +868,9 @@ async function validateOrderBody(body, { requireEmail = false } = {}) {
       // transferencia pasaban con envío "pendiente" y se aceptaban direcciones
       // fuera de la zona de reparto.
       if (code === "zone" || code === "unknown") {
-        return { error: err.message };
+        // `shippingCode` no va en la respuesta: es solo para el log del
+        // checkout (ver warnOrder), que necesita distinguir zone de unknown.
+        return { error: err.message, shippingCode: code };
       }
       // Fallo TRANSITORIO (proveedores caídos) o inesperado:
       //  - Mercado Pago → se bloquea (no se puede cobrar sin saber el costo),
@@ -864,7 +883,12 @@ async function validateOrderBody(body, { requireEmail = false } = {}) {
       //    el costo se confirma por WhatsApp antes de salir (badge en el panel).
       if (paymentMethod === "mercadopago") {
         const msg = code === "transient" ? err.message : "No pudimos calcular el envío. Escribinos por WhatsApp.";
-        return { error: msg, code: "shipping_unavailable", contactWhatsApp: true };
+        return {
+          error: msg,
+          code: "shipping_unavailable",
+          contactWhatsApp: true,
+          shippingCode: code || "unexpected",
+        };
       }
       shipping = { cost: 0, blocks: 0, supported: true, pending: true };
     }
@@ -908,6 +932,46 @@ async function recordEvent(type, branch) {
     typeof branch === "string" && CATALOG[branch] ? branch : "",
     now()
   );
+}
+
+// ---------- observabilidad del checkout ----------
+// Antes, un 400 de validateOrderBody o un 429 del rate limit contestaban sin
+// dejar NADA en los logs de Render. Cuando el local reportaba "un cliente vio
+// Producto no disponible", no había forma de saber si el pedido se frenó por
+// disponibilidad, por precio, por zona de envío o por rate limit: solo el
+// mensaje que recibió el cliente. Ahora cada rechazo/error y cada pedido
+// creado deja una línea, con el mismo nivel (warn) para poder filtrarlas.
+//
+// La línea la arma orderLogLine (server/order-log.js), que es una whitelist
+// estricta: solo sucursal, modalidad, método de pago, número de pedido,
+// códigos de falla y el mensaje de error. NUNCA nombre, teléfono, email,
+// dirección, DNI ni notas. El `message` que se le pasa es siempre el texto
+// que ya se le respondió al cliente (literal estático en validateOrderBody,
+// shipping.js y coupons.js: lo fija test/order-log.test.js).
+const ORDER_ROUTE = "POST /api/orders";
+const PAY_LINK_ROUTE = "POST /api/orders/:id/payment-link";
+
+// Contexto del log desde el body del checkout. El body trae nombre, teléfono,
+// email, dirección y notas: acá solo se leen los tres campos de contexto,
+// y la whitelist de orderLogLine descarta cualquier otra cosa.
+function orderCtxFromBody(body) {
+  const b = body && typeof body === "object" ? body : {};
+  return { branch: b.branch, orderMode: b.orderMode, paymentMethod: b.paymentMethod };
+}
+
+// Contexto del log desde la fila de orders (payment-link no recibe body).
+function orderCtxFromRow(row) {
+  const r = row && typeof row === "object" ? row : {};
+  return {
+    branch: r.branch,
+    orderMode: r.order_mode,
+    paymentMethod: r.payment_method,
+    orderNumber: r.order_number,
+  };
+}
+
+function warnOrder(route, status, ctx, message) {
+  console.warn(orderLogLine(route, status, message ? { ...ctx, message } : ctx));
 }
 
 // Autenticación del admin (cookie httpOnly o token en tabla admin_tokens).
@@ -1041,8 +1105,196 @@ function mpUnavailablePayload(err, { orderId, orderNumber }) {
 // Ventana generosa a propósito: en el flujo de Mercado Pago es normal que el
 // cliente cierre el modal y reintente el checkout varias veces. El abuso ya
 // está cubierto por la validación de catálogo/precios server-side.
-app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "orders" }), async (req, res) => {
+// El 429 también deja rastro (onLimit): el rate limit es la causa más difícil
+// de ver desde el panel, porque el cliente solo ve "intentá más tarde".
+const ordersRateLimit = rateLimit({
+  max: 20,
+  windowMs: 5 * 60 * 1000,
+  name: "orders",
+  onLimit: (req) => warnOrder(ORDER_ROUTE, 429, orderCtxFromBody(req.body), RATE_LIMIT_ERROR),
+});
+
+// Antigüedad máxima para (re)generar el link de Mercado Pago de un pedido. El
+// mismo límite que usa POST /api/orders/:id/payment-link: más allá de las 24 h
+// el link ya venció y no tiene sentido cobrarlo online.
+const MP_LINK_MAX_AGE_MS = 24 * 3600 * 1000;
+
+// Los ítems guardados en la fila son los cleanItems que validó el checkout
+// (JSON). Si algún día no se pudieran parsear, se sigue con un carrito vacío en
+// vez de romper la respuesta: acá solo sirven para la descripción y el
+// desglose de MP, que se pueden armar sin ítems.
+function orderItemsOf(row) {
   try {
+    const parsed = JSON.parse(row.items || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// ¿Tiene sentido pedirle a MP un link para este pedido? Solo si es de MP, no
+// estamos en demo, el pago sigue sin resolver y el pedido es reciente. Con un
+// pedido ya pagado o cancelado NO se toca MP: la cache de idempotencia de MP
+// tiene vencimiento, así que volver a crear la order de un pedido viejo podría
+// abrir una segunda order de verdad.
+function mpLinkStillUsable(row) {
+  return (
+    row.payment_method === "mercadopago" &&
+    !isDemoMode() &&
+    row.status === "pending_payment" &&
+    row.payment_status === "pending" &&
+    Date.now() - new Date(row.created_at).getTime() <= MP_LINK_MAX_AGE_MS
+  );
+}
+
+// Responde con un pedido que YA existe (misma clientRequestId + misma huella).
+// Es el camino que toma un reintento cuando la respuesta del primer intento se
+// perdió: mismo cuerpo que el éxito, sin insertar nada, sin reservar cupón, sin
+// evento y sin una segunda order de MP.
+//
+// Para Mercado Pago se vuelve a pedir la order con el orderNumber del pedido,
+// que mp.js ya usa como X-Idempotency-Key: MP devuelve la order que YA existe
+// (con su checkout_url) en lugar de crear una nueva, así que el cliente
+// termina en el mismo checkout y no se duplica el cobro.
+//
+// La respuesta NO lleva datos personales (ni nombre, teléfono, email, dirección
+// ni notas): sale toda de la fila del pedido, y replayPayload no serializa
+// ningún campo del cliente.
+async function sendExistingOrder(req, res, row) {
+  const demo = isDemoMode();
+  let checkoutUrl = null;
+
+  if (mpLinkStillUsable(row)) {
+    const cartItems = orderItemsOf(row);
+    try {
+      const mpOrder = await createMpOrderForOrder({
+        orderNumber: row.order_number,
+        total: row.total,
+        description: `${cartItems.length} items · ${row.branch}`,
+        base: requestBaseUrl(req),
+        // Mismo payer que el reintento del payment-link: el email y el nombre
+        // están en la fila, la identificación no (dato sensible, no se
+        // persiste) — limitación ya documentada de ese camino.
+        payer: {
+          ...(row.customer_email ? { email: row.customer_email } : {}),
+          ...(row.customer_first_name ? { firstName: row.customer_first_name } : {}),
+          ...(row.customer_last_name ? { lastName: row.customer_last_name } : {}),
+        },
+        additionalInfo: { registrationDate: await registrationDateFor(row.customer_phone) },
+        mpItems: mpItemsForCart({
+          orderNumber: row.order_number,
+          cartItems,
+          total: row.total,
+          discount: row.discount,
+          shippingCost: row.shipping,
+        }),
+      });
+      checkoutUrl = mpOrder.checkoutUrl;
+      // Solo se escribe si cambia: el pedido puede volver con la order que
+      // tenía, y no hace falta bumpear updated_at (eso wakes el polling).
+      if (mpOrder.id !== row.mp_order_id) {
+        await db
+          .prepare("UPDATE orders SET mp_order_id = ?, updated_at = ? WHERE id = ?")
+          .run(mpOrder.id, now(), row.id);
+      }
+    } catch (err) {
+      // Mismo contrato que el primer intento: vuelven orderId + orderNumber +
+      // retryable + code, así el frontend sigue ofreciendo "reintentar el link"
+      // (o el WhatsApp con el número) en vez de mostrar un error vacío.
+      console.error("MP order falló al recuperar el pedido por clientRequestId:", err.message);
+      const { status, payload } = mpUnavailablePayload(err, {
+        orderId: row.id,
+        orderNumber: row.order_number,
+      });
+      warnOrder(
+        ORDER_ROUTE,
+        status,
+        {
+          branch: row.branch,
+          orderMode: row.order_mode,
+          paymentMethod: row.payment_method,
+          orderNumber: row.order_number,
+          code: payload.code,
+        },
+        payload.error
+      );
+      return res.status(status).json(payload);
+    }
+  }
+
+  // Línea propia para poder separar en los logs "se creó" de "era el mismo
+  // intento de antes": es el mismo status que el éxito, pero el `code` dice que
+  // no se insertó nada.
+  warnOrder(
+    ORDER_ROUTE,
+    200,
+    {
+      branch: row.branch,
+      orderMode: row.order_mode,
+      paymentMethod: row.payment_method,
+      orderNumber: row.order_number,
+      code: "idempotent_replay",
+    },
+    "El pedido ya estaba registrado: se devolvió el existente"
+  );
+  return res.json(
+    replayPayload(row, { demo, demoToken: demo ? demoTokenFor(row.id) : "", checkoutUrl })
+  );
+}
+
+// Si esta clave de idempotencia ya tiene un pedido, responde y devuelve true
+// (el request ya está completo). Si no hay pedido con esa clave, devuelve false
+// y el handler sigue con la creación normal.
+//
+// La misma clave con OTRO contenido responde 409 sin devolver NADA del pedido
+// que ya existe (ni su número, ni su total, ni sus datos): sin esto, adivinar o
+// reutilizar una clave devolvería los datos de un pedido ajeno. El frontend
+// descarta la clave ante cualquier 4xx, así que el intento siguiente es un
+// pedido nuevo de verdad.
+async function replayExistingOrder(req, res, { clientRequestId, fingerprint }) {
+  if (!clientRequestId) return false;
+  const row = await findOrderByClientRequestId(db, clientRequestId);
+  if (!row) return false;
+  if (!sameAttempt(row, fingerprint)) {
+    warnOrder(
+      ORDER_ROUTE,
+      409,
+      { ...orderCtxFromBody(req.body), code: "request_conflict" },
+      REQUEST_CONFLICT_ERROR
+    );
+    res.status(409).json({ error: REQUEST_CONFLICT_ERROR, code: "request_conflict" });
+    return true;
+  }
+  await sendExistingOrder(req, res, row);
+  return true;
+}
+app.post("/api/orders", ordersRateLimit, async (req, res) => {
+  try {
+    // ---------- idempotencia del intento (clientRequestId) ----------
+    // Si la respuesta de un POST se pierde (red caída, deploy, 5xx del proxy), el
+    // cliente no sabe si el pedido se guardó y la pantalla "No pudimos
+    // confirmar" le ofrece "Reintentar el pedido". Ese reintento mande la MISMA
+    // clave que el primer intento (crypto.randomUUID, atada al contenido del
+    // intento): si la clave ya tiene un pedido, se devuelve ese pedido y no se
+    // crea un segundo ni se quema otro uso de cupón.
+    //
+    // Va ANTES de validateOrderBody a propósito: si el primer intento llegó a
+    // reservar el cupón, validar de nuevo respondería "el cupón ya no tiene
+    // usos" (400) en lugar de devolverle al cliente el pedido que ya hizo.
+    const parsedKey = parseClientRequestId(req.body?.clientRequestId);
+    if (parsedKey.error) {
+      warnOrder(
+        ORDER_ROUTE,
+        400,
+        { ...orderCtxFromBody(req.body), code: "invalid_request_id" },
+        parsedKey.error
+      );
+      return res.status(400).json({ error: parsedKey.error, code: "invalid_request_id" });
+    }
+    const clientRequestId = parsedKey.id;
+    const fingerprint = clientRequestId ? orderFingerprint(req.body) : "";
+    if (await replayExistingOrder(req, res, { clientRequestId, fingerprint })) return;
+
     // El email lo exige SOLO Mercado Pago (viaja como payer.email de la
     // order); con efectivo o transferencia el checkout ni lo muestra.
     // Sigue siendo una decisión server-side: el canal público la pide
@@ -1054,6 +1306,9 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
       const payload = { error: result.error };
       if (result.code) payload.code = result.code;
       if (result.contactWhatsApp) payload.contactWhatsApp = true;
+      // Una línea por rechazo de validación (con el código de falla de envío,
+      // que no va en la respuesta). No cambia el 400 que se devuelve.
+      warnOrder(ORDER_ROUTE, 400, { ...orderCtxFromBody(req.body), code: result.code, shippingCode: result.shippingCode }, result.error);
       return res.status(400).json(payload);
     }
     const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
@@ -1075,6 +1330,13 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     let couponReserved = false;
     if (couponCode) {
       if (!(await reserveCoupon(db, couponCode, branch))) {
+        // El cupón se acaba de agotar, pero puede que lo haya agotado un request
+        // gemelo con la MISMA clave de idempotencia (dos tabs con el mismo
+        // intento). Antes de rechazar se re-consulta la clave: si el pedido ya
+        // está guardado, se lo devolvemos en vez de darle un 400 a un cliente
+        // que solo quiere recuperar lo que ya hizo.
+        if (await replayExistingOrder(req, res, { clientRequestId, fingerprint })) return;
+        warnOrder(ORDER_ROUTE, 400, { branch, orderMode, paymentMethod }, "El cupón ya no tiene usos disponibles");
         return res.status(400).json({ error: "El cupón ya no tiene usos disponibles" });
       }
       couponReserved = true;
@@ -1094,66 +1356,88 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     let orderNumber;
     let mpOrderId = null;
     let checkoutUrl = null;
-    try {
-      const tmpNumber = `tmp-${randomBytes(8).toString("hex")}`;
-      const stmts = [
-        {
-          sql: `
+    const tmpNumber = `tmp-${randomBytes(8).toString("hex")}`;
+    const stmts = [
+      {
+        sql: `
         INSERT INTO orders
           (order_number, branch, customer_name, customer_phone, customer_email, customer_first_name, customer_last_name, address, order_mode,
            payment_method, payment_status, status, items, total, discount, coupon_code,
-           scheduled_for, notes, shipping, shipping_km, shipping_pending, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           scheduled_for, notes, shipping, shipping_km, shipping_pending, client_request_id, client_request_fingerprint, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-          args: [
-            tmpNumber,
-            branch,
-            customer.name,
-            customer.phone,
-            customer.email,
-            customer.firstName,
-            customer.lastName,
-            address,
-            orderMode,
-            paymentMethod,
-            isMp ? "pending" : "approved", // efectivo/transferencia pagan al recibir → se aprueba directo
-            isMp ? "pending_payment" : "received",
-            JSON.stringify(items),
-            total,
-            discount,
-            couponCode,
-            scheduledFor,
-            notes,
-            shipping.cost,
-            shipping.blocks,
-            shipping.pending ? 1 : 0,
-            ts,
-            ts,
-          ],
-        },
-        {
-          // Número definitivo, derivado del id de la fila recién insertada
-          sql: "UPDATE orders SET order_number = ? || printf('%05d', id), updated_at = ? WHERE id = last_insert_rowid()",
-          args: ["FW-", ts],
-        },
-      ];
-      if (!isMp) {
-        stmts.push({
-          sql: "INSERT INTO events (type, branch, created_at) VALUES (?, ?, ?)",
-          args: ["order_created", branch, ts],
-        });
-      }
-      const results = await db.batch(stmts, "write");
-      const info = results[0];
-      orderId = Number(info.lastInsertRowid);
-      orderNumber = formatOrderNumber(orderId);
-    } catch (err) {
-      // El pedido no se llegó a crear: devolvemos el uso reservado del cupón.
-      // No hay fila que marcar, y no hace falta: ni el webhook ni el sweep
-      // pueden encontrar un pedido que no existe.
-      if (couponReserved) await releaseOrphanReservation(db, couponCode, branch);
-      throw err;
+        args: [
+          tmpNumber,
+          branch,
+          customer.name,
+          customer.phone,
+          customer.email,
+          customer.firstName,
+          customer.lastName,
+          address,
+          orderMode,
+          paymentMethod,
+          isMp ? "pending" : "approved", // efectivo/transferencia pagan al recibir → se aprueba directo
+          isMp ? "pending_payment" : "received",
+          JSON.stringify(items),
+          total,
+          discount,
+          couponCode,
+          scheduledFor,
+          notes,
+          shipping.cost,
+          shipping.blocks,
+          shipping.pending ? 1 : 0,
+          // NULL cuando el cliente no mandó clave: el índice único es parcial
+          // sobre IS NOT NULL, así que todos los pedidos sin clave conviven.
+          clientRequestId || null,
+          fingerprint || null,
+          ts,
+          ts,
+        ],
+      },
+      {
+        // Número definitivo, derivado del id de la fila recién insertada
+        sql: "UPDATE orders SET order_number = ? || printf('%05d', id), updated_at = ? WHERE id = last_insert_rowid()",
+        args: ["FW-", ts],
+      },
+    ];
+    if (!isMp) {
+      stmts.push({
+        sql: "INSERT INTO events (type, branch, created_at) VALUES (?, ?, ?)",
+        args: ["order_created", branch, ts],
+      });
     }
+    // insertOrderWithIdempotency corre el batch y, si choca con el índice único
+    // de la clave (dos requests con la MISMA clave al mismo tiempo), devuelve la
+    // reserva de cupón huérfana y la fila que otro request ya creó, sin insertar
+    // ni reservar nada. Cualquier otro error se propaga al catch general, que
+    // responde 500 como antes.
+    const outcome = await insertOrderWithIdempotency(db, {
+      stmts,
+      clientRequestId,
+      fingerprint,
+      couponCode,
+      branch,
+      couponReserved,
+    });
+    if (outcome.conflict) {
+      warnOrder(
+        ORDER_ROUTE,
+        409,
+        { branch, orderMode, paymentMethod, code: "request_conflict" },
+        REQUEST_CONFLICT_ERROR
+      );
+      return res.status(409).json({ error: REQUEST_CONFLICT_ERROR, code: "request_conflict" });
+    }
+    // El pedido ya existía (este INSERT no llegó a correr: el batch es atómico),
+    // así que se responde con esa fila y no hay ni evento nuevo ni cupón nuevo.
+    if (outcome.replay) {
+      await sendExistingOrder(req, res, outcome.replay);
+      return;
+    }
+    orderId = outcome.lastInsertRowid;
+    orderNumber = formatOrderNumber(orderId);
 
     // Mercado Pago: recién acá se crea la order, con el pedido ya guardado
     // y su número real como external_reference (y como clave de idempotencia).
@@ -1201,12 +1485,16 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
         console.error("MP order falló después de guardar el pedido:", err.message);
         if (couponReserved) await releaseOrderCoupon(db, orderId, couponCode, branch);
         const { status, payload } = mpUnavailablePayload(err, { orderId, orderNumber });
+        warnOrder(ORDER_ROUTE, status, { branch, orderMode, paymentMethod, orderNumber, code: payload.code }, payload.error);
         return res.status(status).json(payload);
       }
       await db
         .prepare("UPDATE orders SET mp_order_id = ?, updated_at = ? WHERE id = ?")
         .run(mpOrderId, now(), orderId);
     }
+
+    // Una línea por pedido creado (número, sucursal y método de pago).
+    warnOrder(ORDER_ROUTE, 200, { branch, orderMode, paymentMethod, orderNumber });
 
     res.json({
       ok: true,
@@ -1226,6 +1514,10 @@ app.post("/api/orders", rateLimit({ max: 20, windowMs: 5 * 60 * 1000, name: "ord
     });
   } catch (err) {
     console.error("POST /api/orders:", err.message);
+    // El detalle del error (stack/consulta) queda en el console.error de
+    // arriba; la línea de observabilidad lleva solo el mensaje que se le
+    // devuelve al cliente, que es texto fijo.
+    warnOrder(ORDER_ROUTE, 500, orderCtxFromBody(req.body), "No se pudo crear el pedido");
     res.status(500).json({ error: "No se pudo crear el pedido" });
   }
 });
@@ -1459,31 +1751,58 @@ async function loadPublicOrder(row) {
 // Reintento del link de pago para un pedido que ya se guardó pero que quedó
 // sin order de MP (falló la generación del link). Evita que el cliente tenga
 // que reenviar el checkout entero y de paso crear un pedido duplicado.
+// Los rechazos loguean una línea cada uno (ver warnOrder): antes un 409
+// "ya tiene un link de pago" no dejaba NADA en los logs de Render, que es
+// justamente el síntoma que el local reportaba cuando el botón de reintentar
+// "no hacía nada".
+const payLinkRateLimit = rateLimit({
+  max: 10,
+  windowMs: 5 * 60 * 1000,
+  name: "paylink",
+  // Sin contexto: este endpoint no recibe body (los datos del pedido están en
+  // la base, que todavía no se consultó cuando el rate limit corta).
+  onLimit: () => warnOrder(PAY_LINK_ROUTE, 429, {}, RATE_LIMIT_ERROR),
+});
 app.post(
   "/api/orders/:id/payment-link",
-  rateLimit({ max: 10, windowMs: 5 * 60 * 1000, name: "paylink" }),
+  payLinkRateLimit,
   async (req, res) => {
     try {
       const id = paramId(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+      if (!Number.isInteger(id) || id <= 0) {
+        warnOrder(PAY_LINK_ROUTE, 400, {}, "ID inválido");
+        return res.status(400).json({ error: "ID inválido" });
+      }
       const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-      if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
+      if (!row) {
+        warnOrder(PAY_LINK_ROUTE, 404, {}, "Pedido no encontrado");
+        return res.status(404).json({ error: "Pedido no encontrado" });
+      }
+      // A partir de acá se conoce la fila: el log puede llevar el número de
+      // pedido y la sucursal (nunca el nombre, el teléfono, el email ni la
+      // dirección: la whitelist de orderLogLine los descarta).
+      const ctx = orderCtxFromRow(row);
       if (row.payment_method !== "mercadopago") {
+        warnOrder(PAY_LINK_ROUTE, 400, { ...ctx, code: "not_mp" }, "Este pedido no se paga con Mercado Pago");
         return res.status(400).json({ code: "not_mp", error: "Este pedido no se paga con Mercado Pago" });
       }
       // Solo pedidos a medio pagar, sin link, y recientes: cualquier otra cosa
       // no es un reintento (o ya tiene link, o el pago se resolvió, o es tan
       // viejo que ya no tiene sentido cobrarlo online).
       if (row.payment_status !== "pending" || row.status !== "pending_payment") {
+        warnOrder(PAY_LINK_ROUTE, 409, { ...ctx, code: "not_retryable" }, "Este pedido ya no está pendiente de pago");
         return res.status(409).json({ code: "not_retryable", error: "Este pedido ya no está pendiente de pago" });
       }
       if (row.mp_order_id) {
+        warnOrder(PAY_LINK_ROUTE, 409, { ...ctx, code: "not_retryable" }, "Este pedido ya tiene un link de pago");
         return res.status(409).json({ code: "not_retryable", error: "Este pedido ya tiene un link de pago" });
       }
-      if (Date.now() - new Date(row.created_at).getTime() > 24 * 3600 * 1000) {
+      if (Date.now() - new Date(row.created_at).getTime() > MP_LINK_MAX_AGE_MS) {
+        warnOrder(PAY_LINK_ROUTE, 409, { ...ctx, code: "not_retryable" }, "Pedido muy antiguo para generar un link de pago");
         return res.status(409).json({ code: "not_retryable", error: "Pedido muy antiguo para generar un link de pago" });
       }
       if (isDemoMode()) {
+        warnOrder(PAY_LINK_ROUTE, 409, { ...ctx, code: "not_retryable" }, "El link de pago solo existe fuera del modo demo");
         return res.status(409).json({ code: "not_retryable", error: "El link de pago solo existe fuera del modo demo" });
       }
 
@@ -1492,12 +1811,7 @@ app.post(
       // el checkout (JSON), así que el reintento manda los mismos ítems reales
       // que el flujo original: descuento de la fila (row.discount) y envío
       // (row.shipping) incluidos.
-      let cartItems = [];
-      try {
-        cartItems = JSON.parse(row.items || "[]");
-      } catch {
-        cartItems = [];
-      }
+      const cartItems = orderItemsOf(row);
       try {
         mpOrder = await createMpOrderForOrder({
           orderNumber: row.order_number,
@@ -1531,15 +1845,20 @@ app.post(
           orderId: row.id,
           orderNumber: row.order_number,
         });
+        warnOrder(PAY_LINK_ROUTE, status, { ...ctx, code: payload.code }, payload.error);
         return res.status(status).json(payload);
       }
 
       await db
         .prepare("UPDATE orders SET mp_order_id = ?, updated_at = ? WHERE id = ?")
         .run(mpOrder.id, now(), row.id);
+      // Una línea de éxito con el número de pedido, la sucursal y el método
+      // de pago (que acá viene de la fila: el endpoint no recibe body).
+      warnOrder(PAY_LINK_ROUTE, 200, ctx);
       res.json({ ok: true, orderId: row.id, orderNumber: row.order_number, checkoutUrl: mpOrder.checkoutUrl });
     } catch (err) {
       console.error("POST /api/orders/:id/payment-link:", err.message);
+      warnOrder(PAY_LINK_ROUTE, 500, {}, "No se pudo generar el link de pago");
       res.status(500).json({ error: "No se pudo generar el link de pago" });
     }
   }

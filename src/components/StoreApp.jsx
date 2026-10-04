@@ -4,6 +4,7 @@ import { BRANCHES, BRAND } from "../data/branches.js";
 import { getMenu as getStaticMenu } from "../data/menus.js";
 import useCart from "../hooks/useCart.js";
 import { buildWhatsAppOrderUrl, decideDirectOrderOutcome } from "../utils/whatsapp.js";
+import { orderAttemptSignature, clientRequestIdFor, isOrderRejected } from "../utils/orders.js";
 import { createOrder, getMenu as fetchMenu, getOrderByNumber, retryPaymentLink } from "../api.js";
 import { track } from "../utils/tracking.js";
 import Landing from "./Landing.jsx";
@@ -126,6 +127,19 @@ export default function StoreApp() {
   const [whatsappFallbackUrl, setWhatsappFallbackUrl] = useState(null);
   const [toast, setToast] = useState(null); // feedback al agregar al carrito
   const toastTimer = useRef(null);
+  // Clave de idempotencia del intento de pedido en curso: { id, signature }.
+  // El server la guarda con el pedido, así que si el POST se guarda y la
+  // respuesta se pierde (red caída, deploy, 5xx), el "Reintentar el pedido"
+  // devuelve el pedido que YA existe en vez de crear un segundo y quemar otro
+  // uso de cupón.
+  //
+  // Se ata a la FIRMA del intento (carrito, sucursal, modalidad, dirección,
+  // teléfono, cupón y método de pago): si el cliente cambia alguna de esas
+  // cosas entre el intento y el reintento, ya no es el mismo pedido y sale una
+  // clave nueva, así que un reintento legítimo nunca recibe un 409. Se descarta
+  // además tras el éxito y tras cualquier rechazo 4xx (el frontend los trata
+  // como "empezá de cero") y al repetir un pedido desde Mis pedidos.
+  const orderAttemptRef = useRef(null);
 
   const branch = BRANCHES[branchId];
   // El menú viene de la API (BD, editable desde el panel). Si falla, se usa
@@ -296,10 +310,30 @@ export default function StoreApp() {
         },
       };
 
+      // Clave de idempotencia del intento (ver el comentario de orderAttemptRef):
+      // se reusa mientras el pedido sea el mismo y sale nueva en cuanto cambia
+      // algo de esto. Se manda SIEMPRE, también en el primer intento: el server
+      // la guarda con el pedido y la usa para deduplicar los reintentos.
+      const attempt = clientRequestIdFor(
+        orderAttemptRef.current,
+        orderAttemptSignature({
+          branch: payload.branch,
+          items: payload.items,
+          orderMode: payload.orderMode,
+          address: payload.address,
+          phone: payload.customer.phone,
+          couponCode: payload.couponCode,
+          paymentMethod: payload.paymentMethod,
+        })
+      );
+      orderAttemptRef.current = attempt;
+      payload.clientRequestId = attempt.id;
+
       if (paymentMethod === "mercadopago") {
         setCheckoutError(null);
         try {
           const res = await createOrder(payload);
+          orderAttemptRef.current = null; // confirmado: el próximo es otro pedido
           setLastOrder(res);
           setPaymentFlow(res);
           setPaymentMeta({
@@ -310,6 +344,12 @@ export default function StoreApp() {
           });
           setView(VIEWS.payment);
         } catch (err) {
+          // Rechazo del server (4xx, incluido el 409 de clave en conflicto): no
+          // se creó ningún pedido, así que la clave de este intento se descarta
+          // y el siguiente es de verdad un pedido nuevo. Con red caída o 5xx se
+          // conserva: el reintento tiene que recuperar el pedido que el server
+          // quizá alcanzó a guardar.
+          if (isOrderRejected(err)) orderAttemptRef.current = null;
           // El error se muestra EN el checkout (no en un toast que se borra):
           // si el pedido llegó a guardarse, se muestra también su número para
           // que el cliente pueda escribir por WhatsApp con el número correcto.
@@ -350,6 +390,7 @@ export default function StoreApp() {
       let failure = null; // decisión de decideDirectOrderOutcome
       try {
         const res = await createOrder(payload);
+        orderAttemptRef.current = null; // confirmado: el próximo es otro pedido
         confirmed = {
           orderNumber: res.orderNumber,
           discount: res.discount || 0,
@@ -363,7 +404,9 @@ export default function StoreApp() {
         // Rechazo del server (4xx con `error`): el pedido NO existe, así que
         // no hay nada que mandar por WhatsApp. Se cierra la ventana vacía que
         // BUG-05 abrió en el click y el cliente vuelve al checkout con el
-        // mensaje EXACTO del server y su carrito intacto.
+        // mensaje EXACTO del server y su carrito intacto. La clave del intento
+        // se descarta: el siguiente confirmarlo es un pedido nuevo.
+        orderAttemptRef.current = null;
         closeWaWindow(waWindow);
         setCheckoutError({
           message: failure.message,
@@ -516,6 +559,9 @@ export default function StoreApp() {
   // window.__storeApp_setCartOpen que nadie definía).
   const handleRepeat = useCallback(
     (order) => {
+      // Es un pedido nuevo (el carrito se reemplaza entero): la clave del
+      // intento anterior no le corresponde y no debe viajar.
+      orderAttemptRef.current = null;
       cart.repeatOrder(order);
       setCartOpen(true);
       showToast("Tu pedido quedó cargado en el carrito");
