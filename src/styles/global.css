@@ -2182,16 +2182,41 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .admin-orders-toolbar {
   display: flex; justify-content: flex-end; align-items: center;
+  flex-wrap: wrap; gap: 8px;
   padding: 0;
 }
 .admin-orders-head .admin-day { margin-top: 2px; }
-/* Pausa de pedidos por sucursal (fila propia entre la cabecera y los
-   filtros: en mobile se apila debajo del resumen del día y de "Nuevo
-   pedido"). Reusa los badges y los botones existentes; esto solo
-   ordena la fila. */
-.admin-pause { display: grid; gap: 10px; padding-top: 4px; }
-.admin-pause__item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.admin-pause__msg { font-size: 12.5px; color: var(--color-text-soft); }
+/* Pausa de pedidos: chips compactos DENTRO de la fila superior (al lado
+   del resumen del día y de "Nuevo pedido"), uno por sucursal pausada.
+   Si ninguna está pausada no hay nada que renderizar. Tono ámbar con
+   los mismos tokens que badge--shipping-pending; esto solo ordena la
+   fila y pinta el chip. */
+.admin-pause {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  min-width: 0;
+}
+.admin-pause__chip {
+  display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  background: var(--color-warn-soft, #fff4e0);
+  color: var(--color-warn-text, #b36b00);
+  border: 1px solid var(--color-warn-border, #f0d9a8);
+  border-radius: 999px;
+  padding: 3px 4px 3px 10px;
+  font-size: 12.5px; line-height: 1.35;
+}
+.admin-pause__chip strong { font-weight: 700; white-space: nowrap; }
+.admin-pause__resume {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit; font-weight: 700;
+  text-decoration: underline;
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.admin-pause__resume:hover:not(:disabled) { background: var(--color-warn-border, #f0d9a8); }
+.admin-pause__resume:disabled { opacity: .6; cursor: default; }
 .admin-filters {
   display: grid; grid-template-columns: 1fr; gap: 10px; padding: 16px 0; margin-bottom: 4px;
 }

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import useDialogA11y from "../../hooks/useDialogA11y.js";
+import Dropdown from "./Dropdown.jsx";
 
 // ============================================================
 // PauseModal — pausar los pedidos de una sucursal, en UN solo paso.
@@ -13,13 +14,23 @@ import useDialogA11y from "../../hooks/useDialogA11y.js";
 // - Cierra con Escape, click afuera, ✕ o "Cancelar" (sin cambiar nada).
 // - Foco atrapado mientras está abierto (useDialogA11y).
 //
-// Reanudar NO pasa por acá: es un botón directo en la cabecera de
-// Pedidos (no necesita confirmación ni duración).
+// Reanudar NO pasa por acá: es un botón directo en el chip de la fila
+// de pausas (no necesita confirmación ni duración).
 //
 // Uso:
+//   branch_admin (sin selector, pausa la suya):
 //   <PauseModal
 //     branchName="Tandil"
 //     onSubmit={async ({ minutes, indefinite, message }) => {...}}
+//     onClose={() => setPauseTarget(null)}
+//   />
+//
+//   superadmin (con selector de sucursal, solo las no pausadas):
+//   <PauseModal
+//     isSuperAdmin
+//     branches={[{ id: "tandil", name: "Tandil" }, ...]}
+//     initialBranch="tandil"
+//     onSubmit={async ({ branch, minutes, indefinite, message }) => {...}}
 //     onClose={() => setPauseTarget(null)}
 //   />
 // ============================================================
@@ -32,7 +43,23 @@ const DURATIONS = [
   ["indefinite", "Hasta reanudar"],
 ];
 
-export default function PauseModal({ branchName = "", onSubmit, onClose }) {
+export default function PauseModal({
+  branchName = "",
+  onSubmit,
+  onClose,
+  isSuperAdmin = false,
+  branches = [],
+  initialBranch = "",
+}) {
+  const availableBranches = Array.isArray(branches) ? branches : [];
+  // Última sucursal elegida por el usuario. Si mientras el modal está
+  // abierto desaparece de la lista (el polling de otra pestaña pausó la
+  // única que quedaba), se deriva a la primera disponible: es un valor
+  // derivado en el render, sin effect, así no hay forma de quedar apuntando
+  // a una sucursal pausada.
+  const [pickedBranch, setPickedBranch] = useState(initialBranch || "");
+  const branchIds = availableBranches.map((b) => b.id);
+  const selectedBranch = branchIds.includes(pickedBranch) ? pickedBranch : branchIds[0] || "";
   const [duration, setDuration] = useState("30");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -43,10 +70,15 @@ export default function PauseModal({ branchName = "", onSubmit, onClose }) {
   async function handleSubmit(e) {
     e.preventDefault();
     if (busy) return;
+    if (isSuperAdmin && !selectedBranch) {
+      setError("Elegí una sucursal a pausar.");
+      return;
+    }
     const indefinite = duration === "indefinite";
     setBusy(true);
     try {
       await onSubmit?.({
+        branch: isSuperAdmin ? selectedBranch : undefined,
         indefinite,
         minutes: indefinite ? null : Number(duration),
         message: message.trim(),
@@ -70,7 +102,7 @@ export default function PauseModal({ branchName = "", onSubmit, onClose }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal__head">
-          <h3 id="pause-modal-title">Pausar pedidos{branchName ? ` — ${branchName}` : ""}</h3>
+          <h3 id="pause-modal-title">Pausar pedidos{!isSuperAdmin && branchName ? ` — ${branchName}` : ""}</h3>
           <button type="button" className="modal__close" onClick={onClose} aria-label="Cerrar">✕</button>
         </div>
         <form className="modal__body" onSubmit={handleSubmit}>
@@ -78,6 +110,26 @@ export default function PauseModal({ branchName = "", onSubmit, onClose }) {
             Mientras la sucursal esté pausada, la página no deja crear pedidos nuevos.
             Los pedidos ya cargados y la carga manual del panel siguen igual.
           </p>
+
+          {isSuperAdmin && (
+            <div className="field">
+              <label>Sucursal a pausar</label>
+              <Dropdown
+                value={selectedBranch}
+                onChange={(v) => {
+                  setPickedBranch(v);
+                  if (error) setError("");
+                }}
+                options={availableBranches.map((b) => ({ value: b.id, label: b.name }))}
+                placeholder="Elegí una sucursal"
+                ariaLabel="Sucursal a pausar"
+                disabled={availableBranches.length === 0}
+              />
+              {availableBranches.length === 0 && (
+                <span className="hint">No hay sucursales disponibles para pausar</span>
+              )}
+            </div>
+          )}
 
           <div className="field">
             <label>¿Por cuánto tiempo?</label>
@@ -116,7 +168,11 @@ export default function PauseModal({ branchName = "", onSubmit, onClose }) {
           {error && <div className="form-error">{error}</div>}
 
           <div className="modal__footer">
-            <button type="submit" className="btn btn--danger btn--block" disabled={busy}>
+            <button
+              type="submit"
+              className="btn btn--danger btn--block"
+              disabled={busy || (isSuperAdmin && availableBranches.length === 0) || (isSuperAdmin && !selectedBranch)}
+            >
               {busy ? "Pausando…" : "Pausar pedidos"}
             </button>
             <button type="button" className="btn btn--ghost btn--block" onClick={onClose} disabled={busy}>

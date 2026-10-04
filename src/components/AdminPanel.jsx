@@ -536,7 +536,60 @@ export default function AdminPanel({ me, onLogout }) {
             <LiveClock />
           </div>
           )}
+          {/* Pausa de pedidos: chips compactos por sucursal pausada, en la
+              MISMA fila que el resumen del día y los botones. Si ninguna
+              está pausada no se renderiza nada. Reanudar es directo (sin
+              modal); el mensaje del local va como title del chip. */}
+          {(() => {
+            const visibleBranches = isBranchAdmin ? [me.branch] : BRANCH_LIST.map((b) => b.id);
+            const pausedBranches = visibleBranches.filter((id) => branchPauses[id]?.paused);
+            if (pausedBranches.length === 0) return null;
+            return (
+              <div className="admin-pause">
+                {pausedBranches.map((id) => {
+                  const state = branchPauses[id];
+                  return (
+                    <span key={id} className="admin-pause__chip" title={state?.message || ""}>
+                      <strong>{BRANCHES[id]?.name || id}</strong>{" "}
+                      {state?.until
+                        ? `pausada hasta ${arClockLabel(state.until)}`
+                        : "pausada hasta reanudar"}{" "}
+                      ·{" "}
+                      <button
+                        type="button"
+                        className="admin-pause__resume"
+                        aria-label={`Reanudar pedidos de ${BRANCHES[id]?.name || id}`}
+                        onClick={() => handleResume(id)}
+                        disabled={pauseBusyId === id}
+                      >
+                        {pauseBusyId === id ? "Reanudando…" : "Reanudar"}
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          })()}
           <div className="admin-orders-toolbar">
+            {(() => {
+              const isSuperAdmin = me?.role === "superadmin";
+              const canPause = isSuperAdmin
+                ? BRANCH_LIST.some((b) => !branchPauses[b.id]?.paused)
+                : me?.branch
+                  ? !branchPauses[me.branch]?.paused
+                  : false;
+              if (!canPause) return null;
+              return (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm admin-orders-toolbar__pause"
+                  aria-label="Pausar pedidos"
+                  onClick={() => setPauseTarget(isSuperAdmin ? "pick" : me.branch)}
+                >
+                  ⏸ Pausar
+                </button>
+              );
+            })()}
             <button
               type="button"
               className="btn btn--primary btn--sm"
@@ -548,45 +601,6 @@ export default function AdminPanel({ me, onLogout }) {
               <IconPlus style={{ width: 14, height: 14 }} /> Nuevo pedido
             </button>
           </div>
-        </div>
-
-        {/* Pausa de pedidos: un control por sucursal visible para la sesión
-            (el branch_admin ve solo la suya; el superadmin, una por cada
-            una). Fila propia debajo de la cabecera, para que se vea en
-            mobile sin pelearle el lugar al resumen del día. */}
-        <div className="admin-pause">
-          {(isBranchAdmin ? [me.branch] : BRANCH_LIST.map((b) => b.id)).map((id) => {
-            const state = branchPauses[id];
-            return (
-              <div key={id} className="admin-pause__item">
-                {!isBranchAdmin && <span className="badge badge--branch">{BRANCHES[id]?.name || id}</span>}
-                {state?.paused ? (
-                  <>
-                    <span className="badge badge--shipping-pending">
-                      ⏸ Pedidos pausados{state.until ? ` · hasta las ${arClockLabel(state.until)}` : " · hasta reanudar"}
-                    </span>
-                    {state.message && <span className="admin-pause__msg">“{state.message}”</span>}
-                    <button
-                      type="button"
-                      className="btn btn--danger-outline btn--sm"
-                      onClick={() => handleResume(id)}
-                      disabled={pauseBusyId === id}
-                    >
-                      {pauseBusyId === id ? "Reanudando…" : "Reanudar pedidos"}
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--sm"
-                    onClick={() => setPauseTarget(id)}
-                  >
-                    ⏸ Pausar pedidos
-                  </button>
-                )}
-              </div>
-            );
-          })}
         </div>
         <div className="admin-filters">
           <input
@@ -1136,10 +1150,33 @@ const renderOrder = (o) => {
         <TicketPrint order={printComanda} variant="comanda" onClose={() => setPrintComanda(null)} />
       )}
 
-      {/* Pausa de pedidos: el branch del modal abierto (solo pausar; reanudar
-          es directo desde la cabecera). El error del server se muestra
-          adentro del modal, igual que PromptModal. */}
-      {pauseTarget && (
+      {/* Pausa de pedidos: reanudar es directo desde el chip de la fila
+          superior; pausar abre el modal. El error del server se muestra
+          adentro del modal. El superadmin elige la sucursal DENTRO del
+          modal (solo las no pausadas); el branch_admin no ve selector:
+          su modal siempre pausa la suya. "pick" = modal del superadmin
+          sin sucursal elegida todavía. */}
+      {pauseTarget === "pick" && (() => {
+        const available = BRANCH_LIST.filter((b) => !branchPauses[b.id]?.paused).map((b) => ({
+          id: b.id,
+          name: b.name,
+        }));
+        // Se pausó la última disponible desde otra pestaña: no hay nada
+        // que pausar, el modal se cierra solo.
+        if (available.length === 0) return null;
+        return (
+          <PauseModal
+            isSuperAdmin
+            branches={available}
+            initialBranch={available[0]?.id}
+            onSubmit={async ({ branch, minutes, indefinite, message }) => {
+              await applyPause({ branch, action: "pause", minutes, indefinite, message });
+            }}
+            onClose={() => setPauseTarget(null)}
+          />
+        );
+      })()}
+      {pauseTarget && pauseTarget !== "pick" && (
         <PauseModal
           branchName={BRANCHES[pauseTarget]?.name || pauseTarget}
           onSubmit={async ({ minutes, indefinite, message }) => {
