@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { BRAND, BRANCH_LIST, phonePlaceholderFor } from "../data/branches.js";
+import { SOCIAL } from "../data/social.js";
 import { isValidPhone } from "../utils/validation.js";
 import { isNowOpen, closedLabel } from "../utils/schedule.js";
 import { IconBowlSteam, IconChopsticks, HeroMotif } from "./ui/icons.jsx";
@@ -68,15 +69,66 @@ export default function Landing({ onStart, initialBranch, customer }) {
             ))}
           </p>
           <div className="landing__socials">
-            <a href="https://instagram.com/fusionwok.ar" target="_blank" rel="noreferrer">
-              Instagram
-            </a>
-            <a href="https://www.tiktok.com/@fusionwok.ar" target="_blank" rel="noreferrer">
-              TikTok
-            </a>
-            <a href={BRAND.linktree} target="_blank" rel="noreferrer">
-              Linktree
-            </a>
+            {SOCIAL.instagram && (
+              <a
+                href={SOCIAL.instagram}
+                target="_blank"
+                rel="noreferrer noopener"
+                aria-label="Instagram de Fusión Wok"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path d="M7.75 2h8.5A5.75 5.75 0 0122 7.75v8.5A5.75 5.75 0 0116.25 22h-8.5A5.75 5.75 0 012 16.25v-8.5A5.75 5.75 0 017.75 2zm0 1.5A4.25 4.25 0 003.5 7.75v8.5A4.25 4.25 0 007.75 20.5h8.5A4.25 4.25 0 0020.5 16.25v-8.5A4.25 4.25 0 0016.25 3.5h-8.5zm8.75 2a1 1 0 110 2 1 1 0 010-2zm-4.5 1.25a4.75 4.75 0 110 9.5 4.75 4.75 0 010-9.5zm0 1.5a3.25 3.25 0 100 6.5 3.25 3.25 0 000-6.5z" />
+                </svg>
+              </a>
+            )}
+            {SOCIAL.tiktok && (
+              <a
+                href={SOCIAL.tiktok}
+                target="_blank"
+                rel="noreferrer noopener"
+                aria-label="TikTok de Fusión Wok"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path d="M16.5 2v6.35h.005A4.475 4.475 0 0021 9.95V6.1a6.1 6.1 0 01-4.5-4.1zm0 7.85a4.475 4.475 0 01-4.475 4.475 4.475 4.475 0 01-4.475-4.475h-.005V2H9.6A4.485 4.485 0 016.1 6.1v3.85a4.475 4.475 0 01-4.475 4.475V16a6.975 6.975 0 006.975-6.975V8.2a2.975 2.975 0 002.975 2.975 2.975 2.975 0 002.975-2.975V2h.975v7.85z" />
+                </svg>
+              </a>
+            )}
+            {SOCIAL.linktree && (
+              <a
+                href={SOCIAL.linktree}
+                target="_blank"
+                rel="noreferrer noopener"
+                aria-label="Linktree de Fusión Wok"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path d="M7.27 3.5h9.46L12 1 7.27 3.5zm0 17h9.46L12 23l-4.73-2.5zM3.5 7.27v9.46L1 12l2.5-4.73zm17 0v9.46L23 12l-2.5-4.73zM7.27 3.5L1 7.27l2.5 2.5 3.77-6.27zm9.46 0l6.27 3.77 2.5-2.5-8.77-1.27zM3.5 7.27l6.27 3.77-2.5 2.5-3.77-6.27zm17 0l-3.77 6.27 2.5 2.5 1.27-8.77zM7.27 20.5l-6.27-3.77 2.5-2.5 3.77 6.27zm9.46 0l-3.77-6.27 2.5-2.5 6.27 3.77-5 4.5zM7.27 3.5L12 7.27l4.73-3.77H7.27zm4.73 4.77L7.27 12l4.73 3.73L16.73 12l-4.73-3.73zM7.27 12v8.5h9.46V12H7.27z" />
+                </svg>
+              </a>
+            )}
           </div>
         </div>
       </div>
