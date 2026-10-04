@@ -1724,7 +1724,10 @@ app.post("/api/shipping/quote", rateLimit({ max: 30, windowMs: 60000, name: "shi
   } catch (err) {
     console.error("POST /api/shipping/quote:", err.message);
     // transitorio (429 / servicio caído) → 503 para que el cliente reintente
-    res.status(err.code === "transient" ? 503 : 400).json({ error: err.message });
+    const code = err.code;
+    const body = { error: err.message };
+    if (code) body.code = code;
+    res.status(code === "transient" ? 503 : 400).json(body);
   }
 });
 
