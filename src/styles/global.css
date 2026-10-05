@@ -620,22 +620,45 @@ body:has(.admin-login) { background: var(--color-secondary); }
   border-color: rgba(229, 52, 46, 0.25);
 }
 
-/* Scrollbars */
-.admin .modal,
-.admin .dropdown__panel {
-  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+/* Scrollbars — misma receta que el bloque general de abajo:
+   thumb flotante con aire y sin flechitas del sistema.
+   .new-order__product-list scrollea DENTRO de un modal: si no se
+   estiliza aparte muestra la barra nativa con flechitas.
+
+   OJO: en Chromium 121+ declarar scrollbar-color (o scrollbar-width)
+   en el elemento DESACTIVA todos los ::-webkit-scrollbar-*, así que
+   va sólo en Firefox, adentro del @supports. */
+@supports not selector(::-webkit-scrollbar) {
+  .admin .modal,
+  .admin .dropdown__panel,
+  .admin .new-order__product-list {
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  }
 }
 .admin .modal::-webkit-scrollbar,
-.admin .dropdown__panel::-webkit-scrollbar { width: 6px; height: 6px; }
+.admin .dropdown__panel::-webkit-scrollbar,
+.admin .new-order__product-list::-webkit-scrollbar { width: 16px; height: 16px; }
 .admin .modal::-webkit-scrollbar-track,
-.admin .dropdown__panel::-webkit-scrollbar-track { background: transparent; }
+.admin .dropdown__panel::-webkit-scrollbar-track,
+.admin .new-order__product-list::-webkit-scrollbar-track { background: transparent; }
+.admin .modal::-webkit-scrollbar-corner,
+.admin .dropdown__panel::-webkit-scrollbar-corner,
+.admin .new-order__product-list::-webkit-scrollbar-corner { background: transparent; }
+.admin .modal::-webkit-scrollbar-button,
+.admin .dropdown__panel::-webkit-scrollbar-button,
+.admin .new-order__product-list::-webkit-scrollbar-button { display: none; }
 .admin .modal::-webkit-scrollbar-thumb,
-.admin .dropdown__panel::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.25);
+.admin .dropdown__panel::-webkit-scrollbar-thumb,
+.admin .new-order__product-list::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.25);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-right-width: 12px;
   border-radius: 999px;
 }
 .admin .modal::-webkit-scrollbar-thumb:hover,
-.admin .dropdown__panel::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.4); }
+.admin .dropdown__panel::-webkit-scrollbar-thumb:hover,
+.admin .new-order__product-list::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.4); }
 
 /* ============================================================
    Admin Panel — Estilos específicos por sección (tema oscuro)
@@ -2403,28 +2426,56 @@ body:has(.admin-login) { background: var(--color-secondary); }
    Los únicos con overflow-y: auto son .dropdown__panel (#191919)
    y .modal (var(--color-bg), tema oscuro también en el panel admin),
    así que el thumb claro funciona en ambos.
+
+   Receta "flotante con aire":
+   - Se ocultan los botones (flechitas) del sistema: en Windows
+     rendían la barra nativa y hacían que sobresaliera del modal.
+   - Se oculta el TRACK (fondo): en un modal con esquinas redondeadas
+     el track es un rectángulo que llega al borde derecho y "se sale"
+     por la curva. Al sacarlo, sólo se ve el thumb, que ya trae su
+     propia forma con el borde asimétrico.
+   - La zona de scroll mide 16px pero el thumb visible mide 2px: el
+     borde transparente (2px izquierda / 12px derecha) con
+     `background-clip: padding-box` corre la barra bien hacia
+     adentro y la separa de la curva del modal.
    ============================================================ */
-.dropdown__panel,
-.modal {
-  scrollbar-width: thin; /* Firefox */
-  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+@supports not selector(::-webkit-scrollbar) {
+  /* Firefox no tiene pseudo-elementos webkit, así que lleva el estándar.
+     En Chromium 121+ declarar scrollbar-width/scrollbar-color en el
+     elemento ANULA todos los ::-webkit-scrollbar-* de abajo. */
+  .dropdown__panel,
+  .modal {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  }
 }
 .dropdown__panel::-webkit-scrollbar,
 .modal::-webkit-scrollbar {
-  width: 6px; height: 6px;
+  width: 16px; height: 16px;
 }
 .dropdown__panel::-webkit-scrollbar-track,
 .modal::-webkit-scrollbar-track {
   background: transparent;
 }
+.dropdown__panel::-webkit-scrollbar-corner,
+.modal::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.dropdown__panel::-webkit-scrollbar-button,
+.modal::-webkit-scrollbar-button {
+  display: none;
+}
 .dropdown__panel::-webkit-scrollbar-thumb,
 .modal::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.25);
+  background-color: rgba(255, 255, 255, 0.25);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-right-width: 12px;
   border-radius: 999px;
 }
 .dropdown__panel::-webkit-scrollbar-thumb:hover,
 .modal::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.4);
+  background-color: rgba(255, 255, 255, 0.4);
 }
 .daterange__quick {
   display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
