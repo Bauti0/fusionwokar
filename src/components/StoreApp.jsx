@@ -195,6 +195,17 @@ export default function StoreApp() {
 
   const cart = useCart(branchId || "none");
 
+  // Cantidad por producto en el carrito: suma de TODAS las líneas del mismo
+  // productId (extras o notas distintas cuentan igual). Va por props a <Menu>
+  // para que cada tarjeta muestre cuántas unidades hay de ese plato.
+  const cartQtys = useMemo(() => {
+    const qtys = {};
+    for (const it of cart.items) {
+      qtys[it.productId] = (qtys[it.productId] || 0) + it.qty;
+    }
+    return qtys;
+  }, [cart.items]);
+
   useEffect(() => {
     if (branchId) localStorage.setItem("fw.lastBranch", branchId);
   }, [branchId]);
@@ -639,7 +650,7 @@ export default function StoreApp() {
 
       {view === VIEWS.menu && (
         <>
-          <Menu menu={menu} branch={branch} pause={pause} orderMode={orderMode} onAdd={handleAdd} />
+          <Menu menu={menu} branch={branch} pause={pause} orderMode={orderMode} onAdd={handleAdd} qtys={cartQtys} />
           <CartBar count={cart.count} total={cart.total} onView={() => setCartOpen(true)} />
         </>
       )}

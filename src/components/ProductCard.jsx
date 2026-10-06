@@ -16,10 +16,13 @@ import { IconSparkle } from "./ui/icons.jsx";
 // Muestra nombre, descripción y precio. Si el producto tiene
 // extras/variantes abre el modal de personalización; si no,
 // "Agregar" lo manda directo al carrito (con feedback visual).
+// qty: cuántas unidades de ESTE producto hay en el carrito (suma de
+// todas sus líneas); se pinta en el botón redondo, con prioridad
+// sobre el flash de confirmación.
 // memo: al tipear en la búsqueda o cambiar de categoría solo se
 // re-renderizan las tarjetas afectadas, no las 40+ del menú.
 // ============================================================
-const ProductCard = memo(function ProductCard({ product, categoryName, isTop, onAdd, onCustomize }) {
+const ProductCard = memo(function ProductCard({ product, categoryName, isTop, onAdd, onCustomize, qty = 0 }) {
   const hasExtras = product.extras && product.extras.length > 0;
   const unavailable = product.available === false;
   const [added, setAdded] = useState(false);
@@ -74,9 +77,17 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
         className={`product__add ${added ? "is-added" : ""}`}
         onClick={handleClick}
         disabled={unavailable}
-        aria-label={unavailable ? `${product.name} no disponible` : `Agregar ${product.name}`}
+        aria-label={
+          unavailable
+            ? `${product.name} no disponible`
+            : qty > 0
+              ? `Agregar ${product.name} (ya tenés ${qty} en el carrito)`
+              : `Agregar ${product.name}`
+        }
       >
-        <span className="plus">{added ? "✓" : "+"}</span>
+        {/* El ✓ del flash manda 1,1 s; después queda la cantidad en el carrito.
+            "99+" para que de 3 dígitos no desborde el círculo de 44 px. */}
+        <span className="plus">{added ? "✓" : qty > 0 ? (qty > 99 ? "99+" : qty) : "+"}</span>
       </button>
     </div>
   );

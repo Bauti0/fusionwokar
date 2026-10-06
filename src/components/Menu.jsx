@@ -9,8 +9,10 @@ import { IconSearch, IconClock, IconEmptySearch } from "./ui/icons.jsx";
 // - Banner compacto con sucursal, dirección y horarios
 // - Búsqueda por nombre de producto
 // - Categorías como tabs (chips sticky) con subgrupos
-// memo: el catálogo no se re-renderiza cuando el carrito cambia
-// (el estado del carrito vive en StoreApp, no aquí).
+// - qtys: cantidad de cada producto en el carrito (la pinta la tarjeta)
+// memo: el estado del carrito vive en StoreApp y llega por props, así que
+// tocar el carrito SÍ re-renderiza este menú; el memo de ProductCard hace
+// que solo se repinten las tarjetas cuya cantidad cambió.
 // ============================================================
 
 // Los nombres de categoría y de subgrupo llegan del panel en
@@ -47,7 +49,7 @@ function mergeGroupRuns(groups) {
   return runs;
 }
 
-const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode }) {
+const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, qtys = {} }) {
   const [query, setQuery] = useState("");
   const [customizing, setCustomizing] = useState(null);
   const [activeCat, setActiveCat] = useState(() => menu.categories[0]?.id || "");
@@ -201,7 +203,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode }
 
       <div className="menu__content">
         {hasSearch ? (
-          <SearchResults menu={menu} search={search} onAdd={handleAdd} onCustomize={setCustomizing} />
+          <SearchResults menu={menu} search={search} onAdd={handleAdd} onCustomize={setCustomizing} qtys={qtys} />
         ) : (
           menu.categories
             .filter((cat) => cat.id === activeCat)
@@ -227,6 +229,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode }
                             isTop={topIds.includes(product.id)}
                             onAdd={handleAdd}
                             onCustomize={setCustomizing}
+                            qty={qtys[product.id] || 0}
                           />
                         ))}
                       </div>
@@ -255,7 +258,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode }
 export default Menu;
 
 // Resultados de búsqueda aplanados (muestra la categoría de cada plato)
-function SearchResults({ menu, search, onAdd, onCustomize }) {
+function SearchResults({ menu, search, onAdd, onCustomize, qtys = {} }) {
   const results = [];
   for (const cat of menu.categories) {
     for (const group of cat.groups) {
@@ -290,6 +293,7 @@ function SearchResults({ menu, search, onAdd, onCustomize }) {
             isTop={(menu.topProductIds || []).includes(product.id)}
             onAdd={onAdd}
             onCustomize={onCustomize}
+            qty={qtys[product.id] || 0}
           />
         ))}
       </div>
