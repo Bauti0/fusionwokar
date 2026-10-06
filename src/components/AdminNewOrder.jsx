@@ -341,6 +341,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
           product={customizing}
           onConfirm={(product, opts) => addToCart(product, opts)}
           onClose={() => setCustomizing(null)}
+          closeOnAdd
         />
       )}
     </section>

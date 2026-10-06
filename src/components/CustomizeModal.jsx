@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { formatPrice } from "../utils/format.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 
@@ -8,13 +8,18 @@ import useDialogA11y from "../hooks/useDialogA11y.js";
 // (por ej. salsas). Deja elegir opciones, cantidad y nota,
 // y calcula el precio final antes de agregar al carrito.
 // ============================================================
-export default function CustomizeModal({ product, onClose, onConfirm }) {
+export default function CustomizeModal({ product, onClose, onConfirm, closeOnAdd = false }) {
   const dialogRef = useDialogA11y({ onClose });
   const [selected, setSelected] = useState(() =>
     new Set(product.extras.filter((e) => e.default).map((e) => e.id))
   );
   const [qty, setQty] = useState(1);
   const [notes, setNotes] = useState("");
+  // Anti doble toque (solo con closeOnAdd, panel de admin): un segundo
+  // click en "Agregar" antes del re-render no suma el producto otra vez.
+  // El ref vive en la instancia del componente: al desmontarse se descarta
+  // y vuelve a su valor inicial la próxima vez que se abre el modal.
+  const confirmRef = useRef(false);
 
   // Agrupa los extras por categoría (subgroup) para mostrar subtítulos
   // tipo "SALSAS ADICIONALES" / "PALITOS DESCARTABLES" / "GALLETAS".
@@ -55,8 +60,15 @@ export default function CustomizeModal({ product, onClose, onConfirm }) {
   }
 
   function handleConfirm() {
+    if (closeOnAdd) {
+      if (confirmRef.current) return;
+      confirmRef.current = true;
+    }
     const extras = product.extras.filter((e) => selected.has(e.id));
     onConfirm(product, { extras, notes: notes.trim(), qty });
+    // Cierra por el mismo camino que la ✕ (onClose del padre): el modal se
+    // desmonta y los extras/nota/cantidad vuelven a su estado inicial.
+    if (closeOnAdd) onClose();
   }
 
   return (
