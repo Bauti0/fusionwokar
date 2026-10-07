@@ -12,6 +12,7 @@ import {
   paymentLabel,
 } from "../constants.js";
 import { formatPrice } from "../utils/format.js";
+import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import TrackHeader from "./TrackHeader.jsx";
 
 // ============================================================
@@ -116,94 +117,131 @@ export default function TrackOrder() {
             <p className="page__sub">
               Pedido <strong>{order.orderNumber}</strong> · {branch?.name}
             </p>
-        </div>
-
-        <div className="track-card">
-          <div className="track-card__status">
-            <span className="track-card__emoji">{statusEmoji(order.status)}</span>
-            <div>
-              <strong>{statusLabel(order.status)}</strong>
-              <small>
-                Pago: {paymentLabel(order.paymentStatus)}
-                {order.paymentMethod === "mercadopago" ? " (Mercado Pago)" : " (en el local)"}
-              </small>
-            </div>
           </div>
 
-          {cancelled && (
-            <div className="track-cancelled">Este pedido fue cancelado.</div>
-          )}
-          {pendingPay && (
-            <div className="track-cancelled">
-              El pedido se confirma cuando se acredite el pago.
-            </div>
-          )}
-
-          {!cancelled && !pendingPay && (
-            <div className="track-checklist">
-              {ORDER_STATUSES.map((s, i) => {
-                const done = i <= current;
-                return (
-                  <div key={s.id} className={`track-check ${done ? "is-done" : ""}`}>
-                    <span className="track-check__mark">{done ? "✓" : "○"}</span>
-                    <span className="track-check__label">{s.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="track-card">
-          <h3>Detalle</h3>
-          <div className="summary">
-            {order.items.map((item) => (
-              <div className="summary__row" key={item.key || `${item.productId}-${item.name}`}>
-                <span>
-                  {item.qty}× {item.name}
-                </span>
-                <span>{formatPrice(item.unitPrice * item.qty)}</span>
+          <div className="track-card">
+            <div className="track-card__status">
+              <span className="track-card__emoji">{statusEmoji(order.status)}</span>
+              <div>
+                <strong>{statusLabel(order.status)}</strong>
+                <small>
+                  Pago: {paymentLabel(order.paymentStatus)}
+                  {order.paymentMethod === "mercadopago" ? " (Mercado Pago)" : " (en el local)"}
+                </small>
               </div>
-            ))}
-            <div className="summary__row summary__row--total">
-              <span>Total</span>
-              <span>{formatPrice(order.total)}</span>
+            </div>
+
+            {cancelled && (
+              <div className="track-cancelled">Este pedido fue cancelado.</div>
+            )}
+            {pendingPay && (
+              <div className="track-cancelled">
+                El pedido se confirma cuando se acredite el pago.
+              </div>
+            )}
+
+            {!cancelled && !pendingPay && (
+              <div className="track-checklist">
+                {ORDER_STATUSES.map((s, i) => {
+                  const done = i <= current;
+                  return (
+                    <div key={s.id} className={`track-check ${done ? "is-done" : ""}`}>
+                      <span className="track-check__mark">{done ? "✓" : "○"}</span>
+                      <span className="track-check__label">{s.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="track-card">
+            <h3>Detalle</h3>
+            <div className="summary">
+              {(() => {
+                const { rows } = buildOrderSummaryRows(order);
+                return rows.map((row, idx) => {
+                  const key = row.type ? `${row.type}-${idx}` : `${row.name}-${row.qty}-${idx}`;
+                  if (row.type === "total") {
+                    return (
+                      <div className="summary__row summary__row--total" key={key}>
+                        <span>{row.label}</span>
+                        <span>{formatPrice(row.amount)}</span>
+                      </div>
+                    );
+                  }
+                  if (row.type === "discount") {
+                    return (
+                      <div className="summary__row" key={key}>
+                        <span>{row.label}</span>
+                        <span>−{formatPrice(-row.amount)}</span>
+                      </div>
+                    );
+                  }
+                  if (row.type === "shipping") {
+                    return (
+                      <div className="summary__row" key={key}>
+                        <span>{row.label}</span>
+                        <span>{row.pending ? "a confirmar" : formatPrice(row.amount)}</span>
+                      </div>
+                    );
+                  }
+                  // Item con extras
+                  return (
+                    <div className="summary__row" key={key}>
+                      <span>
+                        {row.qty}× {row.name}
+                        {row.extras?.length
+                          ? <>
+                              {row.extras.map((e) => (
+                                <span key={e.label} className="summary__extra">
+                                  {"\n"}
+                                  - {e.label} {formatPrice(e.lineTotal)}
+                                </span>
+                              ))}
+                            </>
+                          : ""}
+                      </span>
+                      <span>{formatPrice(row.lineTotal)}</span>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
-        </div>
 
-        <div className="track-card">
-          <h3>Entrega</h3>
-          <p className="track-line">
-            Modalidad: {order.orderMode === "delivery" ? "🛵 Delivery" : "🥡 Retiro en el local"}
-          </p>
-          <p className="track-line">Dirección local: {branch?.address}</p>
-        </div>
+          <div className="track-card">
+            <h3>Entrega</h3>
+            <p className="track-line">
+              Modalidad: {order.orderMode === "delivery" ? "🛵 Delivery" : "🥡 Retiro en el local"}
+            </p>
+            <p className="track-line">Dirección local: {branch?.address}</p>
+          </div>
 
-        {branch && (
-          <a
-            className="btn btn--whatsapp btn--block"
-            href={`https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(
-              `¡Hola! Tengo una consulta sobre mi pedido ${order.orderNumber}`
-            )}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            💬 Contactar por WhatsApp
-          </a>
-        )}
-        <div style={{ marginTop: 10 }}>
-          <Link className="btn btn--primary btn--block" to="/">
-            Volver a la tienda
-          </Link>
-        </div>
-        <div style={{ marginTop: 10 }}>
-          <Link className="btn btn--ghost btn--block" to="/track">
-            📋 Ver mis pedidos
-          </Link>
+          {branch && (
+            <a
+              className="btn btn--whatsapp btn--block"
+              href={`https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(
+                `¡Hola! Tengo una consulta sobre mi pedido ${order.orderNumber}`
+              )}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              💬 Contactar por WhatsApp
+            </a>
+          )}
+          <div style={{ marginTop: 10 }}>
+            <Link className="btn btn--primary btn--block" to="/">
+              Volver a la tienda
+            </Link>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <Link className="btn btn--ghost btn--block" to="/track">
+              📋 Ver mis pedidos
+            </Link>
+          </div>
         </div>
       </div>
     </div>
-  </div>
   );
 }

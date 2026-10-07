@@ -202,6 +202,17 @@ export function adminSetStatus(id, status) {
   });
 }
 
+// Edita tipo de entrega / medio de pago / dirección / envío de un pedido.
+// `changes` es un subconjunto de { orderMode, paymentMethod, address,
+// shippingCost }. El backend valida las reglas y responde 400 con el mensaje
+// en español (ApiError.message), que el panel muestra tal cual.
+export function adminEditOrder(id, changes) {
+  return request(`/api/admin/orders/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes),
+  });
+}
+
 // Fija el costo de envío de un pedido que quedó "a confirmar" por WhatsApp
 export function adminSetShipping(id, cost, blocks) {
   return request(`/api/admin/orders/${id}/shipping`, {

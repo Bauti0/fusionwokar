@@ -81,6 +81,15 @@ function modalidad(order) {
 export function buildTicketHtml(order) {
   const branch = BRANCHES[order.branch];
   const date = fechaDe(order);
+  // Envío actual del pedido (0 en mostrador o sin cargo): va como fila antes
+  // del TOTAL para que los números cierren; si está pendiente de confirmar se
+  // anuncia en vez del monto. También queda la línea del encabezado.
+  const envio = Number(order.shipping?.cost ?? order.shippingCost ?? 0) || 0;
+  const envioPendiente = order.orderMode === "delivery" && !!order.shipping?.pending;
+  const filaEnvio =
+    order.orderMode === "delivery" && (envio > 0 || envioPendiente)
+      ? `<tr><td>Envio</td><td class="right">${envioPendiente ? "a confirmar" : precio(envio)}</td></tr>`
+      : "";
 
   // De mayor a menor cantidad, sin tocar el array del pedido.
   const items = sortItemsByQty(order.items)
@@ -138,12 +147,13 @@ export function buildTicketHtml(order) {
     <tr><td><b>Pago:</b> ${esc(paymentLabel(order.paymentStatus))} (${esc(order.paymentMethod)})</td></tr>
     <tr><td><b>Entrega:</b> ${modalidad(order)}</td></tr>
     ${order.orderMode === "delivery" && order.address ? `<tr><td><b>Direccion:</b> ${esc(order.address)}</td></tr>` : ""}
+    ${envio > 0 ? `<tr><td><b>Envio:</b> ${precio(envio)}</td></tr>` : ""}
     <tr><td><b>Cliente:</b> ${esc(order.customer?.name)}</td></tr>
     <tr><td><b>Tel:</b> ${esc(order.customer?.phone)}</td></tr>
   </table>
   <div class="line"></div>
   <table>${items}
-    <tr><td class="b big">TOTAL</td><td class="right b big">${precio(order.total)}</td></tr>
+    ${filaEnvio}<tr><td class="b big">TOTAL</td><td class="right b big">${precio(order.total)}</td></tr>
   </table>
   ${order.notes ? `<div class="section"><b>${order.orderMode === "delivery" ? "Observaciones de entrega" : "Nota"}:</b> ${esc(order.notes)}</div>` : ""}
   <div class="line"></div>

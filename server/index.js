@@ -82,7 +82,7 @@ import {
 } from "./admin-queries.js";
 import { validateConfig } from "./config.js";
 import { orderLogLine } from "./order-log.js";
-import { computeOrderEdits, getAuditLogs } from "./order-edit.js";
+import { applyOrderEdit, computeOrderEdits, getAuditLogs } from "./order-edit.js";
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone, isValidEmail, isValidIdentification } from "../src/utils/validation.js";
@@ -2716,37 +2716,12 @@ app.patch("/api/admin/orders/:id", requireAdmin, async (req, res) => {
     if (result.error) return res.status(result.error.status).json({ error: result.error.message });
     if (result.noop) return res.json({ ok: true, order: toPublicOrder(row), message: "Sin cambios" });
 
-    // Transacción atómica: UPDATE orders + INSERT audit_log
-    await db.exec("BEGIN");
-    try {
-      await db.prepare(result.sql).run(...result.values);
-      if (result.auditEntries.length > 0) {
-        const insertAudit = db.prepare(`
-          INSERT INTO order_audit_log
-            (order_id, admin_user_id, admin_username, admin_role, admin_branch, field, old_value, new_value, old_total, new_total, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const a of result.auditEntries) {
-          await insertAudit.run(
-            a.order_id,
-            a.admin_user_id,
-            a.admin_username,
-            a.admin_role,
-            a.admin_branch,
-            a.field,
-            a.old_value,
-            a.new_value,
-            a.old_total,
-            a.new_total,
-            a.created_at
-          );
-        }
-      }
-      await db.exec("COMMIT");
-    } catch (err) {
-      await db.exec("ROLLBACK");
-      throw err;
-    }
+    // Escritura atómica: UPDATE orders + INSERT audit_log en UN solo batch
+    // (db.batch envuelve las sentencias en una transacción y las revierte
+    // todas si una falla). Ver applyOrderEdit en server/order-edit.js: acá
+    // NO hay BEGIN/COMMIT/ROLLBACK sueltos (no sirven contra executeMultiple
+    // y el ROLLBACK del catch tapaba el error original).
+    await applyOrderEdit(db, result);
 
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
     res.json({ ok: true, order: toPublicOrder(updated) });

@@ -1,6 +1,5 @@
 import { createClient } from "@libsql/client";
 import { createDb } from "./sqlite.js";
-import { parseRefunds, refundableAmount } from "./refunds.js";
 
 // ============================================================
 // FUSIÓN WOK — Base de datos Turso (libSQL en la nube)
@@ -476,82 +475,11 @@ export function toCategory(row) {
   };
 }
 
-// Convierte una fila de la BD en el objeto público del pedido
-export function toPublicOrder(row) {
-  if (!row) return null;
-  const refundedAmount = row.refunded_amount || 0;
-  return {
-    id: row.id,
-    orderNumber: row.order_number,
-    branch: row.branch,
-    // El email se expone SOLO acá (panel admin). toPublicOrderPublic, que
-    // alimenta los endpoints públicos de tracking, no lo incluye.
-    customer: {
-      name: row.customer_name,
-      phone: row.customer_phone,
-      email: row.customer_email || "",
-      firstName: row.customer_first_name || "",
-      lastName: row.customer_last_name || "",
-    },
-    address: row.address,
-    orderMode: row.order_mode,
-    paymentMethod: row.payment_method,
-    paymentStatus: row.payment_status,
-    status: row.status,
-    items: JSON.parse(row.items),
-    total: row.total,
-    discount: row.discount || 0,
-    couponCode: row.coupon_code || "",
-    shippingCost: row.shipping || 0,
-    shippingBlocks: row.shipping_km || 0,
-    shipping: {
-      cost: row.shipping || 0,
-      blocks: row.shipping_km || 0,
-      pending: !!row.shipping_pending,
-    },
-    scheduledFor: row.scheduled_for || "",
-    notes: row.notes,
-    source: row.source || "web",
-    mpOrderId: row.mp_order_id || "",
-    mpPaymentId: row.mp_payment_id,
-    refundedAmount,
-    refundableAmount: refundableAmount(row),
-    refunds: parseRefunds(row.refunds_json),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-// Proyección SIN datos personales para endpoints públicos
-// (tracking y polling). No expone nombre, teléfono, dirección ni notas.
-export function toPublicOrderPublic(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    orderNumber: row.order_number,
-    branch: row.branch,
-    orderMode: row.order_mode,
-    paymentMethod: row.payment_method,
-    paymentStatus: row.payment_status,
-    status: row.status,
-    // Ítems SIN la nota libre del cliente: como este endpoint es público y los
-    // id/número de pedido son correlativos, las notas no deben exponerse a
-    // terceros que conozcan el número de un pedido ajeno.
-    items: (JSON.parse(row.items) || []).map(({ notes, ...item }) => item),
-    total: row.total,
-    discount: row.discount || 0,
-    shippingCost: row.shipping || 0,
-    shippingBlocks: row.shipping_km || 0,
-    shipping: {
-      cost: row.shipping || 0,
-      blocks: row.shipping_km || 0,
-      pending: !!row.shipping_pending,
-    },
-    scheduledFor: row.scheduled_for || "",
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
+// Las proyecciones públicas del pedido viven en public-order.js (puras, sin
+// side-effects) para que los tests las importen sin cargar este módulo, que
+// corre las migraciones contra Turso apenas se importa. Se reexportan acá
+// para no tocar los call sites (index.js las importa desde db.js).
+export { toPublicOrder, toPublicOrderPublic } from "./public-order.js";
 
 // Formatea el número de pedido a partir del id real que asigna la DB
 // (id AUTOINCREMENT → único por construcción, sin carrera de MAX+1).

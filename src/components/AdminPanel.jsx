@@ -5,11 +5,13 @@ import {
   adminSetStatus,
   adminLogout,
   adminOrder,
+  adminEditOrder,
   adminSetShipping,
   adminRefund,
   adminStats,
   adminBranchPause,
   adminSetBranchPause,
+  shippingQuote,
 } from "../api.js";
 import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
 import { arClockLabel } from "../utils/schedule.js";
@@ -21,6 +23,8 @@ import {
   paymentLabel,
 } from "../constants.js";
 import { formatPrice } from "../utils/format.js";
+import { previewOrderEdit } from "../utils/orderEdit.js";
+import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import { playNewOrderChime } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 import { IconEmptySearch, IconRepeat, IconPlus } from "./ui/icons.jsx";
@@ -107,6 +111,20 @@ function LiveClock() {
   );
 }
 
+// Borrador de los controles de "Ajustes del pedido", arrancando en los
+// valores actuales del pedido. `address` y `shippingCost` arrancan vacíos a
+// propósito: se llenan SOLO cuando se pasa de mostrador a delivery (el
+// backend recalcula/borra todo lo demás).
+function editDraftFrom(order) {
+  return {
+    orderMode: order?.orderMode === "delivery" ? "delivery" : "pickup",
+    paymentMethod: order?.paymentMethod || "",
+    address: "",
+    shippingCost: "",
+    shippingTouched: false,
+  };
+}
+
 export default function AdminPanel({ me, onLogout }) {
   const [section, setSection] = useState("orders"); // "orders" | "stats" | "products" | "coupons"
   const [orders, setOrders] = useState([]);
@@ -137,6 +155,14 @@ export default function AdminPanel({ me, onLogout }) {
   const [refundInput, setRefundInput] = useState("");
   const [refundConfirm, setRefundConfirm] = useState(null); // { amount, full }
   const [refundForm, setRefundForm] = useState(false);
+  // ---------- ajustes del pedido (tipo de entrega / medio de pago) ----------
+  // `edit` es el borrador de los controles; se reinicia con los valores del
+  // pedido al abrir el detalle y después de cada guardado. `editSuggest` es
+  // la cotización de envío de Tandil (sugerencia, no valor enviado).
+  const [edit, setEdit] = useState(null);
+  const [editSuggest, setEditSuggest] = useState(null);
+  const [editError, setEditError] = useState("");
+  const [editConfirm, setEditConfirm] = useState(null); // resumen a confirmar
   // Clave del identificador recién copiado ("order" / "payment"), para el
   // "✓ Copiado" del botón. Vacío = ninguno copiado.
   const [copiedId, setCopiedId] = useState("");
@@ -328,6 +354,10 @@ export default function AdminPanel({ me, onLogout }) {
     setShippingInput(order.shipping?.pending ? String(order.shipping?.cost || 0) : "");
     setShippingBlocksInput(order.shipping?.pending ? String(order.shipping?.blocks || 0) : "");
     setRefundInput("");
+    setEdit(editDraftFrom(order));
+    setEditSuggest(null);
+    setEditError("");
+    setEditConfirm(null);
     setError("");
   }
 
@@ -366,6 +396,81 @@ export default function AdminPanel({ me, onLogout }) {
       ? Math.max(0, (selected.total || 0) - (selected.refundedAmount || 0))
       : 0;
   const canRefund = selected?.paymentStatus === "approved" && refundable > 0;
+
+  // ============================================================
+  // Ajustes del pedido (tipo de entrega / medio de pago)
+  // Permisos y bloqueos SOLO visuales: la validación real la hace el
+  // backend (PATCH /api/admin/orders/:id → server/order-edit.js).
+  // ============================================================
+  const esTandil = selected?.branch === "tandil";
+  const mpAprobado =
+    selected?.paymentMethod === "mercadopago" && selected?.paymentStatus === "approved";
+  const puedeEditar =
+    !!selected && (me?.role === "superadmin" || selected.branch === me?.branch);
+  const editBloqueo = !selected
+    ? ""
+    : selected.status === "cancelled"
+      ? "Pedido cancelado: no se puede editar."
+      : mpAprobado
+        ? "Pagado online con MercadoPago: ajustalo desde MercadoPago."
+        : !puedeEditar
+          ? "Solo se pueden editar pedidos de tu sucursal."
+          : "";
+  const editResumen =
+    edit && selected && !editBloqueo ? previewOrderEdit(selected, edit) : null;
+
+  function setEditField(patch) {
+    setEdit((prev) => (prev ? { ...prev, ...patch } : prev));
+    setEditError("");
+  }
+
+  // Cotiza el envío al salir del campo dirección (solo Tandil): es la
+  // SUGERENCIA que se muestra, no el valor que se manda. Si el admin no lo
+  // toca a mano, shippingCost no viaja y lo calcula el servidor.
+  async function cotizarEnvio(dir) {
+    if (!esTandil) return;
+    const addr = String(dir || "").trim();
+    if (!addr) {
+      setEditSuggest(null);
+      return;
+    }
+    try {
+      const q = await shippingQuote(selected.branch, addr);
+      setEditSuggest({ cost: q.supported ? q.cost : null });
+    } catch {
+      // Sin sugerencia el admin igual puede cargar el costo a mano (o
+      // dejarlo vacío y que el servidor intente calcularlo).
+      setEditSuggest({ cost: null, failed: true });
+    }
+  }
+
+  function openEditConfirm() {
+    const r = previewOrderEdit(selected, edit);
+    if (r.error) {
+      setEditError(r.error);
+      return;
+    }
+    if (!r.hayCambios) {
+      setEditError("Sin cambios para guardar.");
+      return;
+    }
+    setEditError("");
+    setEditConfirm(r);
+  }
+
+  // El ConfirmModal deshabilita el botón mientras `busy` (y sus re-entry
+  // están cortados), así que un doble toque no manda dos PATCH.
+  async function handleEditConfirm() {
+    // Los 400 del backend se propagan: el ConfirmModal los muestra adentro
+    // sin cerrarse.
+    const res = await adminEditOrder(selected.id, editConfirm.cambios);
+    // Manda SIEMPRE el total del servidor, nunca la vista previa local.
+    setSelected(res.order);
+    setEdit(editDraftFrom(res.order));
+    setEditSuggest(null);
+    setEditError("");
+    load({ showSpinner: false });
+  }
 
   // Copia un identificador (Order MP / ID de pago) al portapapeles.
   // Es solo feedback visual: si el portapapeles falla (contexto http
@@ -990,35 +1095,199 @@ const renderOrder = (o) => {
                 </div>
               </div>
 
+              {/* Ajustes del pedido: tipo de entrega y medio de pago.
+                  Solo comodidad visual: las reglas (pedido cancelado, pago
+                  MercadoPago aprobado, sucursal, envío) las valida el
+                  backend y los errores 400 vuelven al ConfirmModal. */}
+              <div className="detail-block">
+                <h4>Ajustes del pedido</h4>
+                {editBloqueo ? (
+                  <p className="detail-note">{editBloqueo}</p>
+                ) : edit ? (
+                  <>
+                    <div className="field">
+                      <label>Entrega</label>
+                      <div className="status-actions">
+                        <button
+                          type="button"
+                          className={`status-btn ${edit.orderMode === "delivery" ? "is-active" : ""}`}
+                          aria-pressed={edit.orderMode === "delivery"}
+                          onClick={() => setEditField({ orderMode: "delivery" })}
+                        >
+                          🛵 Delivery
+                        </button>
+                        <button
+                          type="button"
+                          className={`status-btn ${edit.orderMode === "pickup" ? "is-active" : ""}`}
+                          aria-pressed={edit.orderMode === "pickup"}
+                          onClick={() => setEditField({ orderMode: "pickup" })}
+                        >
+                          🥡 Mostrador
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="field">
+                      <label>Medio de pago</label>
+                      {/* Mercado Pago NO es destino: solo efectivo o
+                          transferencia. El actual queda resaltado si coincide. */}
+                      <div className="status-actions">
+                        <button
+                          type="button"
+                          className={`status-btn ${edit.paymentMethod === "efectivo" ? "is-active" : ""}`}
+                          aria-pressed={edit.paymentMethod === "efectivo"}
+                          onClick={() => setEditField({ paymentMethod: "efectivo" })}
+                        >
+                          💰 Efectivo
+                        </button>
+                        <button
+                          type="button"
+                          className={`status-btn ${edit.paymentMethod === "transferencia" ? "is-active" : ""}`}
+                          aria-pressed={edit.paymentMethod === "transferencia"}
+                          onClick={() => setEditField({ paymentMethod: "transferencia" })}
+                        >
+                          🏦 Transferencia
+                        </button>
+                      </div>
+                      {selected.paymentMethod === "mercadopago" && (
+                        <p>Hoy está pagado con MercadoPago ({paymentLabel(selected.paymentStatus)}).</p>
+                      )}
+                    </div>
+
+                    {/* Datos que solo hacen falta al pasar de mostrador a
+                        delivery: ahí el backend pide dirección y envío. */}
+                    {edit.orderMode === "delivery" && selected.orderMode === "pickup" && (
+                      <>
+                        <div className="field">
+                          <label htmlFor="edit-address">Dirección de entrega</label>
+                          <input
+                            id="edit-address"
+                            type="text"
+                            autoComplete="street-address"
+                            placeholder="Calle y número"
+                            value={edit.address}
+                            onChange={(e) => {
+                              setEditField({ address: e.target.value });
+                              setEditSuggest(null);
+                            }}
+                            onBlur={() => cotizarEnvio(edit.address)}
+                          />
+                        </div>
+                        <div className="field">
+                          <label htmlFor="edit-shipping">Costo de envío</label>
+                          <input
+                            id="edit-shipping"
+                            type="number"
+                            inputMode="numeric"
+                            min="0"
+                            step="100"
+                            placeholder={esTandil ? "Vacío: lo calcula el servidor" : "$ (obligatorio)"}
+                            value={edit.shippingCost}
+                            onChange={(e) =>
+                              setEditField({ shippingCost: e.target.value, shippingTouched: true })
+                            }
+                          />
+                          {esTandil && (
+                            <p>
+                              {editSuggest?.cost != null
+                                ? `Sugerido: ${formatPrice(editSuggest.cost)} (podés cambiarlo)`
+                                : editSuggest?.failed
+                                  ? "No pudimos calcularlo: dejalo vacío y lo calcula el servidor al guardar."
+                                  : "Dejalo vacío y lo calcula el servidor al guardar."}
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {edit.orderMode === "pickup" &&
+                      selected.orderMode === "delivery" &&
+                      Number(selected.shipping?.cost) > 0 && (
+                        <p>
+                          Al pasar a mostrador se descuenta el envío de{" "}
+                          {formatPrice(selected.shipping.cost)}.
+                        </p>
+                      )}
+
+                    {editResumen?.hayCambios &&
+                      editResumen.lineas.map((l) => <p key={l}>{l}</p>)}
+
+                    {editError && (
+                      <div className="form-error" role="alert">
+                        {editError}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      className="btn btn--primary btn--block"
+                      disabled={!editResumen?.hayCambios}
+                      onClick={openEditConfirm}
+                    >
+                      Revisar y guardar
+                    </button>
+                    {!editResumen?.hayCambios && (
+                      <p className="hint">Tocá un cambio para poder guardarlo.</p>
+                    )}
+                  </>
+                ) : null}
+              </div>
+
               <div className="detail-block">
                 <h4>Productos</h4>
                 <div className="summary summary--order">
-                  {selected.items.map((item) => (
-                    <div className="summary__row" key={item.key || `${item.productId}-${item.name}`}>
-                      <span className="summary__name">
-                        {item.qty}× {item.name}
-                        {item.extras?.length
-                          ? ` (${item.extras.map((e) => e.label).join(", ")})`
-                          : ""}
-                        {item.notes ? ` — "${item.notes}"` : ""}
-                      </span>
-                      <span className="summary__price">
-                        {formatPrice(item.unitPrice * item.qty)}
-                      </span>
-                    </div>
-                  ))}
-                  {selected.discount > 0 && (
-                    <div className="summary__row">
-                      <span className="summary__name">
-                        Descuento ({selected.couponCode})
-                      </span>
-                      <span className="summary__price">−{formatPrice(selected.discount)}</span>
-                    </div>
-                  )}
-                  <div className="summary__row summary__row--total">
-                    <span className="summary__name">Total</span>
-                    <span className="summary__price">{formatPrice(selected.total)}</span>
-                  </div>
+                  {(() => {
+                    const { rows } = buildOrderSummaryRows(selected);
+                    return rows.map((row, idx) => {
+                      const key = row.type ? `${row.type}-${idx}` : `${row.name}-${row.qty}-${idx}`;
+                      if (row.type === "total") {
+                        return (
+                          <div className="summary__row summary__row--total" key={key}>
+                            <span className="summary__name">{row.label}</span>
+                            <span className="summary__price">{formatPrice(row.amount)}</span>
+                          </div>
+                        );
+                      }
+                      if (row.type === "discount") {
+                        return (
+                          <div className="summary__row" key={key}>
+                            <span className="summary__name">{row.label}</span>
+                            <span className="summary__price">−{formatPrice(-row.amount)}</span>
+                          </div>
+                        );
+                      }
+                      if (row.type === "shipping") {
+                        return (
+                          <div className="summary__row" key={key}>
+                            <span className="summary__name">{row.label}</span>
+                            <span className="summary__price">
+                              {row.pending ? "a confirmar" : formatPrice(row.amount)}
+                            </span>
+                          </div>
+                        );
+                      }
+                      // Item con extras
+                      return (
+                        <div className="summary__row" key={key}>
+                          <span className="summary__name">
+                            {row.qty}× {row.name}
+                            {row.extras?.length
+                              ? <>
+                                  {row.extras.map((e) => (
+                                    <span key={e.label} className="summary__extra">
+                                      {"\n"}
+                                      - {e.label} {formatPrice(e.lineTotal)}
+                                    </span>
+                                  ))}
+                                </>
+                              : ""}
+                            {row.notes ? ` — "${row.notes}"` : ""}
+                          </span>
+                          <span className="summary__price">{formatPrice(row.lineTotal)}</span>
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
               </div>
 
@@ -1188,6 +1457,30 @@ const renderOrder = (o) => {
             await applyPause({ branch: pauseTarget, action: "pause", minutes, indefinite, message });
           }}
           onClose={() => setPauseTarget(null)}
+        />
+      )}
+
+      {editConfirm && (
+        <ConfirmModal
+          title="Confirmar ajuste"
+          message={
+            <>
+              {editConfirm.lineas.map((l) => (
+                <span className="confirm-refund__line" key={l}>
+                  {l}
+                </span>
+              ))}
+              {editConfirm.mpPendienteAviso && (
+                <span className="confirm-refund__line">
+                  Este pedido tiene un pago pendiente en MercadoPago. Si el cliente lo paga
+                  después, hay que devolverlo desde MercadoPago.
+                </span>
+              )}
+            </>
+          }
+          confirmText="Aplicar cambio"
+          onConfirm={handleEditConfirm}
+          onClose={() => setEditConfirm(null)}
         />
       )}
 

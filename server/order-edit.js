@@ -304,6 +304,50 @@ export async function computeOrderEdits(row, changes, admin, nowIso) {
 }
 
 // ============================================================
+// Escritura del resultado: UN solo batch atómico.
+//
+// Antes eran db.exec("BEGIN") / COMMIT / ROLLBACK sueltos, y eso no es
+// transacción de verdad: cada db.exec() corre sobre executeMultiple(), que
+// abre una conexión lógica NUEVA por llamada (documentado en @libsql/core
+// api.d.ts) y libera la conexión haciendo rollback. O sea: el BEGIN moría al
+// terminar su llamada, el UPDATE corría en autocommit y el ROLLBACK del
+// catch fallía con "cannot rollback - no transaction is active", tapando el
+// error original (bug en producción: 500 con los datos ya aplicados).
+//
+// db.batch(stmts, "write") envuelve todas las sentencias en UNA transacción
+// y las revierte todas si una falla — es el mismo mecanismo que usa el resto
+// del repo (creación de pedido, idempotencia, caja).
+// ============================================================
+const AUDIT_INSERT_SQL = `
+  INSERT INTO order_audit_log
+    (order_id, admin_user_id, admin_username, admin_role, admin_branch, field, old_value, new_value, old_total, new_total, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+export async function applyOrderEdit(db, result) {
+  const stmts = [{ sql: result.sql, args: result.values }];
+  for (const a of result.auditEntries) {
+    stmts.push({
+      sql: AUDIT_INSERT_SQL,
+      args: [
+        a.order_id,
+        a.admin_user_id,
+        a.admin_username,
+        a.admin_role,
+        a.admin_branch,
+        a.field,
+        a.old_value,
+        a.new_value,
+        a.old_total,
+        a.new_total,
+        a.created_at,
+      ],
+    });
+  }
+  await db.batch(stmts, "write");
+}
+
+// ============================================================
 // Lectura de la auditoría de un pedido.
 // La decisión de permiso vive acá (y no solo en el endpoint) para que
 // se pueda testear contra SQLite en memoria: un branch_admin recibe

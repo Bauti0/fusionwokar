@@ -2673,6 +2673,13 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .summary--order .summary__price {
   white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums;
 }
+.summary--order .summary__extra {
+  display: block;
+  margin-left: 16px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  white-space: pre-line;
+}
 .summary--order .summary__row--total {
   margin-top: 10px; padding-top: 12px;
   font-size: 19px; font-weight: 800; color: var(--color-text);
