@@ -161,8 +161,11 @@ export default function AdminPanel({ me, onLogout }) {
     setSection("new-order");
   }
 
-  // Mini resumen del día ("Hoy: $X · N pedidos") para la pestaña de pedidos
-  useEffect(() => {
+  // Mini resumen del día ("Hoy: $X · N pedidos") para la pestaña de pedidos.
+  // Se refresca junto con el polling de pedidos/pausas (abajo), así un pedido
+  // nuevo o un pago aprobado actualizan el "Hoy" sin recargar la página.
+  // El `from` se recalcula en cada llamada para que corte bien a medianoche.
+  const loadToday = useCallback(() => {
     const from = new Date();
     from.setHours(0, 0, 0, 0);
     adminStats({ from: from.toISOString() })
@@ -246,16 +249,18 @@ export default function AdminPanel({ me, onLogout }) {
   // NUNCA consulta con filtros viejos (antes había llamadas inmediatas en los
   // onChange del filtro que viajaban con el valor anterior al estado).
   // El polling también refresca las pausas: refleja cambios hechos desde
-  // otra pestaña o por el admin de la otra sucursal.
+  // otra pestaña o por el admin de la otra sucursal. Y el resumen del día.
   useEffect(() => {
     load();
     loadPauses();
+    loadToday();
     const t = setInterval(() => {
       load({ showSpinner: false });
       loadPauses();
+      loadToday();
     }, 10000);
     return () => clearInterval(t);
-  }, [load, loadPauses]);
+  }, [load, loadPauses, loadToday]);
 
   // Detecta pedidos "en curso" nuevos (no vistos todavía) y suena un
   // aviso corto. No suena en la primera carga de la página, solo

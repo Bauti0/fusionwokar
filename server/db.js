@@ -176,6 +176,27 @@ await db.exec(`
     updated_at TEXT NOT NULL
   );
 
+  -- Auditoría de cambios en pedidos: solo superadmin puede leer.
+  -- Cada fila registra UN cambio de campo (para consultas simples y
+  -- filtrado por admin/campo/fecha). old_total/new_total capturan el
+  -- total del pedido ANTES y DESPUÉS del cambio (no solo del campo).
+  CREATE TABLE IF NOT EXISTS order_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL,
+    admin_user_id INTEGER, -- NULL para superadmin del .env
+    admin_username TEXT NOT NULL,
+    admin_role TEXT NOT NULL, -- 'superadmin' | 'branch_admin'
+    admin_branch TEXT NOT NULL DEFAULT '', -- sucursal del admin que editó
+    field TEXT NOT NULL, -- 'orderMode' | 'paymentMethod' | 'address' | 'shipping' | 'total'
+    old_value TEXT,
+    new_value TEXT,
+    old_total INTEGER NOT NULL,
+    new_total INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_audit_order ON order_audit_log(order_id);
+  CREATE INDEX IF NOT EXISTS idx_order_audit_created ON order_audit_log(created_at);
+
   -- Estado operativo por sucursal. Hoy solo la pausa de pedidos
   -- (server/branch-pause.js): el panel la activa cuando el local no
   -- puede tomar más pedidos por un rato. Una fila por sucursal como

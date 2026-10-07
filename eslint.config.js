@@ -42,7 +42,11 @@ const REACT_HOOKS_RULES = {
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", "public/**"],
+    // .opencode/**: scripts de skills de OpenCode (.cjs con process/console
+    // en runtime de Node). No son código del proyecto y el config por archivo
+    // de abajo no les asigna `globals.node`, así que si entran al lint el
+    // gate se cae con 110 no-undef falsos.
+    ignores: ["dist/**", "node_modules/**", "public/**", ".opencode/**"],
   },
 
   js.configs.recommended,
