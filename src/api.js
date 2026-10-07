@@ -195,6 +195,13 @@ export function adminOrder(id) {
   return request(`/api/admin/orders/${id}`);
 }
 
+// Historial de cambios (auditoría) de un pedido. SOLO superadmin: el
+// server responde 403 al branch_admin, por eso el panel nunca lo llama
+// sin ese rol.
+export function adminOrderAudit(id) {
+  return request(`/api/admin/orders/${id}/audit`);
+}
+
 export function adminSetStatus(id, status) {
   return request(`/api/admin/orders/${id}/status`, {
     method: "PATCH",

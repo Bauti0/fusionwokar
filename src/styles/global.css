@@ -2750,6 +2750,10 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .refunds__amount { font-weight: 600; color: var(--color-text); }
 .refunds__date { font-variant-numeric: tabular-nums; }
 
+/* Historial de cambios (auditoría): separa una edición de la anterior */
+.audit-edit + .audit-edit { border-top: 1px dashed var(--color-border); padding-top: 8px; margin-top: 8px; }
+.audit-edit__meta { font-size: 13px; color: var(--color-text-soft); }
+
 /* Bloque "Devolver dinero": sub-sección punteada con el texto a la
    izquierda y la acción a la derecha (apiladas en móvil). Antes era un
    <button> que envolvía las dos líneas y quedaba apretado en la

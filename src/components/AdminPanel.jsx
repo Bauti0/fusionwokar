@@ -5,6 +5,7 @@ import {
   adminSetStatus,
   adminLogout,
   adminOrder,
+  adminOrderAudit,
   adminEditOrder,
   adminSetShipping,
   adminRefund,
@@ -23,7 +24,7 @@ import {
   paymentLabel,
 } from "../constants.js";
 import { formatPrice } from "../utils/format.js";
-import { previewOrderEdit } from "../utils/orderEdit.js";
+import { previewOrderEdit, formatAuditEdits } from "../utils/orderEdit.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import { playNewOrderChime } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
@@ -163,6 +164,12 @@ export default function AdminPanel({ me, onLogout }) {
   const [editSuggest, setEditSuggest] = useState(null);
   const [editError, setEditError] = useState("");
   const [editConfirm, setEditConfirm] = useState(null); // resumen a confirmar
+  // Historial de cambios (auditoría) del pedido en detalle: null mientras
+  // carga, { logs: [...] } listo, { error: true } si el GET falló.
+  // auditTick fuerza la recarga después de guardar un ajuste, para que el
+  // cambio recién hecho ya figure en la lista.
+  const [audit, setAudit] = useState(null);
+  const [auditTick, setAuditTick] = useState(0);
   // Clave del identificador recién copiado ("order" / "payment"), para el
   // "✓ Copiado" del botón. Vacío = ninguno copiado.
   const [copiedId, setCopiedId] = useState("");
@@ -287,6 +294,26 @@ export default function AdminPanel({ me, onLogout }) {
     }, 10000);
     return () => clearInterval(t);
   }, [load, loadPauses, loadToday]);
+
+  // Historial de cambios: SOLO el superadmin y SOLO al abrir el detalle
+  // (nunca con la lista de pedidos). El guard del rol evita el 403 del
+  // branch_admin; la bandera `vivo` descarta la respuesta si el admin ya
+  // abrió otro pedido (o cerró el modal) mientras cargaba.
+  useEffect(() => {
+    setAudit(null);
+    if (me?.role !== "superadmin" || !selected?.id) return;
+    let vivo = true;
+    adminOrderAudit(selected.id)
+      .then((d) => {
+        if (vivo) setAudit({ logs: formatAuditEdits(d.logs || []) });
+      })
+      .catch(() => {
+        if (vivo) setAudit({ error: true });
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [selected?.id, me?.role, auditTick]);
 
   // Detecta pedidos "en curso" nuevos (no vistos todavía) y suena un
   // aviso corto. No suena en la primera carga de la página, solo
@@ -469,6 +496,7 @@ export default function AdminPanel({ me, onLogout }) {
     setEdit(editDraftFrom(res.order));
     setEditSuggest(null);
     setEditError("");
+    setAuditTick((t) => t + 1);
     load({ showSpinner: false });
   }
 
@@ -1232,6 +1260,42 @@ const renderOrder = (o) => {
                   </>
                 ) : null}
               </div>
+
+              {/* Historial de cambios: SOLO superadmin (un branch_admin ni
+                  siquiera dispara el GET: recibiría 403). Si la llamada
+                  falla, el error queda acá adentro y el modal sigue andando. */}
+              {me?.role === "superadmin" && (
+                <div className="detail-block">
+                  <h4>Historial de cambios</h4>
+                  {!audit && <p className="hint">Cargando historial…</p>}
+                  {audit?.error && (
+                    <div className="form-error" role="alert">
+                      No se pudo cargar el historial de cambios.
+                    </div>
+                  )}
+                  {audit?.logs?.length === 0 && <p className="hint">Sin cambios registrados</p>}
+                  {audit?.logs?.map((ed) => (
+                    <div className="audit-edit" key={ed.id}>
+                      <p className="audit-edit__meta">
+                        {[ed.autor, BRANCHES[ed.sucursal]?.name || ed.sucursal, ed.fecha]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                      {ed.lineas.map((l, i) => (
+                        <p key={`${l.campo}-${i}`}>
+                          <strong>{l.campo}:</strong> {l.de} → {l.a}
+                        </p>
+                      ))}
+                      {ed.cambioTotal && (
+                        <p>
+                          <strong>Total:</strong> {formatPrice(ed.totalDe)} →{" "}
+                          {formatPrice(ed.totalA)}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <div className="detail-block">
                 <h4>Productos</h4>

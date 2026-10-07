@@ -131,3 +131,67 @@ export function previewOrderEdit(order, draft = {}) {
   out.hayCambios = Object.keys(out.cambios).length > 0;
   return out;
 }
+
+// ============================================================
+// Historial de cambios (auditoría) — vista del panel, solo superadmin.
+// El server devuelve UNA FILA por campo modificado (snake_case, la
+// forma real de order_audit_log, del más reciente al más viejo): una
+// edición que toca modo + dirección + envío son 3 filas del mismo
+// momento. Se agrupan por (admin_username, created_at) para mostrar
+// autor/fecha/total una sola vez y una línea por campo.
+// ============================================================
+
+const AUDIT_FIELD_LABEL = {
+  orderMode: "Tipo de entrega",
+  paymentMethod: "Medio de pago",
+  address: "Dirección",
+  shipping: "Envío",
+};
+
+// Un valor vacío (dirección/envío borrados al pasar a mostrador) queda
+// como "—" en vez de un hueco.
+function auditValue(field, value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (field === "orderMode") return value === "delivery" ? "Delivery" : "Mostrador";
+  if (field === "paymentMethod") return PAGO_LABEL[value] || value;
+  if (field === "shipping") return formatPrice(Number(value));
+  return String(value);
+}
+
+/**
+ * @param {Array} rows - filas de order_audit_log (getAuditLogs)
+ * @returns {Array} ediciones: { id, autor, sucursal, fecha, cambioTotal,
+ *   totalDe, totalA, lineas: [{ campo, de, a }] }
+ */
+export function formatAuditEdits(rows) {
+  const edits = [];
+  let lastKey = "";
+  for (const r of rows || []) {
+    const key = `${r.admin_username}|${r.created_at}`;
+    if (edits.length === 0 || key !== lastKey) {
+      lastKey = key;
+      edits.push({
+        id: r.id,
+        autor: r.admin_username || "",
+        // "" para el superadmin del .env: el panel no le dibuja sucursal.
+        sucursal: r.admin_branch || "",
+        fecha: r.created_at
+          ? new Date(r.created_at).toLocaleString("es-AR", {
+              timeZone: "America/Argentina/Buenos_Aires",
+            })
+          : "",
+        cambioTotal: Number(r.old_total) !== Number(r.new_total),
+        totalDe: r.old_total,
+        totalA: r.new_total,
+        lineas: [],
+      });
+    }
+    const cur = edits[edits.length - 1];
+    cur.lineas.push({
+      campo: AUDIT_FIELD_LABEL[r.field] || r.field,
+      de: auditValue(r.field, r.old_value),
+      a: auditValue(r.field, r.new_value),
+    });
+  }
+  return edits;
+}
