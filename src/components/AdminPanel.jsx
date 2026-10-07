@@ -67,6 +67,22 @@ function timeAgo(iso) {
 
 // Estados que cuentan como "en curso" (todavía no se entregó ni se canceló)
 const ACTIVE_STATUS_IDS = new Set(["received", "preparing", "ready", "out_for_delivery"]);
+
+// Etiquetas de los filtros de pago, para los chips de "filtros activos"
+const PAYMENT_FILTER_LABELS = {
+  approved: "Pagados",
+  pending: "Pago pendiente",
+  rejected: "Rechazados",
+  refunded: "Devueltos",
+};
+
+// Tabs del modal de detalle del pedido
+const ORDER_TABS = [
+  { id: "pedido", label: "Pedido" },
+  { id: "productos", label: "Productos" },
+  { id: "pago", label: "Pago" },
+  { id: "ajustes", label: "Ajustes" },
+];
 // Un pedido programado para más adelante (con +1h de holgura) no cuenta como
 // "en curso" ni dispara el aviso sonoro hasta que llegue su momento.
 function isFutureScheduled(o) {
@@ -109,6 +125,22 @@ function LiveClock() {
     <span className="live-clock" title="Hora local (Argentina)">
       🕐 {now.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}
     </span>
+  );
+}
+
+// Skeleton de la lista de pedidos: evita el salto visual de "Cargando…"
+// a la grilla. El shimmer va en tono oscuro (ver `.admin .skeleton`).
+function OrdersSkeleton() {
+  return (
+    <div className="admin-orders" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <div className="sk-order" key={i}>
+          <span className="skeleton sk-order__a" />
+          <span className="skeleton sk-order__b" />
+          <span className="skeleton sk-order__c" />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -173,6 +205,9 @@ export default function AdminPanel({ me, onLogout }) {
   // Clave del identificador recién copiado ("order" / "payment"), para el
   // "✓ Copiado" del botón. Vacío = ninguno copiado.
   const [copiedId, setCopiedId] = useState("");
+  // Tab activa del modal de detalle: "pedido" | "productos" | "pago" | "ajustes".
+  // Se reinicia al abrir cada pedido para no heredar la tab de otro.
+  const [detailTab, setDetailTab] = useState("pedido");
   const pageRef = useRef(1);
   const seenRef = useRef(loadSeen());
   const [unseenIds, setUnseenIds] = useState(() => new Set());
@@ -377,6 +412,7 @@ export default function AdminPanel({ me, onLogout }) {
 
   function openDetail(order) {
     setSelected(order);
+    setDetailTab("pedido");
     setLastWhatsApp("");
     setShippingInput(order.shipping?.pending ? String(order.shipping?.cost || 0) : "");
     setShippingBlocksInput(order.shipping?.pending ? String(order.shipping?.blocks || 0) : "");
@@ -578,6 +614,9 @@ export default function AdminPanel({ me, onLogout }) {
 
       <div className="admin-layout">
         <nav className="admin-nav">
+          {/* Los rótulos de grupo se ven solo en desktop (sidebar):
+              en móvil son display:none y la nav sigue de píldoras. */}
+          <span className="admin-nav__group">Operación</span>
           <button
             className={`admin-nav__btn ${section === "orders" ? "is-active" : ""}`}
             onClick={() => setSection("orders")}
@@ -585,12 +624,20 @@ export default function AdminPanel({ me, onLogout }) {
             📦 Pedidos
             {unseenIds.size > 0 && <span className="admin-nav__badge">{unseenIds.size}</span>}
           </button>
+          <span className="admin-nav__group">Análisis</span>
           <button
             className={`admin-nav__btn ${section === "stats" ? "is-active" : ""}`}
             onClick={() => setSection("stats")}
           >
             📊 Estadísticas
           </button>
+          <button
+            className={`admin-nav__btn ${section === "sales" ? "is-active" : ""}`}
+            onClick={() => setSection("sales")}
+          >
+            💵 Ventas
+          </button>
+          <span className="admin-nav__group">Catálogo</span>
           <button
             className={`admin-nav__btn ${section === "products" ? "is-active" : ""}`}
             onClick={() => setSection("products")}
@@ -603,17 +650,12 @@ export default function AdminPanel({ me, onLogout }) {
           >
             🏷️ Cupones
           </button>
+          <span className="admin-nav__group">Administración</span>
           <button
             className={`admin-nav__btn ${section === "customers" ? "is-active" : ""}`}
             onClick={() => setSection("customers")}
           >
             👥 Clientes
-          </button>
-          <button
-            className={`admin-nav__btn ${section === "sales" ? "is-active" : ""}`}
-            onClick={() => setSection("sales")}
-          >
-            💵 Ventas
           </button>
           {me?.role === "superadmin" && (
             <button
@@ -790,17 +832,67 @@ export default function AdminPanel({ me, onLogout }) {
             onChange={setIncludePending}
             label="Incluir MP sin pagar"
           />
+          {/* Chips de filtros activos: clic en el chip limpia ese filtro,
+              "Limpiar todo" los reinicia. Para el admin de sucursal la
+              sucursal es fija (no es un filtro elegible) y no se chipcea. */}
+          {(search || (!isBranchAdmin && branch) || status || payment || !includePending) && (
+            <div className="admin-filters__chips">
+              {search && (
+                <button type="button" className="filter-chip" onClick={() => setSearch("")}>
+                  🔍 {search.length > 22 ? `${search.slice(0, 22)}…` : search}
+                  <span className="filter-chip__x" aria-hidden="true">✕</span>
+                </button>
+              )}
+              {!isBranchAdmin && branch && (
+                <button type="button" className="filter-chip" onClick={() => setBranchFilter("")}>
+                  {BRANCHES[branch]?.name || branch}
+                  <span className="filter-chip__x" aria-hidden="true">✕</span>
+                </button>
+              )}
+              {status && (
+                <button type="button" className="filter-chip" onClick={() => setStatus("")}>
+                  {statusLabel(status)}
+                  <span className="filter-chip__x" aria-hidden="true">✕</span>
+                </button>
+              )}
+              {payment && (
+                <button type="button" className="filter-chip" onClick={() => setPayment("")}>
+                  {PAYMENT_FILTER_LABELS[payment] || payment}
+                  <span className="filter-chip__x" aria-hidden="true">✕</span>
+                </button>
+              )}
+              {!includePending && (
+                <button type="button" className="filter-chip" onClick={() => setIncludePending(true)}>
+                  Excluyendo MP sin pagar
+                  <span className="filter-chip__x" aria-hidden="true">✕</span>
+                </button>
+              )}
+              <button
+                type="button"
+                className="filter-chip filter-chip--clear"
+                onClick={() => {
+                  setSearch("");
+                  setBranchFilter("");
+                  setStatus("");
+                  setPayment("");
+                  setIncludePending(true);
+                }}
+              >
+                Limpiar todo
+              </button>
+            </div>
+          )}
         </div>
 
         {error && <div className="form-error">{error}</div>}
 
         {loading && orders.length === 0 ? (
-          <p className="hint">Cargando pedidos…</p>
+          <OrdersSkeleton />
         ) : orders.length === 0 ? (
           <div className="admin-empty admin-empty--icon">
             <IconEmptySearch className="empty-state__icon" />
             <strong>No hay pedidos con estos filtros.</strong>
-            <span>Probá con otra búsqueda o ajustá los filtros.</span>
+            <span>Quitá los filtros o probá con otra búsqueda.</span>
           </div>
         ) : (
           <div className="admin-orders-wrap">
@@ -817,6 +909,7 @@ const renderOrder = (o) => {
                     <div
                       key={o.id}
                       className={`admin-order ${cancelled ? "is-cancelled" : ""} ${o.paymentStatus === "rejected" ? "is-rejected" : ""} ${unseen ? "is-unseen" : ""}`}
+                      data-status={o.status}
                       role="button"
                       tabIndex={0}
                       onClick={() => openDetailAndMarkSeen(o)}
@@ -846,7 +939,7 @@ const renderOrder = (o) => {
                         {o.scheduledFor && <span className="badge" title={`Programado: ${new Date(o.scheduledFor).toLocaleString("es-AR")}`}>🕒</span>}
                       </div>
                       <div className="admin-order__bottom">
-                        <span className="badge">{statusEmoji(o.status)} {statusLabel(o.status)}</span>
+                        <span className={`badge badge--status-${o.status}`}>{statusEmoji(o.status)} {statusLabel(o.status)}</span>
                         <span className={`badge badge--pay badge--pay-${o.paymentStatus}`}>
                           {o.paymentMethod === "mercadopago" ? "💳 " : "💰 "}
                           {paymentLabel(o.paymentStatus)}
@@ -934,7 +1027,7 @@ const renderOrder = (o) => {
                 <h3 id="order-modal-title" className="order-head__num">
                   {selected.orderNumber}
                 </h3>
-                <span className="badge">
+                <span className={`badge badge--status-${selected.status}`}>
                   {statusEmoji(selected.status)} {statusLabel(selected.status)}
                 </span>
                 <span className={`badge badge--pay badge--pay-${selected.paymentStatus}`}>
@@ -945,6 +1038,31 @@ const renderOrder = (o) => {
               <button className="modal__close" onClick={() => setSelected(null)} aria-label="Cerrar">✕</button>
             </div>
             <div className="modal__body">
+              {/* Tabs del detalle: cada bloque del pedido vive en su tab
+                  (el pie de impresión queda fijo afuera, siempre visible). */}
+              <div className="order-tabs" role="tablist" aria-label="Secciones del pedido">
+                {ORDER_TABS.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    id={`order-tab-${t.id}`}
+                    aria-selected={detailTab === t.id}
+                    aria-controls="order-detail-panel"
+                    className={`order-tabs__tab ${detailTab === t.id ? "is-active" : ""}`}
+                    onClick={() => setDetailTab(t.id)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <div
+                className="order-panel"
+                role="tabpanel"
+                id="order-detail-panel"
+                aria-labelledby={`order-tab-${detailTab}`}
+              >
+              {detailTab === "pedido" && (
               <div className="detail-grid detail-grid--order">
                 <div className="detail-block">
                   <h4>Cliente</h4>
@@ -1010,13 +1128,14 @@ const renderOrder = (o) => {
                   )}
                 </div>
               </div>
+              )}
 
               {/* Pago: tarjeta de ancho completo. Antes vivía como tercera
                   columna del grid, que a 560px de modal lo dejaba en ~165px y
                   los IDs de Mercado Pago (sin wrap) ensanchaban la columna:
                   de ahí el scroll horizontal del modal. */}
+              {detailTab === "pago" && (
               <div className="detail-block">
-                <h4>Pago</h4>
                 <div className="pay-card">
                   <div className="pay-card__head">
                     <span className={`badge badge--pay badge--pay-${selected.paymentStatus}`}>
@@ -1122,13 +1241,14 @@ const renderOrder = (o) => {
                     )}
                 </div>
               </div>
+              )}
 
               {/* Ajustes del pedido: tipo de entrega y medio de pago.
                   Solo comodidad visual: las reglas (pedido cancelado, pago
                   MercadoPago aprobado, sucursal, envío) las valida el
                   backend y los errores 400 vuelven al ConfirmModal. */}
+              {detailTab === "ajustes" && (
               <div className="detail-block">
-                <h4>Ajustes del pedido</h4>
                 {editBloqueo ? (
                   <p className="detail-note">{editBloqueo}</p>
                 ) : edit ? (
@@ -1260,11 +1380,12 @@ const renderOrder = (o) => {
                   </>
                 ) : null}
               </div>
+              )}
 
               {/* Historial de cambios: SOLO superadmin (un branch_admin ni
                   siquiera dispara el GET: recibiría 403). Si la llamada
                   falla, el error queda acá adentro y el modal sigue andando. */}
-              {me?.role === "superadmin" && (
+              {me?.role === "superadmin" && detailTab === "ajustes" && (
                 <div className="detail-block">
                   <h4>Historial de cambios</h4>
                   {!audit && <p className="hint">Cargando historial…</p>}
@@ -1297,8 +1418,8 @@ const renderOrder = (o) => {
                 </div>
               )}
 
+              {detailTab === "productos" && (
               <div className="detail-block">
-                <h4>Productos</h4>
                 <div className="summary summary--order">
                   {(() => {
                     const { rows } = buildOrderSummaryRows(selected);
@@ -1354,7 +1475,9 @@ const renderOrder = (o) => {
                   })()}
                 </div>
               </div>
+              )}
 
+              {detailTab === "pedido" && (
               <div className="detail-block">
                 <h4>Estado</h4>
                 <div className="status-actions">
@@ -1374,6 +1497,8 @@ const renderOrder = (o) => {
                     ❌ {statusLabel("cancelled")}
                   </button>
                 </div>
+              </div>
+              )}
               </div>
 
               <div className="modal__footer modal__footer--order">

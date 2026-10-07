@@ -3442,3 +3442,264 @@ body:has(.admin-login) { background: var(--color-secondary); }
   display: flex; flex-direction: column; gap: 2px;
   margin-top: 4px; font-size: 12.5px;
 }
+
+/* ============================================================
+   Admin — Rediseño visual (P1–P8)
+   Bloque final: los overrides del tema oscuro de arriba ganan por
+   especificidad, así que acá se repite el prefijo .admin donde hace
+   falta para que el nuevo estilo quede encima sin pelear.
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   P2 — Color por estado del pedido
+   El acento vive en --status-accent y se pinta con box-shadow inset
+   (sin correr el contenido como haría un borde más ancho). El estado
+   "no visto" combina el acento con su anillo rojo en la misma sombra.
+   ------------------------------------------------------------ */
+.admin-order {
+  --status-accent: rgba(255, 255, 255, 0.28);
+  box-shadow: inset 3px 0 0 var(--status-accent);
+}
+.admin-order[data-status="received"] { --status-accent: #4a9eff; }
+.admin-order[data-status="preparing"] { --status-accent: var(--color-warn-text, #f0b429); }
+.admin-order[data-status="ready"] { --status-accent: var(--color-success-text, #3fbf72); }
+.admin-order[data-status="out_for_delivery"] { --status-accent: #a5a8f0; }
+.admin-order[data-status="completed"] { --status-accent: rgba(255, 255, 255, 0.28); }
+.admin-order[data-status="pending_payment"] { --status-accent: var(--color-warn-text, #f0b429); }
+.admin-order[data-status="cancelled"] { --status-accent: var(--color-danger-text, #ff8a84); }
+/* El hover no debe mezclar el rojo de "selección" (border-color que las
+   reglas viejas de .admin-order:hover pintan alrededor de la tarjeta)
+   con el accent del estado: el borde adopta el color del estado y la
+   elevación da el feedback de "acá se puede interactuar". */
+.admin .admin-order:hover {
+  border-color: var(--status-accent);
+  box-shadow: inset 3px 0 0 var(--status-accent), var(--shadow-sm);
+}
+.admin .admin-order.is-unseen {
+  box-shadow: inset 3px 0 0 var(--status-accent), 0 0 0 3px rgba(229, 52, 46, 0.16);
+}
+.admin .admin-order__total { font-size: 17px; font-weight: 800; }
+
+/* Badges de estado con el mismo lenguaje que los de pago */
+.admin .badge--status-received { background: rgba(74, 158, 255, 0.14); color: #79b8ff; border-color: rgba(74, 158, 255, 0.34); }
+.admin .badge--status-preparing { background: var(--color-warn-soft, #fff4e0); color: var(--color-warn-text, #b36b00); border-color: var(--color-warn-border, #f0d9a8); }
+.admin .badge--status-ready { background: var(--color-success-soft, #e6f6ec); color: var(--color-success-text, #1f8a4c); border-color: var(--color-success-border, #bfe6cd); }
+.admin .badge--status-out_for_delivery { background: rgba(165, 168, 240, 0.14); color: #a5a8f0; border-color: rgba(165, 168, 240, 0.34); }
+.admin .badge--status-completed { background: rgba(255, 255, 255, 0.06); color: var(--color-text-soft); border-color: var(--color-border-hi); }
+.admin .badge--status-pending_payment { background: var(--color-warn-soft, #fff4e0); color: var(--color-warn-text, #b36b00); border-color: var(--color-warn-border, #f0d9a8); }
+.admin .badge--status-cancelled { background: var(--color-primary-soft); color: var(--color-danger-text); border-color: rgba(229, 52, 46, 0.3); }
+
+/* ------------------------------------------------------------
+   P1 — Sidebar con grupos + indicador de sección activa (desktop)
+   En móvil la nav sigue siendo de píldoras: los rótulos de grupo
+   se ocultan y no cambia nada en pantallas chicas.
+   ------------------------------------------------------------ */
+.admin-nav__group { display: none; }
+@media (min-width: 1024px) {
+  .admin-nav__group {
+    display: block;
+    margin: 16px 0 6px;
+    padding: 0 10px;
+    font-size: 10.5px; font-weight: 800; letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--color-text-mute, #8f8880);
+  }
+  .admin-nav__group:first-child { margin-top: 2px; }
+  .admin .admin-nav__btn {
+    position: relative;
+    border-color: transparent;
+    background: transparent;
+    border-radius: 10px;
+    padding: 9px 12px;
+    transition: background 0.15s var(--ease), color 0.15s var(--ease);
+  }
+  .admin .admin-nav__btn:hover { background: var(--color-surface-hi); border-color: transparent; color: var(--color-text); }
+  .admin .admin-nav__btn.is-active { background: var(--color-primary-soft); border-color: transparent; color: var(--color-primary); }
+  .admin .admin-nav__btn.is-active::before {
+    content: "";
+    position: absolute; left: -6px; top: 9px; bottom: 9px;
+    width: 3px; border-radius: 999px;
+    background: var(--color-primary);
+  }
+  .admin .admin-nav__btn.is-active .admin-nav__badge { background: var(--color-primary); color: #fff; }
+}
+
+/* ------------------------------------------------------------
+   P3 — Tabs del detalle del pedido
+   ------------------------------------------------------------ */
+.order-tabs {
+  display: flex; gap: 2px;
+  margin: -2px 0 16px;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.order-tabs::-webkit-scrollbar { display: none; }
+.order-tabs__tab {
+  background: none; border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 9px 13px; margin-bottom: -1px;
+  font-size: 13.5px; font-weight: 700;
+  color: var(--color-text-soft); white-space: nowrap;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.order-tabs__tab:hover { color: var(--color-text); }
+.order-tabs__tab.is-active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+/* El panel reemplaza a los hijos directos del body como referencia
+   de los bloques del detalle: sin esto se pierde el margen de 16px
+   que la regla `.modal--order .modal__body > .detail-block` daba. */
+.modal--order .modal__body > .order-panel > .detail-block { margin-bottom: 16px; }
+
+/* ------------------------------------------------------------
+   P4 — Stat cards: icono de contexto + principal con énfasis
+   ------------------------------------------------------------ */
+.stat-card { position: relative; }
+.stat-card__icon {
+  position: absolute; top: 10px; right: 12px;
+  width: 30px; height: 30px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; line-height: 1;
+  background: var(--color-primary-soft);
+}
+.stat-card__label { padding-right: 34px; }
+.stat-card--main .stat-card__icon { background: rgba(255, 255, 255, 0.12); }
+.admin .stat-card--main,
+.admin .admin-sales .stat-card--main {
+  background:
+    radial-gradient(130% 140% at 100% 0%, rgba(229, 52, 46, 0.3), transparent 55%),
+    #141414;
+  border-color: var(--color-border-hi);
+}
+
+/* ------------------------------------------------------------
+   P5 — Chips de filtros activos (clic para limpiar uno a uno)
+   ------------------------------------------------------------ */
+.admin-filters__chips {
+  grid-column: 1 / -1;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-top: 2px;
+}
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-hi);
+  color: var(--color-text);
+  border-radius: 999px;
+  padding: 5px 9px 5px 13px;
+  font-size: 12.5px; font-weight: 700;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.filter-chip:hover { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.filter-chip__x { font-size: 11px; line-height: 1; opacity: 0.7; }
+.filter-chip:hover .filter-chip__x { opacity: 1; }
+.filter-chip--clear {
+  padding: 5px 13px;
+  border-style: dashed;
+  background: transparent;
+  color: var(--color-text-soft);
+}
+
+/* ------------------------------------------------------------
+   P6 — Skeleton de pedidos + estado vacío con ícono de contexto
+   ------------------------------------------------------------ */
+/* El shimmer claro de .skeleton sobre negro sería un fogonazo:
+   en el admin va en tono oscuro (mismo truco que .menu-skeleton). */
+.admin .skeleton {
+  background: linear-gradient(90deg, #1c1c1c 25%, #272727 40%, #1c1c1c 60%);
+  background-size: 300% 100%;
+}
+.sk-order {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sk-order .skeleton { display: block; height: 14px; border-radius: 6px; }
+.sk-order .sk-order__a { width: 38%; }
+.sk-order .sk-order__b { width: 66%; }
+.sk-order .sk-order__c { width: 52%; height: 22px; border-radius: 999px; }
+.admin .admin-empty--icon .empty-state__icon {
+  box-sizing: border-box;
+  width: 64px; height: 64px;
+  padding: 15px; margin-bottom: 10px;
+  background: var(--color-primary-soft);
+  border: 1px dashed rgba(229, 52, 46, 0.4);
+  border-radius: 50%;
+  color: var(--color-primary);
+}
+
+/* ------------------------------------------------------------
+   P7 — Productos: miniatura, fila escaneable y acciones compactas
+   ------------------------------------------------------------ */
+.admin .admin-product__info { flex-direction: row; align-items: center; gap: 10px; min-width: 0; }
+.admin .admin-product__title { flex: 1; min-width: 0; }
+.admin-product__thumb {
+  width: 44px; height: 44px; flex-shrink: 0;
+  border-radius: 10px; object-fit: cover;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+.admin .admin-product {
+  border-radius: var(--radius-sm);
+  transition: background 0.15s var(--ease);
+}
+.admin .admin-product:hover { background: rgba(255, 255, 255, 0.035); }
+/* Las acciones son todos iconos conocidos (↑ ↓ ✎ 👁 🗑): sin texto
+   cada fila deja de tener dos líneas de botones. */
+.admin .admin-cat__actions .btn,
+.admin .admin-group__actions .btn,
+.admin .admin-product__actions .btn {
+  padding: 8px 10px; gap: 0;
+}
+
+/* ------------------------------------------------------------
+   P8 — Arqueo: la cuenta como tarjeta hundida con línea de suma
+   ------------------------------------------------------------ */
+.admin .cash-register__ledger {
+  gap: 0;
+  padding: 4px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.cash-register__ledger .cash-register__row {
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--color-border);
+}
+.cash-register__ledger .cash-register__row:last-child { border-bottom: none; }
+.admin .cash-register__ledger .cash-register__row--add > span::before {
+  color: var(--color-text-soft); font-weight: 800;
+}
+.admin .cash-register__ledger .cash-register__row--total > span::before {
+  color: var(--color-primary); font-weight: 800;
+}
+.admin .cash-register__ledger .cash-register__row--highlight {
+  margin: 8px -12px -4px;
+  padding: 10px 12px;
+  border-radius: 0 0 9px 9px;
+}
+.admin .cash-register__ledger .cash-register__row--highlight strong { color: var(--color-price); }
+
+/* ------------------------------------------------------------
+   Botón primario del admin: plano y sin el glow rojo de la tienda
+   (decisión del dueño, solo en el panel).
+   El hover NO usa filter: brightness() — un filter re-rasteriza el
+   botón en otra capa con antialiasing distinto y el texto se ve más
+   grueso/distorsionado mientras el mouse está encima. El feedback es
+   solo el fondo (más claro, entra con la transición de background
+   que .btn ya declara); filter queda en none para pisar también el
+   brightness(1.06) de la base. Sin anillos ni glow: el dueño probó
+   un delineado blanco exterior y quedó como halo de foco.
+   ------------------------------------------------------------ */
+.admin .btn--primary {
+  background: var(--color-primary);
+  box-shadow: none;
+}
+.admin .btn--primary:hover {
+  background: #f5463d;
+  box-shadow: none;
+  filter: none;
+}
+.admin .btn--primary:active { box-shadow: none; }

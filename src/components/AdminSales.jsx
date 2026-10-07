@@ -86,6 +86,7 @@ export default function AdminSales({ me }) {
         <>
           <div className="stats-grid">
             <div className="stat-card stat-card--main">
+              <span className="stat-card__icon" aria-hidden="true">💰</span>
               <span className="stat-card__label">Venta generada (neta)</span>
               <strong className="stat-card__value">{formatPrice(sales.net)}</strong>
               <span className="stat-card__note">
@@ -93,10 +94,12 @@ export default function AdminSales({ me }) {
               </span>
             </div>
             <div className="stat-card">
+              <span className="stat-card__icon" aria-hidden="true">🧾</span>
               <span className="stat-card__label">Ticket promedio</span>
               <strong className="stat-card__value">{formatPrice(sales.average)}</strong>
             </div>
             <div className="stat-card">
+              <span className="stat-card__icon" aria-hidden="true">📦</span>
               <span className="stat-card__label">Pedidos</span>
               <strong className="stat-card__value">{sales.count}</strong>
             </div>

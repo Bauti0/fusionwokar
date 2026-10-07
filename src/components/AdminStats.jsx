@@ -88,6 +88,7 @@ export default function AdminStats({ me }) {
         <>
           <div className="stats-grid">
             <div className="stat-card stat-card--main">
+              <span className="stat-card__icon" aria-hidden="true">💰</span>
               <span className="stat-card__label">Venta generada (neta)</span>
               <strong className="stat-card__value">{formatPrice(stats.ventaNeta)}</strong>
               <span className="stat-card__note">
@@ -99,10 +100,12 @@ export default function AdminStats({ me }) {
               // local ni analytics (decisión 3 del dueño).
               <>
                 <div className="stat-card">
+                  <span className="stat-card__icon" aria-hidden="true">🧾</span>
                   <span className="stat-card__label">Ticket Promedio</span>
                   <strong className="stat-card__value">{formatPrice(stats.ticketPromedio)}</strong>
                 </div>
                 <div className="stat-card">
+                  <span className="stat-card__icon" aria-hidden="true">📦</span>
                   <span className="stat-card__label">Pedidos</span>
                   <strong className="stat-card__value">{stats.pedidos}</strong>
                 </div>
@@ -110,24 +113,29 @@ export default function AdminStats({ me }) {
             ) : (
               <>
                 <div className="stat-card">
+                  <span className="stat-card__icon" aria-hidden="true">📍</span>
                   <span className="stat-card__label">Venta neta · Tandil</span>
                   <strong className="stat-card__value">{formatPrice(stats.ventaTandil)}</strong>
                   <span className="stat-card__note">devuelto {formatPrice(stats.devueltoTandil ?? 0)}</span>
                 </div>
                 <div className="stat-card">
+                  <span className="stat-card__icon" aria-hidden="true">📍</span>
                   <span className="stat-card__label">Venta neta · Necochea</span>
                   <strong className="stat-card__value">{formatPrice(stats.ventaNecochea)}</strong>
                   <span className="stat-card__note">devuelto {formatPrice(stats.devueltoNecochea ?? 0)}</span>
                 </div>
                 <div className="stat-card">
+                  <span className="stat-card__icon" aria-hidden="true">🧾</span>
                   <span className="stat-card__label">Ticket Promedio</span>
                   <strong className="stat-card__value">{formatPrice(stats.ticketPromedio)}</strong>
                 </div>
                 <div className="stat-card">
+                  <span className="stat-card__icon" aria-hidden="true">📦</span>
                   <span className="stat-card__label">Pedidos</span>
                   <strong className="stat-card__value">{stats.pedidos}</strong>
                 </div>
                 <div className="stat-card">
+                  <span className="stat-card__icon" aria-hidden="true">👥</span>
                   <span className="stat-card__label">Visitantes (personas)</span>
                   <strong className="stat-card__value">{stats.visitas}</strong>
                 </div>

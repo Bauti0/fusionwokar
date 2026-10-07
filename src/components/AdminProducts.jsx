@@ -432,8 +432,12 @@ export default function AdminProducts({ me }) {
                     <span className="admin-group__name">{group.name || "Sin grupo"}</span>
                     {group.name && (
                       <span className="admin-group__actions">
-                        <button className="btn btn--ghost btn--sm" onClick={() => openRenameGroup(group, cat)}><IconEdit style={{ width: 13, height: 13 }} /> Renombrar</button>
-                        <button className="btn btn--danger btn--sm" onClick={() => handleDeleteGroup(group, cat)}><IconTrash style={{ width: 13, height: 13 }} /> Eliminar grupo</button>
+                        <Tooltip label="Renombrar grupo">
+                          <button className="btn btn--ghost btn--sm" onClick={() => openRenameGroup(group, cat)} aria-label={`Renombrar grupo ${group.name}`}><IconEdit style={{ width: 13, height: 13 }} /></button>
+                        </Tooltip>
+                        <Tooltip label="Eliminar grupo">
+                          <button className="btn btn--danger btn--sm" onClick={() => handleDeleteGroup(group, cat)} aria-label={`Eliminar grupo ${group.name}`}><IconTrash style={{ width: 13, height: 13 }} /></button>
+                        </Tooltip>
                       </span>
                     )}
                   </div>
@@ -464,6 +468,9 @@ export default function AdminProducts({ me }) {
                     }}
                   >
                       <div className="admin-product__info">
+                        {p.image && (
+                          <img className="admin-product__thumb" src={p.image} alt="" loading="lazy" />
+                        )}
                         <div className="admin-product__title">
                           <strong>{p.name}</strong>
                           <span className="admin-product__price">{formatPrice(p.price)}</span>
@@ -472,6 +479,8 @@ export default function AdminProducts({ me }) {
                           {p.available ? "Visible" : "Oculto"}
                         </span>
                       </div>
+                      {/* Acciones solo-icono (↑ ↓ ✎ 👁 🗑): cada fila deja
+                          de ocupar dos líneas de botones en el móvil. */}
                       <div className="admin-product__actions">
                         <Tooltip label="Mover arriba">
                           <button className="btn btn--ghost btn--sm" onClick={() => handleMoveProduct(p, "up")} aria-label={`Mover ${p.name} arriba`}>↑</button>
@@ -479,15 +488,21 @@ export default function AdminProducts({ me }) {
                         <Tooltip label="Mover abajo">
                           <button className="btn btn--ghost btn--sm" onClick={() => handleMoveProduct(p, "down")} aria-label={`Mover ${p.name} abajo`}>↓</button>
                         </Tooltip>
-                        <button className="btn btn--ghost btn--sm" onClick={() => openEdit(p)}><IconEdit style={{ width: 13, height: 13 }} /> Editar</button>
-                        <button
-                          className="btn btn--ghost btn--sm"
-                          onClick={() => handleToggle(p)}
-                          title={p.available ? "Ocultar del menú" : "Mostrar en el menú"}
-                        >
-                          {p.available ? "🙈 Ocultar" : "👁️ Mostrar"}
-                        </button>
-                        <button className="btn btn--danger btn--sm" onClick={() => handleDelete(p)}><IconTrash style={{ width: 13, height: 13 }} /> Eliminar</button>
+                        <Tooltip label="Editar">
+                          <button className="btn btn--ghost btn--sm" onClick={() => openEdit(p)} aria-label={`Editar ${p.name}`}><IconEdit style={{ width: 14, height: 14 }} /></button>
+                        </Tooltip>
+                        <Tooltip label={p.available ? "Ocultar del menú" : "Mostrar en el menú"}>
+                          <button
+                            className="btn btn--ghost btn--sm"
+                            onClick={() => handleToggle(p)}
+                            aria-label={p.available ? `Ocultar ${p.name}` : `Mostrar ${p.name}`}
+                          >
+                            {p.available ? "🙈" : "👁️"}
+                          </button>
+                        </Tooltip>
+                        <Tooltip label="Eliminar">
+                          <button className="btn btn--danger btn--sm" onClick={() => handleDelete(p)} aria-label={`Eliminar ${p.name}`}><IconTrash style={{ width: 14, height: 14 }} /></button>
+                        </Tooltip>
                       </div>
                     </div>
                   ))}
