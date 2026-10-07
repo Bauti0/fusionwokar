@@ -26,6 +26,15 @@ export default function PaymentResult({ order, branch, onHome }) {
                 ? "Pago rechazado"
                 : "Pago pendiente"}
           </h1>
+          {/* Píldora de estado con el mismo color que el badge de pago
+              del admin: escanear el resultado de un vistazo. */}
+          <span
+            className={`badge payment-result__badge badge--pay-${
+              approved ? "approved" : rejected ? "rejected" : "pending"
+            }`}
+          >
+            {approved ? "Pago aprobado" : rejected ? "Pago rechazado" : "Pago pendiente"}
+          </span>
           <p>
             {approved && (
               <>

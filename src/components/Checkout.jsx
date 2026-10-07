@@ -551,8 +551,11 @@ export default function Checkout({
           )}
           {items.map((item) => (
             <div className="summary__row" key={item.key}>
-              <span>
-                {item.qty}× {item.name}
+              <span className="summary__item">
+                {item.image && <img className="summary__thumb" src={item.image} alt="" />}
+                <span>
+                  {item.qty}× {item.name}
+                </span>
               </span>
               <span>{formatPrice(lineTotal(item))}</span>
             </div>

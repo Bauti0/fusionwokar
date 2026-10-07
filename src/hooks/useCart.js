@@ -69,6 +69,9 @@ export default function useCart(branchId) {
             key,
             productId: product.id,
             name: product.name,
+            // La foto viaja en la línea para poder mostrar miniatura en el
+            // carrito y en el resumen del checkout (antes no se guardaba).
+            image: product.image || "",
             unitPrice: product.price,
             extras,
             notes,
@@ -157,6 +160,7 @@ export default function useCart(branchId) {
           key,
           productId: it.productId,
           name: it.name,
+          image: it.image || "",
           unitPrice: it.unitPrice,
           extras: it.extras || [],
           notes: it.notes || "",

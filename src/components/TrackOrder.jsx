@@ -14,6 +14,7 @@ import {
 import { formatPrice } from "../utils/format.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import TrackHeader from "./TrackHeader.jsx";
+import { IconPhone, IconArrowLeft, IconClockOutline } from "./ui/icons.jsx";
 
 // ============================================================
 // TrackOrder — seguimiento del pedido por número (FW-00001)
@@ -104,6 +105,14 @@ export default function TrackOrder() {
   const cancelled = order.status === STATUS_CANCELLED.id;
   const pendingPay = order.status === STATUS_PENDING_PAYMENT.id;
   const current = statusIndex(order.status);
+  // Tono del estado (mismo lenguaje de color que el admin): ámbar en
+  // curso, verde avanzado, rojo solo para cancelado. Se usa para la
+  // burbuja del emoji y para el nombre del estado.
+  const statusTone = cancelled
+    ? "danger"
+    : ["ready", "out_for_delivery", "completed"].includes(order.status)
+      ? "success"
+      : "warn";
 
   return (
     <div className="app">
@@ -120,12 +129,18 @@ export default function TrackOrder() {
           </div>
 
           <div className="track-card">
-            <div className="track-card__status">
-              <span className="track-card__emoji">{statusEmoji(order.status)}</span>
+            <div className={`track-card__status is-${statusTone}`}>
+              <span className={`track-card__emoji track-status-bubble track-status-bubble--${statusTone}`}>
+                {statusEmoji(order.status)}
+              </span>
               <div>
                 <strong>{statusLabel(order.status)}</strong>
                 <small>
-                  Pago: {paymentLabel(order.paymentStatus)}
+                  {/* Badge de pago con color de estado (aprobado/pending/
+                      rejected/refunded → badge--pay-*, igual que en admin). */}
+                  <span className={`badge badge--pay-${order.paymentStatus}`}>
+                    Pago: {paymentLabel(order.paymentStatus)}
+                  </span>
                   {order.paymentMethod === "mercadopago" ? " (Mercado Pago)" : " (en el local)"}
                 </small>
               </div>
@@ -144,9 +159,18 @@ export default function TrackOrder() {
               <div className="track-checklist">
                 {ORDER_STATUSES.map((s, i) => {
                   const done = i <= current;
+                  // El próximo paso pendiente lleva tinte ámbar: dice
+                  // "acá estamos" sin leerse como error (nunca rojo).
+                  // NO destacamos "preparing" como "next" cuando el estado es
+                  // "received" y el pago ya está aprobado: el pedido está
+                  // confirmado pero la cocina aún no arrancó; no hay un paso
+                  // "activo" hasta que el estado pase a "preparing".
+                  const isReceivedWithApprovedPay =
+                    order.status === "received" && order.paymentStatus === "approved";
+                  const next = !done && i === current + 1 && current >= 1 && !isReceivedWithApprovedPay;
                   return (
-                    <div key={s.id} className={`track-check ${done ? "is-done" : ""}`}>
-                      <span className="track-check__mark">{done ? "✓" : "○"}</span>
+                    <div key={s.id} className={`track-check ${done ? "is-done" : ""} ${next ? "is-next" : ""}`}>
+                      <span className="track-check__mark">{done ? "✓" : next ? "◐" : "○"}</span>
                       <span className="track-check__label">{s.label}</span>
                     </div>
                   );
@@ -210,34 +234,43 @@ export default function TrackOrder() {
             </div>
           </div>
 
-          <div className="track-card">
-            <h3>Entrega</h3>
-            <p className="track-line">
-              Modalidad: {order.orderMode === "delivery" ? "🛵 Delivery" : "🥡 Retiro en el local"}
-            </p>
-            <p className="track-line">Dirección local: {branch?.address}</p>
-          </div>
+          <section className="track-delivery" aria-labelledby="delivery-heading">
+            <h3 id="delivery-heading">Entrega</h3>
+            <div className="track-delivery__lines">
+              <p className="track-delivery__line">
+                <span className="track-delivery__label">Modalidad:</span>
+                <span className="track-delivery__value">
+                  {order.orderMode === "delivery" ? "🛵 Delivery" : "🥡 Retiro en el local"}
+                </span>
+              </p>
+              <p className="track-delivery__line">
+                <span className="track-delivery__label">Dirección:</span>
+                <span className="track-delivery__value">{branch?.address}</span>
+              </p>
+            </div>
+          </section>
 
           {branch && (
             <a
-              className="btn btn--whatsapp btn--block"
+              className="btn btn--whatsapp-dark btn--block"
               href={`https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(
                 `¡Hola! Tengo una consulta sobre mi pedido ${order.orderNumber}`
               )}`}
               target="_blank"
               rel="noreferrer"
             >
-              💬 Contactar por WhatsApp
+              <IconPhone className="btn__icon" width="20" height="20" />
+              Contactar por WhatsApp
             </a>
           )}
-          <div style={{ marginTop: 10 }}>
-            <Link className="btn btn--primary btn--block" to="/">
+          <div className="track-actions">
+            <Link className="btn btn--secondary btn--block" to="/">
+              <IconArrowLeft className="btn__icon" width="20" height="20" />
               Volver a la tienda
             </Link>
-          </div>
-          <div style={{ marginTop: 10 }}>
-            <Link className="btn btn--ghost btn--block" to="/track">
-              📋 Ver mis pedidos
+            <Link className="btn btn--secondary btn--block" to="/track">
+              <IconClockOutline className="btn__icon" width="20" height="20" />
+              Ver mis pedidos
             </Link>
           </div>
         </div>

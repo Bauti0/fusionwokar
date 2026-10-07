@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { formatPrice, lineTotal } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
+import Tooltip from "./ui/Tooltip.jsx";
 
 // ============================================================
 // Carrito como bottom-sheet: se abre sobre el menú sin sacarte del
@@ -46,6 +47,9 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
             <>
               {items.map((item) => (
                 <div className="cart-item" key={item.key}>
+                  {item.image && (
+                    <img className="cart-item__thumb" src={item.image} alt="" />
+                  )}
                   <div className="cart-item__info">
                     <p className="cart-item__name">{item.name}</p>
                     {item.extras.length > 0 && (
@@ -70,9 +74,22 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
                           +
                         </button>
                       </div>
-                      <button className="cart-item__remove" onClick={() => removeItem(item.key)}>
-                        Quitar
-                      </button>
+                      {/* Acción secundaria como ícono con tooltip (misma
+                          convención que el panel admin), no botón de texto. */}
+                      <Tooltip label="Quitar del pedido">
+                        <button
+                          className="cart-item__remove"
+                          onClick={() => removeItem(item.key)}
+                          aria-label={`Quitar ${item.name}`}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M3 6h18" />
+                            <path d="M8 6V4h8v2" />
+                            <path d="M19 6l-1 14H6L5 6" />
+                            <path d="M10 11v5M14 11v5" />
+                          </svg>
+                        </button>
+                      </Tooltip>
                     </div>
                   </div>
                   <div className="cart-item__price">

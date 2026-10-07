@@ -17,7 +17,9 @@ export default function CartBar({ count, total, onView }) {
             <circle cx="10" cy="20" r="1.6" />
             <circle cx="18" cy="20" r="1.6" />
           </svg>
-          <span className="cart-bar__badge">{count}</span>
+          {/* key por cantidad: fuerza el re-montaje y reproduce la
+              animación pop del badge en cada alta de ítem. */}
+          <span className="cart-bar__badge" key={count}>{count}</span>
         </span>
         <span className="cart-bar__info">
           <span className="cart-bar__count">{count} {count === 1 ? "item" : "items"}</span>

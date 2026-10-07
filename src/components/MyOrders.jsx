@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { getOrdersByPhone } from "../api.js";
 import { formatPrice } from "../utils/format.js";
 import { combineOrders } from "../utils/orders.js";
 import { phonePlaceholderFor } from "../data/branches.js";
-import { IconClock, IconRepeat, IconEmptySearch } from "./ui/icons.jsx";
+import { IconClock, IconRepeat, IconEmptySearch, IconArrowLeft, IconStore } from "./ui/icons.jsx";
 
 const CACHE_KEY = "fw.myOrdersCache";
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutos
@@ -59,8 +59,76 @@ function filterPendingPaymentOrders(orders) {
   });
 }
 
+// Badge de estado limpio: solo texto, color por estado, sin emoji
+function StatusBadge({ status }) {
+  const config = {
+    received: { label: "Recibido", tone: "warn" },
+    preparing: { label: "En elaboración", tone: "warn" },
+    ready: { label: "Listo", tone: "success" },
+    out_for_delivery: { label: "En camino", tone: "success" },
+    completed: { label: "Entregado", tone: "success" },
+    cancelled: { label: "Cancelado", tone: "danger" },
+    pending_payment: { label: "Esperando pago", tone: "warn" },
+  };
+  const c = config[status] || { label: status, tone: "warn" };
+  return <span className={`status-badge status-badge--${c.tone}`}>{c.label}</span>;
+}
+
+// Tarjeta de pedido unificada (server + local)
+function OrderCard({ order, source, canRepeat, onRepeat, cart, branch }) {
+  const formatDate24h = (iso) => {
+    const d = new Date(iso);
+    return d.toLocaleString("es-AR", {
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+  };
+
+  if (order.orderNumber) {
+    return (
+      <Link className="order-card order-card--link" to={`/track/${order.orderNumber}`}>
+        <div className="order-card__top">
+          <strong className="order-card__number">{order.orderNumber}</strong>
+          <StatusBadge status={order.status} />
+        </div>
+        <div className="order-card__meta">
+          <span className="order-card__date">{formatDate24h(order.createdAt || order.date)}</span>
+          <strong className="order-card__total">{formatPrice(order.total)}</strong>
+        </div>
+        {canRepeat && cart && onRepeat && (
+          <button
+            className="order-card__repeat"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRepeat(order); }}
+            aria-label="Repetir pedido"
+          >
+            <IconRepeat style={{ width: 16, height: 16 }} />
+            <span>Repetir</span>
+          </button>
+        )}
+      </Link>
+    );
+  }
+
+  return (
+    <article className="order-card">
+      <div className="order-card__top">
+        <span className="order-card__date">{formatDate24h(order.createdAt || order.date)}</span>
+        <strong className="order-card__total">{formatPrice(order.total)}</strong>
+      </div>
+      <p className="order-card__lines">
+        {order.items?.map((it) => `${it.qty}× ${it.name}`).join(" · ") || (source === "server" ? "—" : "Detalle no disponible")}
+      </p>
+      {canRepeat && order.items?.length && cart && onRepeat && (
+        <button className="order-card__repeat" onClick={() => onRepeat(order)}>
+          <IconRepeat style={{ width: 16, height: 16 }} />
+          <span>Repetir pedido</span>
+        </button>
+      )}
+    </article>
+  );
+}
+
 export default function MyOrders({ cart, branch, onBack, onRepeat }) {
-  const navigate = useNavigate();
   const [serverOrders, setServerOrders] = useState([]);
   const [localHistory, setLocalHistory] = useState([]);
   const [phone, setPhone] = useState("");
@@ -71,17 +139,14 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
   const [refreshCooldown, setRefreshCooldown] = useState(false);
   const [fetchFailed, setFetchFailed] = useState(false);
   const cooldownTimer = useRef(null);
-  // Momento en que arrancó el cooldown actual: el "Reintentar en Xs" se
-  // recalcula siempre desde acá, así nunca deriva ni queda en negativo.
   const cooldownStartedAt = useRef(0);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const [activeTab, setActiveTab] = useState("activos");
 
-  // Cargar historial local
   useEffect(() => {
     if (cart?.history) setLocalHistory(cart.history);
   }, [cart?.history]);
 
-  // Cargar teléfono guardado y buscar automáticamente
   useEffect(() => {
     const stored = getStoredPhone();
     if (stored) {
@@ -90,7 +155,6 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
     }
   }, []);
 
-  // Fetch por teléfono con caché
   const fetchOrders = useCallback(async (phoneNumber, isRefresh = false) => {
     const cleanPhone = phoneNumber.trim();
     if (!cleanPhone) {
@@ -98,7 +162,6 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
       return;
     }
 
-    // Intentar caché (solo si no es refresh explícito)
     if (!isRefresh) {
       const cached = readCache(cleanPhone);
       if (cached) {
@@ -138,12 +201,10 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
     }
   }, []);
 
-  // Ejecutar búsqueda al tener teléfono
   useEffect(() => {
     if (phone) fetchOrders(phone);
   }, [phone, fetchOrders]);
 
-  // Botón "Reintentar" con cooldown
   const handleRefresh = useCallback(() => {
     if (refreshCooldown || !phone) return;
     fetchOrders(phone, true);
@@ -155,9 +216,6 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
     }, REFRESH_COOLDOWN_MS);
   }, [phone, refreshCooldown, fetchOrders]);
 
-  // Cuenta regresiva visible del cooldown: los segundos restantes se derivan
-  // del timestamp de inicio (nunca de un contador independiente), clamp a 0 y
-  // redondeo hacia arriba.
   useEffect(() => {
     if (!refreshCooldown) return undefined;
     const update = () => {
@@ -169,15 +227,12 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
     return () => clearInterval(interval);
   }, [refreshCooldown]);
 
-  // Guardar teléfono en fw.lookupPhone (si no está en fw.customer)
   const handlePhoneSubmit = useCallback((e) => {
     e.preventDefault();
     const clean = phone.trim();
     if (!clean) return;
     if (phoneSource !== "customer") {
-      try {
-        localStorage.setItem("fw.lookupPhone", clean);
-      } catch { /* ignore */ }
+      try { localStorage.setItem("fw.lookupPhone", clean); } catch { /* ignore */ }
       setPhoneSource("lookup");
     }
     fetchOrders(clean);
@@ -188,41 +243,26 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
     setError("");
   }, []);
 
-  // Aplicar filtro de pending_payment (solo < 2h) a los pedidos del servidor
   const filteredServerOrders = filterPendingPaymentOrders(serverOrders);
   const combined = combineOrders(filteredServerOrders, localHistory, branch?.id);
-  
-  // Separar: activos normales, "Esperando pago" (MP < 2h), e históricos
+
   const pendingPaymentOrders = combined.filter((c) => c.order.status === "pending_payment" && c.order.paymentMethod === "mercadopago");
   const normalActive = combined.filter((c) => c.isActive && !(c.order.status === "pending_payment" && c.order.paymentMethod === "mercadopago"));
   const historical = combined.filter((c) => !c.isActive);
-  
+
+  const groups = [
+    { id: "activos", label: "Activos", orders: normalActive },
+    { id: "esperando", label: "Esperando pago", orders: pendingPaymentOrders },
+    { id: "historial", label: historical.some((h) => h.order.orderNumber) ? "Historial" : "Pedidos anteriores", orders: historical },
+  ].filter((g) => g.orders.length > 0);
+
+  const visibleGroup = groups.find((g) => g.id === activeTab) || groups[0] || null;
   const hasAny = combined.length > 0;
-  const hasServerData = serverOrders.length > 0;
-  const showPhoneField = !phone; // no hay teléfono en customer ni lookup
+  const showPhoneField = !phone;
 
-  const formatDate24h = (iso) => {
-    const d = new Date(iso);
-    return d.toLocaleString("es-AR", {
-      day: "2-digit", month: "2-digit", year: "numeric",
-      hour: "2-digit", minute: "2-digit", hour12: false,
-    });
-  };
-
-  const getStatusBadge = (status) => {
-    const labels = {
-      received: "📥 Recibido", preparing: "👨‍🍳 En elaboración",
-      ready: "✅ Listo", out_for_delivery: "🛵 En camino",
-      completed: "🍜 Entregado", cancelled: "❌ Cancelado",
-      pending_payment: "⏳ Esperando pago",
-    };
-    return labels[status] || status;
-  };
-
-  // Indicador de carga discreto
   const LoadingIndicator = () => (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--color-text-soft)", fontSize: 13, marginTop: 8 }}>
-      <svg className="icon-btn" style={{ width: 16, height: 16, animation: "spin 1s linear infinite" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+    <div className="loading-indicator" role="status" aria-live="polite">
+      <svg className="loading-indicator__spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
         <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
         <path d="M12 2a10 10 0 0 1 10 10" stroke="var(--color-primary)" strokeOpacity="1" />
       </svg>
@@ -230,16 +270,17 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
     </div>
   );
 
-  // Error state: mensaje claro + botón "Reintentar" prominente
   const ErrorState = () => error ? (
-    <div className="track-card" style={{ marginBottom: 16 }}>
-      <div style={{ background: "var(--color-primary-soft)", border: "1px solid rgba(229,52,46,0.25)", borderRadius: "var(--radius-sm)", padding: "16px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          <strong style={{ color: "var(--color-danger-text)" }}>No se pudieron cargar los pedidos</strong>
-        </div>
-        <p style={{ color: "var(--color-text-soft)", fontSize: 13, margin: "0 0 12px" }}>{error}</p>
-        <div style={{ display: "flex", gap: 8 }}>
+    <div className="error-state">
+      <div className="error-state__icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+      </div>
+      <div className="error-state__content">
+        <strong>No se pudieron cargar los pedidos</strong>
+        <p>{error}</p>
+        <div className="error-state__actions">
           <button className="btn btn--primary" onClick={handleRefresh} disabled={refreshCooldown}>
             {refreshCooldown ? `Reintentar en ${cooldownRemaining}s` : "Reintentar"}
           </button>
@@ -258,62 +299,15 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
     </div>
   ) : null;
 
-  // Estado vacío con botón "Ver el menú"
   const EmptyState = () => (
-    <div className="track-card">
-      <div className="empty-state">
-        <IconEmptySearch style={{ width: 52, height: 52, margin: "0 auto 14px", color: "var(--color-border-hi)" }} />
-        <p>No tenés pedidos todavía.</p>
-        {onBack && (
-          <button className="btn btn--primary" style={{ marginTop: 12 }} onClick={onBack}>
-            Ver el menú
-          </button>
-        )}
-      </div>
-    </div>
-  );
-
-  // Render de una orden (común para activos e históricos)
-  const renderOrder = ({ order, source, canRepeat }) => (
-    <div key={order.orderNumber || order.id} className={order.orderNumber ? "my-order" : "order-card"}>
-      {order.orderNumber ? (
-        <>
-          <Link className="my-order" to={`/track/${order.orderNumber}`}>
-            <div className="my-order__head">
-              <strong>{order.orderNumber}</strong>
-              <span className="badge">{getStatusBadge(order.status)}</span>
-            </div>
-            <div className="my-order__meta">
-              <span>{formatDate24h(order.createdAt || order.date)}</span>
-              <strong>{formatPrice(order.total)}</strong>
-            </div>
-            <div className="cart-item__line" style={{ marginTop: 8 }}>
-              <button className="btn btn--primary btn--block" onClick={(e) => { e.preventDefault(); navigate(`/track/${order.orderNumber}`); }}>
-                Seguir
-              </button>
-              {canRepeat && cart && onRepeat && (
-                <button className="btn btn--outline" onClick={(e) => { e.preventDefault(); onRepeat(order); }}>
-                  <IconRepeat style={{ width: 18, height: 18 }} /> Repetir
-                </button>
-              )}
-            </div>
-          </Link>
-        </>
-      ) : (
-        <>
-          <div className="order-card__head">
-            <span className="order-card__date">{formatDate24h(order.createdAt || order.date)}</span>
-            <span className="order-card__total">{formatPrice(order.total)}</span>
-          </div>
-          <p className="order-card__lines">{order.items?.map((it) => `${it.qty}× ${it.name}`).join(" · ") || (source === "server" ? "—" : "Detalle no disponible")}</p>
-          <div className="cart-item__line">
-            {canRepeat && order.items?.length && cart && onRepeat && (
-              <button className="btn btn--outline" onClick={() => onRepeat(order)}>
-                <IconRepeat style={{ width: 18, height: 18 }} /> Repetir pedido
-              </button>
-            )}
-          </div>
-        </>
+    <div className="empty-state">
+      <IconEmptySearch className="empty-state__icon" />
+      <p>No tenés pedidos todavía.</p>
+      {onBack && (
+        <button className="btn btn--primary" style={{ marginTop: 12 }} onClick={onBack}>
+          <IconStore className="btn__icon" width="20" height="20" />
+          Ver el menú
+        </button>
       )}
     </div>
   );
@@ -322,26 +316,24 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
     <div className="app">
       <div className="page">
         <div className="container">
-          <h2 className="page__title">Mis pedidos</h2>
-          <p className="page__sub">{branch ? branch.name : "Historial local y búsqueda por teléfono"}</p>
+          <header className="my-orders__header">
+            <h1 className="my-orders__title">Mis pedidos</h1>
+            <p className="my-orders__subtitle">{branch ? branch.name : "Historial local y búsqueda por teléfono"}</p>
+          </header>
 
-          {/* Campo de teléfono SOLO si no hay ninguno guardado */}
           {showPhoneField && (
-            <div className="track-card" style={{ marginBottom: 16 }}>
-              <h3>
-                <IconClock style={{ width: 18, height: 18, display: "inline-block", verticalAlign: "middle", marginRight: 6 }} />
+            <div className="phone-field">
+              <h2>
+                <IconClock style={{ width: 20, height: 20, display: "inline-block", verticalAlign: "middle", marginRight: 8 }} />
                 Ingresá tu teléfono para ver tus pedidos
-              </h3>
-              <form onSubmit={handlePhoneSubmit} style={{ display: "grid", gap: 10 }}>
+              </h2>
+              <form onSubmit={handlePhoneSubmit} className="phone-field__form">
                 <div className="field">
-                  {/* El ejemplo va en minúscula ("ej:") porque va dentro de la
-                      frase; el placeholder de la sucursal trae "Ej:". */}
                   <input
                     type="tel" inputMode="tel"
                     placeholder={`Tu celular (${phonePlaceholderFor(branch).toLowerCase()})`}
                     value={phone} onChange={handlePhoneChange}
-                    disabled={loading}
-                    autoComplete="tel"
+                    disabled={loading} autoComplete="tel"
                   />
                 </div>
                 <button className="btn btn--primary btn--block" type="submit" disabled={loading || !phone.trim()}>
@@ -351,58 +343,65 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
             </div>
           )}
 
-          {/* Error state: SIEMPRE visible si falló el fetch, nunca muestra "vacío" */}
           {ErrorState()}
 
-          {/* Estados de carga */}
           {loading && !hasAny && !fetchFailed && !showPhoneField && (
-            <div className="track-card">
-              <div className="empty-state" style={{ padding: 24 }}>
-                <div className="big">⏳</div>
-                <p>Buscando tus pedidos…</p>
+            <div className="skeleton-container">
+              <div className="orders-skeleton" aria-hidden="true">
+                <div className="skeleton sk-order" />
+                <div className="skeleton sk-order" />
+                <div className="skeleton sk-order" />
               </div>
+              <p className="hint">Buscando tus pedidos…</p>
             </div>
           )}
 
-          {/* Resultados: SIEMPRE mostramos historial local */}
           {!loading && !showPhoneField && (
             <div>
-              {/* "Esperando pago" (MP pending_payment < 2h) */}
-              {pendingPaymentOrders.length > 0 && (
-                <div className="track-card" style={{ marginBottom: 16 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <h3>⏳ Esperando pago ({pendingPaymentOrders.length})</h3>
-                    <LoadingIndicator />
-                  </div>
-                  {pendingPaymentOrders.map(renderOrder)}
+              {groups.length > 1 && (
+                <nav className="orders-tabs" role="tablist" aria-label="Grupos de pedidos">
+                  {groups.map((g) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={visibleGroup?.id === g.id}
+                      className={`orders-tab ${visibleGroup?.id === g.id ? "is-active" : ""}`}
+                      onClick={() => setActiveTab(g.id)}
+                    >
+                      {g.label}
+                      <span className="orders-tab__count">{g.orders.length}</span>
+                    </button>
+                  ))}
+                </nav>
+              )}
+
+              {visibleGroup && (
+                <div className="orders-list">
+                  {refreshing && <LoadingIndicator />}
+                  {visibleGroup.orders.map(({ order, source, canRepeat }) => (
+                    <OrderCard
+                      key={order.orderNumber || order.id}
+                      order={order}
+                      source={source}
+                      canRepeat={canRepeat}
+                      onRepeat={onRepeat}
+                      cart={cart}
+                      branch={branch}
+                    />
+                  ))}
                 </div>
               )}
 
-              {/* Pedidos activos normales */}
-              {normalActive.length > 0 && (
-                <div className="track-card" style={{ marginBottom: 16 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <h3>Pedidos activos ({normalActive.length})</h3>
-                    <LoadingIndicator />
-                  </div>
-                  {normalActive.map(renderOrder)}
-                </div>
-              )}
-
-              {/* Históricos */}
-              {historical.length > 0 && (
-                <div className="track-card">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <h3>{historical.some((h) => h.order.orderNumber) ? "Historial" : "Pedidos anteriores"}</h3>
-                    <LoadingIndicator />
-                  </div>
-                  {historical.map(renderOrder)}
-                </div>
-              )}
-
-              {/* Vacío real: no hay pedidos NI error NI cargando */}
               {!hasAny && !fetchFailed && !error && <EmptyState />}
             </div>
+          )}
+
+        {onBack && (
+            <button className="my-orders__back" onClick={onBack} aria-label={branch ? "Volver al menú" : "Volver al inicio"}>
+              <IconArrowLeft style={{ width: 20, height: 20 }} />
+              <span>{branch ? "Volver al menú" : "Volver al inicio"}</span>
+            </button>
           )}
 
         </div>

@@ -203,7 +203,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
 
       <div className="menu__content">
         {hasSearch ? (
-          <SearchResults menu={menu} search={search} onAdd={handleAdd} onCustomize={setCustomizing} qtys={qtys} />
+          <SearchResults menu={menu} search={search} onAdd={handleAdd} onCustomize={setCustomizing} qtys={qtys} onClearSearch={setQuery} />
         ) : (
           menu.categories
             .filter((cat) => cat.id === activeCat)
@@ -258,7 +258,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
 export default Menu;
 
 // Resultados de búsqueda aplanados (muestra la categoría de cada plato)
-function SearchResults({ menu, search, onAdd, onCustomize, qtys = {} }) {
+function SearchResults({ menu, search, onAdd, onCustomize, qtys = {}, onClearSearch }) {
   const results = [];
   for (const cat of menu.categories) {
     for (const group of cat.groups) {
@@ -275,6 +275,13 @@ function SearchResults({ menu, search, onAdd, onCustomize, qtys = {} }) {
       <div className="empty-state">
         <IconEmptySearch className="empty-state__icon" />
         <p>No encontramos ningún producto con esa búsqueda.</p>
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => onClearSearch("")}
+        >
+          Ver todo el menú
+        </button>
       </div>
     );
   }

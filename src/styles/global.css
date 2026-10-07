@@ -3703,3 +3703,576 @@ body:has(.admin-login) { background: var(--color-secondary); }
   filter: none;
 }
 .admin .btn--primary:active { box-shadow: none; }
+
+
+/* ============================================================
+   PULIDO PÁGINA DEL CLIENTE — agregado al final de la pasada
+   (badges de pago en tema oscuro, acento por estado, pestañas
+   en Mis pedidos, miniaturas, acciones como ícono).
+   ============================================================ */
+
+/* Badges de pago: en la tienda (.app, tema oscuro) los base salen con
+   fondo claro y quedaban como pegatinas sobre negro. Mismos overrides
+   que el admin, sobre los mismos tokens. */
+.app .badge {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.app .badge--pay-approved {
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+  border-color: var(--color-success-border);
+}
+.app .badge--pay-pending {
+  background: var(--color-warn-soft);
+  color: var(--color-warn-text);
+  border-color: var(--color-warn-border);
+}
+.app .badge--pay-rejected {
+  background: var(--color-primary-soft);
+  color: var(--color-danger-text);
+  border-color: rgba(229, 52, 46, 0.25);
+}
+.app .badge--pay-refunded {
+  background: rgba(74, 79, 196, 0.15);
+  color: #a5a8f0;
+  border-color: rgba(74, 79, 196, 0.3);
+}
+
+/* Mis pedidos: pestañas en vez de tres bloques apilados en un scroll.
+   Mismo lenguaje que la nav del admin (chips, activo en rojo marca). */
+.orders-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 14px;
+  padding-bottom: 2px;
+}
+.orders-tabs::-webkit-scrollbar { display: none; }
+.orders-tab {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-soft);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13.5px;
+  font-weight: 700;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+.orders-tab:hover { border-color: var(--color-border-hi); color: var(--color-text); }
+.orders-tab.is-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.orders-tab__count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 11px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.orders-tab:not(.is-active) .orders-tab__count {
+  background: var(--color-border);
+  color: var(--color-text-soft);
+}
+
+/* Skeleton de Mis pedidos: tarjetas con la forma real, sobre el fondo
+   oscuro de la tienda (si no, el shimmer claro era un fogonazo). */
+.app .skeleton {
+  background: linear-gradient(90deg, #1a1a1a 25%, #262626 40%, #1a1a1a 60%);
+  background-size: 300% 100%;
+}
+.orders-skeleton { display: grid; gap: 10px; }
+.orders-skeleton .sk-order { height: 84px; border-radius: var(--radius-sm); }
+
+/* Las tarjetas viven en un grid con gap: sin el margin propio que
+   traían cuando estaban apiladas en bloque. */
+.my-orders > .order-card { margin-bottom: 0; }
+
+/* Miniatura de producto en el carrito y en el resumen del checkout */
+.cart-item__thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--color-surface-hi);
+}
+.summary__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.summary__thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--color-surface-hi);
+}
+
+/* "Quitar" del carrito: ícono con tooltip en vez de texto (misma
+   convención que las acciones secundarias del admin). */
+.cart-item__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-soft);
+  transition: border-color 0.15s var(--ease), color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+.cart-item__remove svg { width: 15px; height: 15px; }
+.cart-item__remove:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  text-decoration: none;
+}
+
+/* Resultado de pago: píldora de estado bajo el título, con el mismo
+   color que usa el badge de pago en todo el admin. */
+.payment-result__badge { margin: -4px 0 14px; }
+
+/* La tarjeta entera navega al seguimiento: la pista es un texto con
+   flecha, no un botón primario rojo a todo el ancho (dos masas de color
+   seguidas aplastaban la tarjeta). */
+.my-order__cta {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--color-text-soft);
+  transition: color 0.15s var(--ease);
+}
+.my-order:hover .my-order__cta { color: var(--color-text); }
+
+/* Glow de los botones de acción en la tienda: sobre fondo negro el
+   box-shadow saturado (rojo/verde) se leía como un halo tóxico. Sombra
+   neutra con offset y blur, igual que el criterio ya aplicado en el
+   panel admin. El landing (tema claro) mantiene su propio estilo. */
+.app .btn--primary,
+.app .btn--whatsapp { box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35); }
+.app .btn--primary:hover,
+.app .btn--whatsapp:hover { box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45); }
+.app .btn--primary:active { box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3); }
+
+/* WhatsApp en la tienda: el verde saturado (#25d366) con texto blanco no
+   llega a 4.5:1 de contraste ("apenas se leía la letra"). Se usa el verde
+   oscuro oficial de la marca (#075e54): se sigue leyendo "WhatsApp" y el
+   texto sale nítido (~7.7:1), sin matar el color de identidad. */
+.app .btn--whatsapp { background: #075e54; }
+.app .btn--whatsapp:hover { background: #0d6b5e; filter: none; }
+
+/* Seguimiento — un poco de color por estado, con los mismos tonos que
+   ya usa el resto de la app (ámbar en curso, verde avanzado, rojo solo
+   para cancelado):
+   1) el emoji del estado va sobre una burbuja teñida, y
+   2) el próximo paso del checklist lleva un tinte ámbar suave (marca
+      "acá estamos"; nunca rojo, que se lee como error). */
+.track-status-bubble {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-hi);
+  background: var(--color-surface-hi);
+  font-size: 27px;
+  flex-shrink: 0;
+}
+.track-status-bubble--warn {
+  background: var(--color-warn-soft);
+  border-color: var(--color-warn-border);
+}
+.track-status-bubble--success {
+  background: var(--color-success-soft);
+  border-color: var(--color-success-border);
+}
+.track-status-bubble--danger {
+  background: var(--color-primary-soft);
+  border-color: rgba(229, 52, 46, 0.3);
+}
+.track-card__status.is-warn strong { color: var(--color-warn-text); }
+.track-card__status.is-success strong { color: var(--color-success-text); }
+.track-card__status.is-danger strong { color: var(--color-danger-text); }
+.track-check.is-next {
+  border-color: var(--color-warn-border);
+  background: var(--color-warn-soft);
+}
+.track-check.is-next .track-check__mark {
+  border-color: var(--color-warn-border);
+  color: var(--color-warn-text);
+}
+.track-check.is-next .track-check__label { color: var(--color-warn-text); }
+
+/* El badge del carrito se re-monta con cada cambio de cantidad (key en
+   CartBar): así la animación pop se reproduce en cada alta de ítem. */
+.cart-bar__badge { animation: pop 0.25s var(--ease); }
+
+/* ============================================================
+   Seguimiento — Sección de salida (Entrega + acciones)
+   Rediseño estético: entrega más compacta, botones con mejor
+   jerarquía visual y contraste. Usa tokens de .app.
+   ============================================================ */
+
+.track-delivery {
+  margin-bottom: 16px;
+}
+.track-delivery h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-soft);
+}
+.track-delivery__lines {
+  display: grid;
+  gap: 8px;
+}
+.track-delivery__line {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14.5px;
+  flex-wrap: wrap;
+}
+.track-delivery__label {
+  color: var(--color-text-soft);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.track-delivery__value {
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+}
+
+/* WhatsApp oscuro (verde oficial #075e54) — mejor contraste que el saturado */
+.app .btn--whatsapp-dark {
+  background: #075e54;
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+.app .btn--whatsapp-dark:hover {
+  background: #0d6b5e;
+  filter: none;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+.app .btn--whatsapp-dark:active {
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+}
+.app .btn--whatsapp-dark .btn__icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: #fff;
+}
+
+/* Botones secundarios: borde fino + sombra suave, sin glow de color */
+.app .btn--secondary {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-hi);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.app .btn--secondary:hover {
+  background: var(--color-surface-hi);
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.app .btn--secondary:active {
+  background: var(--color-surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Contenedor de las dos acciones secundarias apiladas */
+.track-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ============================================================
+   Mis pedidos — Rediseño estético
+   Header compacto, badges limpios, tarjetas con mejor jerarquía,
+   botón volver sutil, pestañas integradas.
+   ============================================================ */
+
+.my-orders__header {
+  margin-bottom: 12px;
+}
+.my-orders__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  line-height: 1.15;
+}
+.my-orders__subtitle {
+  margin: 2px 0 0;
+  color: var(--color-text-soft);
+  font-size: 14px;
+}
+
+/* Botón volver: block, sutil, con texto + ícono */
+.my-orders__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-border-hi);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text-soft);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.my-orders__back:hover {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  color: var(--color-text);
+}
+.my-orders__back:active {
+  background: var(--color-surface);
+}
+
+/* Campo de teléfono */
+.phone-field {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 16px;
+}
+.phone-field h2 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.phone-field__form {
+  display: grid;
+  gap: 10px;
+}
+
+/* Tarjetas de pedido */
+.orders-list {
+  display: grid;
+  gap: 10px;
+}
+.order-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease), transform 0.15s var(--ease);
+}
+.order-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.order-card--link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+.order-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.order-card__number {
+  font-family: var(--font-display);
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.order-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--color-text-soft);
+}
+.order-card__date {
+  white-space: nowrap;
+}
+.order-card__total {
+  font-size: 15px;
+  color: var(--color-price);
+}
+.order-card__lines {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-soft);
+  line-height: 1.4;
+}
+.order-card__repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg);
+  color: var(--color-text-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: border-color 0.15s var(--ease), color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.order-card__repeat:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+/* Badge de estado limpio (sin emoji, solo texto + color por tono) */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.status-badge--warn {
+  background: var(--color-warn-soft);
+  color: var(--color-warn-text);
+  border: 1px solid var(--color-warn-border);
+}
+.status-badge--success {
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+  border: 1px solid var(--color-success-border);
+}
+.status-badge--danger {
+  background: var(--color-primary-soft);
+  color: var(--color-danger-text);
+  border: 1px solid rgba(229, 52, 46, 0.25);
+}
+
+/* Error state */
+.error-state {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.error-state__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--color-primary-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+.error-state__content strong {
+  display: block;
+  color: var(--color-danger-text);
+  margin-bottom: 6px;
+}
+.error-state__content p {
+  margin: 0 0 12px;
+  color: var(--color-text-soft);
+  font-size: 13.5px;
+}
+.error-state__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--color-text-soft);
+}
+.empty-state__icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 16px;
+  color: var(--color-border-hi);
+}
+.empty-state p {
+  margin: 0 0 16px;
+  font-size: 15px;
+}
+
+/* Loading indicator */
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-text-soft);
+  font-size: 13px;
+  padding: 12px 0;
+}
+.loading-indicator__spinner {
+  width: 18px;
+  height: 18px;
+  animation: spin 1s linear infinite;
+}
+
+/* Skeleton container */
+.skeleton-container {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 16px;
+}
+.skeleton-container .orders-skeleton {
+  display: grid;
+  gap: 10px;
+}
+.skeleton-container .skeleton.sk-order {
+  height: 88px;
+  border-radius: var(--radius-sm);
+}
+
+/* Pestañas: asegurar que no haya espacio extra debajo cuando hay una sola */
+.orders-tabs {
+  margin-bottom: 14px;
+}

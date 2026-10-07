@@ -177,6 +177,7 @@ export default function Landing({ onStart, initialBranch, customer }) {
                   type="button"
                   key={b.id}
                   className={`branch-option ${branchId === b.id ? "branch-option--active" : ""}`}
+                  aria-pressed={branchId === b.id}
                   style={{ "--branch-accent": b.accentColor }}
                   onClick={() => setBranchId(b.id)}
                 >
