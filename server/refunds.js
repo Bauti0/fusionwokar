@@ -20,13 +20,29 @@ export function parseRefunds(json) {
 // Fusiona las devoluciones que reporta MP con las que ya teníamos anotadas,
 // identificadas por el id del reembolso: así el webhook puede repetirse sin
 // duplicar historial y, si el admin devolvió desde el panel de MP, lo vemos.
+// Las entradas existentes conservan sus datos extra (by/admin: quién devolvió
+// desde el panel), que MP no reporta y un re-merge del webhook no debe borrar.
 export function mergeRefunds(existing, mpRefunds) {
   const byId = new Map(existing.map((r) => [r.id, r]));
   for (const r of mpRefunds) {
-    byId.set(r.id, { id: r.id, amount: r.amount, at: byId.get(r.id)?.at || now() });
+    const prev = byId.get(r.id);
+    byId.set(r.id, { ...r, ...prev, id: r.id, amount: r.amount, at: prev?.at || r.at || now() });
   }
   return Array.from(byId.values()).sort((a, b) => String(a.at).localeCompare(String(b.at)));
 }
+
+// Quién autorizó/realizó la devolución (queda registrado en refunds_json).
+// Obligatorio, trim, 2–60 caracteres. Devuelve el nombre limpio o null: el
+// endpoint valida ANTES de llamar a Mercado Pago, así un nombre inválido no
+// contacta a MP ni toca la base.
+export const REFUNDED_BY_MIN = 2;
+export const REFUNDED_BY_MAX = 60;
+export function cleanRefundedBy(value) {
+  const name = String(value ?? "").trim();
+  if (name.length < REFUNDED_BY_MIN || name.length > REFUNDED_BY_MAX) return null;
+  return name;
+}
+export const REFUNDED_BY_ERROR = "Ingresá el nombre de quien realiza la devolución (2 a 60 caracteres).";
 
 // Cuánto queda por devolver. Se usa tanto para mostrarlo en el panel como para
 // rechazar una devolución que supere el total.

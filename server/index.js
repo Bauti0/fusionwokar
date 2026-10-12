@@ -44,7 +44,13 @@ import {
   expireAbandonedPayments,
   CHECKOUT_EXPIRE_OPTIONS,
 } from "./coupons.js";
-import { applyRefunds, refundableAmount } from "./refunds.js";
+import {
+  applyRefunds,
+  refundableAmount,
+  cleanRefundedBy,
+  REFUNDED_BY_ERROR,
+  parseRefunds,
+} from "./refunds.js";
 import {
   getPause,
   getAllPauses,
@@ -2600,6 +2606,16 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Solo se puede devolver dinero de un pedido pagado" });
     }
 
+    // Quién realiza la devolución: obligatorio y validado acá, ANTES de
+    // cualquier llamada a Mercado Pago o escritura en la base. Si falla, no
+    // se contacta a MP ni se modifica nada (400 directo).
+    const refundedBy = cleanRefundedBy((req.body || {}).refundedBy);
+    if (!refundedBy) return res.status(400).json({ error: REFUNDED_BY_ERROR });
+    // El nombre queda registrado en la entrada de refunds_json junto con el
+    // usuario admin logueado. NO entra en la clave idempotente (que sigue
+    // calculándose igual que antes) ni se loguea.
+    const refundMeta = { by: refundedBy, admin: req.admin?.username || "" };
+
     const refundable = refundableAmount(row);
     if (refundable <= 0) {
       return res.status(400).json({ error: "Este pedido ya fue devuelto por completo" });
@@ -2627,7 +2643,7 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
     // tiene que poder probarse igual. Se anota la devolución y se responde.
     if (isDemoMode()) {
       await applyRefunds(db, id, {
-        mpRefunds: [{ id: `demo-${randomBytes(6).toString("hex")}`, amount }],
+        mpRefunds: [{ id: `demo-${randomBytes(6).toString("hex")}`, amount, ...refundMeta }],
         patch: markIfFullyRefunded,
       });
       const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
@@ -2691,9 +2707,14 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
     // Red de seguridad: si MP respondió sin el detalle del reembolso, se anota
     // uno local para que el historial del panel no quede vacío.
     const reportadas = result.refunds || [];
-    const mpRefunds = reportadas.some((r) => (r.amount || 0) === amount)
+    const base = reportadas.some((r) => (r.amount || 0) === amount)
       ? reportadas
       : [...reportadas, { id: result.id || `mp-${Date.now()}`, amount, at: now() }];
+    // El nombre/autoría se pega solo a la devolución NUEVA: las que ya estaban
+    // anotadas conservan lo registrado antes (mergeRefunds da prioridad a lo
+    // existente y MP no reporta quién devolvió desde el panel).
+    const prevIds = new Set(parseRefunds(row.refunds_json).map((r) => r.id));
+    const mpRefunds = base.map((r) => (prevIds.has(r.id) ? r : { ...r, ...refundMeta }));
     await applyRefunds(db, row.id, { mpRefunds, patch: markIfFullyRefunded });
 
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);

@@ -229,11 +229,12 @@ export function adminSetShipping(id, cost, blocks) {
 }
 
 // Devuelve dinero de un pedido pagado con Mercado Pago. Sin `amount` devuelve
-// todo lo que queda del pedido; con `amount`, esa parte.
-export function adminRefund(id, amount) {
+// todo lo que queda del pedido; con `amount`, esa parte. `refundedBy` es el
+// nombre de quien realiza la devolución (obligatorio, lo valida el server).
+export function adminRefund(id, amount, refundedBy) {
   return request(`/api/admin/orders/${id}/refund`, {
     method: "POST",
-    body: JSON.stringify({ amount }),
+    body: JSON.stringify({ amount, refundedBy }),
   });
 }
 

@@ -188,6 +188,8 @@ export default function AdminPanel({ me, onLogout }) {
   const [refundInput, setRefundInput] = useState("");
   const [refundConfirm, setRefundConfirm] = useState(null); // { amount, full }
   const [refundForm, setRefundForm] = useState(false);
+  const [refundBy, setRefundBy] = useState("");
+  const [refundByTouched, setRefundByTouched] = useState(false);
   // ---------- ajustes del pedido (tipo de entrega / medio de pago) ----------
   // `edit` es el borrador de los controles; se reinicia con los valores del
   // pedido al abrir el detalle y después de cada guardado. `editSuggest` es
@@ -550,6 +552,28 @@ export default function AdminPanel({ me, onLogout }) {
     }
   }
 
+  // Nombre de quien realiza la devolución: obligatorio (2–60, sin espacios
+  // sobrantes). El último usado se sugiere desde sessionStorage (editable);
+  // si el navegador lo bloquea, el campo arranca vacío y no pasa nada.
+  const REFUND_BY_KEY = "fusionwok-refund-by";
+  function openRefundForm() {
+    try {
+      setRefundBy(sessionStorage.getItem(REFUND_BY_KEY) || "");
+    } catch {
+      setRefundBy("");
+    }
+    setRefundByTouched(false);
+    setRefundForm(true);
+  }
+  const refundByClean = refundBy.trim();
+  const refundByError = !refundByClean
+    ? "Ingresá el nombre de quien realiza la devolución."
+    : refundByClean.length < 2
+      ? "Usá al menos 2 caracteres."
+      : refundByClean.length > 60
+        ? "Usá como máximo 60 caracteres."
+        : "";
+
   function openRefundConfirm(amount) {
     // Sin monto → devolución total de lo que queda.
     if (amount === undefined || amount === null || amount === "") {
@@ -570,9 +594,15 @@ export default function AdminPanel({ me, onLogout }) {
 
   async function handleRefundConfirm() {
     try {
-      const res = await adminRefund(selected.id, refundConfirm.amount);
+      const res = await adminRefund(selected.id, refundConfirm.amount, refundByClean);
       setSelected(res.order);
       setRefundInput("");
+      // El nombre ya se usó con éxito: queda como sugerencia para la próxima.
+      try {
+        sessionStorage.setItem(REFUND_BY_KEY, refundByClean);
+      } catch {
+        /* sin storage: no pasa nada */
+      }
       load({ showSpinner: false });
     } catch (err) {
       if (err.message === "No autorizado" || err.message === "Sesión expirada") onLogout();
@@ -1200,11 +1230,22 @@ const renderOrder = (o) => {
                           <span className="refunds__arrow">↩</span>
                           <span className="refunds__amount">{formatPrice(r.amount)}</span>
                           <span className="refunds__date">
-                            {new Date(r.at).toLocaleString("es-AR", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              hour12: false,
-                            })}
+                            {r.by
+                              ? /* Con by: "Devuelto por <nombre> el <fecha>". Sin by
+                                   (viejas o hechas desde la app de MP): solo la fecha. */
+                                `Devuelto por ${r.by} el ${new Date(r.at).toLocaleString("es-AR", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  hour12: false,
+                                })}`
+                              : new Date(r.at).toLocaleString("es-AR", {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  hour12: false,
+                                })}
                           </span>
                         </div>
                       ))}
@@ -1240,7 +1281,7 @@ const renderOrder = (o) => {
                       <button
                         type="button"
                         className="refund-open__btn"
-                        onClick={() => setRefundForm(true)}
+                        onClick={openRefundForm}
                       >
                         Devolver
                       </button>
@@ -1586,12 +1627,34 @@ const renderOrder = (o) => {
                 </div>
                 <span className="hint">Máximo: {formatPrice(refundable)}</span>
               </div>
+
+              <div className="field">
+                <label htmlFor="refund-modal-by">¿Quién realiza la devolución?</label>
+                <input
+                  id="refund-modal-by"
+                  type="text"
+                  maxLength={60}
+                  placeholder="Nombre y apellido"
+                  autoComplete="off"
+                  value={refundBy}
+                  onChange={(e) => setRefundBy(e.target.value)}
+                  onBlur={() => setRefundByTouched(true)}
+                  aria-invalid={!!(refundByTouched && refundByError)}
+                  aria-describedby={refundByTouched && refundByError ? "refund-modal-by-error" : undefined}
+                />
+                {refundByTouched && refundByError && (
+                  <p id="refund-modal-by-error" className="form-error" role="alert">
+                    {refundByError}
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="modal__footer">
               <button
                 type="button"
                 className="btn btn--block refund-modal__btn-partial"
+                disabled={!!refundByError}
                 onClick={() => {
                   setRefundForm(false);
                   openRefundConfirm(refundInput);
@@ -1602,6 +1665,7 @@ const renderOrder = (o) => {
               <button
                 type="button"
                 className="btn btn--block refund-modal__btn-full"
+                disabled={!!refundByError}
                 onClick={() => {
                   setRefundForm(false);
                   openRefundConfirm();
