@@ -1,10 +1,11 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { adminSales, adminCashRegister, adminOpenCashRegister, adminCloseCashRegister, adminCorrectCashRegister, adminCashCorrections } from "../api.js";
-import { BRANCH_LIST } from "../data/branches.js";
+import { adminSales, adminCashRegister, adminOpenCashRegister, adminCloseCashRegister, adminCorrectCashRegister, adminCashCorrections, adminDeleteCashRegister, adminDeletedCashRegisters } from "../api.js";
+import { BRANCH_LIST, BRANCHES } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
 import { periodRange, dayShort, dayLabel, dateShort, dateTimeShort, isToday } from "../utils/dates.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import DateRangePicker from "./ui/DateRangePicker.jsx";
+import ConfirmModal from "./ui/ConfirmModal.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 
@@ -194,6 +195,15 @@ function CashRegister({ branch, me }) {
   const [corrigiendo, setCorrigiendo] = useState(null);
   const [correcciones, setCorrecciones] = useState({});
   const [corrOpen, setCorrOpen] = useState(null); // arqueo con historial desplegado
+  // Anulación (soft delete): la caja que se está anulando (abierta o cierre
+  // del historial) + motivo. El ConfirmModal (variant="danger") maneja busy
+  // interno: el botón queda deshabilitado mientras guarda y los errores del
+  // backend se muestran adentro sin cerrar.
+  const [anulando, setAnulando] = useState(null);
+  const [motivoAnular, setMotivoAnular] = useState("");
+  // Cajas anuladas: SOLO las pide el superadmin (el branch_admin ni hace la
+  // llamada, el server le daría 403).
+  const [anuladas, setAnuladas] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -205,6 +215,18 @@ function CashRegister({ branch, me }) {
     }
   }, [branch]);
 
+  // Historial de anulaciones (global, no por sucursal de la vista).
+  const loadAnuladas = useCallback(async () => {
+    if (me?.role !== "superadmin") return;
+    try {
+      const d = await adminDeletedCashRegisters();
+      setAnuladas(d.deleted);
+    } catch {
+      // Sin romper la pantalla: la sección muestra vacío.
+      setAnuladas([]);
+    }
+  }, [me?.role]);
+
   useEffect(() => {
     setResult(null);
     setClosedId(null);
@@ -213,10 +235,16 @@ function CashRegister({ branch, me }) {
     setCorrigiendo(null);
     setCorrecciones({});
     setCorrOpen(null);
+    setAnulando(null);
+    setMotivoAnular("");
     load();
-    const t = setInterval(load, 20000);
+    loadAnuladas();
+    const t = setInterval(() => {
+      load();
+      loadAnuladas();
+    }, 20000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, loadAnuladas]);
 
   async function handleOpen(e) {
     e.preventDefault();
@@ -288,6 +316,22 @@ function CashRegister({ branch, me }) {
 
   if (!data) return null;
 
+  // Confirma la anulación: valida el motivo y llama al DELETE. Se tira con
+  // Error para que el ConfirmModal muestre el mensaje adentro sin cerrarse.
+  async function confirmarAnulacion() {
+    const reason = motivoAnular.trim();
+    if (reason.length < 5) {
+      throw new Error("Ingresá el motivo de la anulación (mínimo 5 caracteres)");
+    }
+    await adminDeleteCashRegister(anulando.id, reason);
+    setAnulando(null);
+    setMotivoAnular("");
+    // Refresco con los datos del servidor: la anulada desaparece de la
+    // caja abierta/historial y aparece en "Cajas anuladas" (superadmin).
+    await load();
+    await loadAnuladas();
+  }
+
   // El server NO manda el efectivo cobrado como campo: manda `expectedNow`,
   // que ya es apertura + cobrado (server/admin-queries.js). La diferencia es
   // exactamente ese monto, sin recalcular nada. Si no hay caja abierta el
@@ -344,9 +388,20 @@ function CashRegister({ branch, me }) {
           <p className="cash-register__since">Caja abierta desde {dateTimeShort(data.open.openedAt)}</p>
 
           {!closing ? (
-            <button className="btn btn--ghost btn--block" onClick={() => setClosing(true)}>
-              Cerrar caja
-            </button>
+            <>
+              <button className="btn btn--ghost btn--block" onClick={() => setClosing(true)}>
+                Cerrar caja
+              </button>
+              <button
+                className="btn btn--ghost btn--block"
+                onClick={() => {
+                  setAnulando(data.open);
+                  setMotivoAnular("");
+                }}
+              >
+                Anular caja
+              </button>
+            </>
           ) : (
             <form className="cash-register__close" onSubmit={handleClose}>
               <div className="field">
@@ -436,6 +491,15 @@ function CashRegister({ branch, me }) {
                     >
                       Corregir montos
                     </button>
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      onClick={() => {
+                        setAnulando(h);
+                        setMotivoAnular("");
+                      }}
+                    >
+                      Anular
+                    </button>
                   </div>
                 </div>
                 {/* Historial de correcciones: SOLO superadmin (el branch_admin
@@ -496,6 +560,89 @@ function CashRegister({ branch, me }) {
             await load();
           }}
         />
+      )}
+
+      {/* Anulación (soft delete): tipo peligro, resumen de la caja + motivo
+          obligatorio. El botón queda deshabilitado mientras guarda (anti
+          doble toque) y los errores del backend no cierran el modal. */}
+      {anulando && (
+        <ConfirmModal
+          variant="danger"
+          title="Anular caja"
+          message={
+            <>
+              Vas a anular la caja de <b>{BRANCHES[anulando.branch]?.name || anulando.branch}</b>{" "}
+              {anulando.closedAt
+                ? `cerrada el ${dateTimeShort(anulando.closedAt)}`
+                : `abierta desde ${dateTimeShort(anulando.openedAt)}`}
+              : fondo {formatPrice(anulando.openingAmount)}
+              {anulando.closedAt && `, contado ${formatPrice(anulando.closingCounted)}`}. La caja no se
+              borra: queda registrada como anulada.
+            </>
+          }
+          confirmText="Anular caja"
+          onConfirm={confirmarAnulacion}
+          onClose={() => setAnulando(null)}
+        >
+          <div className="field">
+            <label htmlFor="anular-motivo">Motivo (obligatorio)</label>
+            <textarea
+              id="anular-motivo"
+              rows={2}
+              value={motivoAnular}
+              onChange={(e) => setMotivoAnular(e.target.value)}
+              placeholder="Ej: caja abierta en la sucursal equivocada"
+            />
+          </div>
+        </ConfirmModal>
+      )}
+
+      {/* Cajas anuladas: SOLO superadmin (el branch_admin ni pide la lista). */}
+      {me?.role === "superadmin" && anuladas && anuladas.length > 0 && (
+        <div className="cash-register__history">
+          <h5>Cajas anuladas</h5>
+          {anuladas.map((a) => {
+            // La foto de la caja al anularla viaja en new_value (JSON).
+            let foto = null;
+            try {
+              foto = JSON.parse(a.new_value);
+            } catch {
+              foto = null;
+            }
+            return (
+              <div className="cash-register__corr" key={a.id}>
+                <div className="cash-register__hrow">
+                  <span className="cash-register__hdate">
+                    {dateTimeShort(a.created_at)}
+                  </span>
+                  <span className="cash-register__hmoney">
+                    <span>{BRANCHES[foto?.branch]?.name || foto?.branch || ""}</span>
+                  </span>
+                </div>
+                <p className="cash-register__corr-meta">
+                  {a.admin_username || "superadmin"}
+                  {foto && (
+                    <>
+                      {" · "}
+                      {foto.estado === "cerrada" ? "Cerrada" : "Abierta"}
+                      {" · Fondo "}
+                      <b>{formatPrice(foto.openingAmount)}</b>
+                      {foto.estado === "cerrada" && (
+                        <>
+                          {" · Contado "}
+                          <b>{formatPrice(foto.closingCounted)}</b>
+                          {" · Esperado "}
+                          <b>{formatPrice(foto.expectedAmount)}</b>
+                        </>
+                      )}
+                    </>
+                  )}
+                </p>
+                <p className="cash-register__corr-line">Motivo: {a.reason}</p>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

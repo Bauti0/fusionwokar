@@ -410,6 +410,21 @@ export function adminCashCorrections(id) {
   return request(`/api/admin/cash-register/${id}/corrections`);
 }
 
+// Anulación de una caja (soft delete; motivo obligatorio). Sirve para
+// cajas abiertas y cerradas; el server audita con foto de la caja.
+export function adminDeleteCashRegister(id, reason) {
+  return request(`/api/admin/cash-register/${id}`, {
+    method: "DELETE",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+// Historial de cajas anuladas. SOLO superadmin (403 al branch_admin:
+// el panel ni lo llama en ese rol).
+export function adminDeletedCashRegisters() {
+  return request("/api/admin/cash-register/deleted");
+}
+
 // ---- carga manual de pedidos (admin) ----
 export function adminCreateManualOrder(payload) {
   return request("/api/admin/orders/manual", {

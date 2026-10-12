@@ -133,7 +133,7 @@ export function computeCashCorrection(row, body = {}) {
 const CAS_WHERE = `
   id = ? AND opening_amount = ? AND closing_counted IS ?
   AND expected_amount IS ? AND difference IS ? AND notes = ?
-  AND corrected_at IS ?`;
+  AND corrected_at IS ? AND deleted_at IS NULL`;
 
 function casArgs(row) {
   return [
@@ -210,7 +210,8 @@ export async function correctCashRegister(db, id, body, { scope, admin, nowIso }
   if (!Number.isInteger(id) || id <= 0) {
     return { error: { status: 404, error: "Arqueo no encontrado" } };
   }
-  const row = await db.prepare("SELECT * FROM cash_registers WHERE id = ?").get(id);
+  // Las anuladas (soft delete) no se corrigen: mismo 404 que inexistente.
+  const row = await db.prepare("SELECT * FROM cash_registers WHERE id = ? AND deleted_at IS NULL").get(id);
   if (!row || (scope && row.branch !== scope)) {
     return { error: { status: 404, error: "Arqueo no encontrado" } };
   }
@@ -245,5 +246,132 @@ export async function getCashCorrections(db, admin, id) {
        ORDER BY created_at DESC, id DESC`
     )
     .all(id);
+  return { rows };
+}
+
+// ============================================================
+// ANULACIÓN de caja (soft delete): la fila NO se borra, queda
+// marcada con deleted_at + deleted_reason y una fila de auditoría
+// (field = 'deleted') registra quién lo hizo, el motivo y una foto
+// JSON de la caja al anularla (para reconstruirla: la corrección
+// posterior queda bloqueada, así que la fila ya no cambia).
+//
+// Sirve para cajas abiertas Y cerradas (el caso típico: se abrió
+// una caja en la sucursal equivocada). Anular una ABIERTA libera la
+// sucursal para abrir otra (todas las lecturas y el índice único
+// ignoran deleted_at). Una caja ya anulada responde 400.
+// ============================================================
+
+// CAS de la anulación: la fila sigue EXACTAMENTE como se leyó
+// (deleted_at sigue NULL). `IS ?` compara admitiendo NULL.
+const DELETE_CAS_WHERE = `
+  id = ? AND opening_amount = ? AND closing_counted IS ?
+  AND expected_amount IS ? AND difference IS ? AND notes = ?
+  AND closed_at IS ? AND deleted_at IS NULL`;
+
+function deleteCasArgs(row) {
+  return [
+    row.id,
+    row.opening_amount,
+    row.closing_counted,
+    row.expected_amount,
+    row.difference,
+    row.notes,
+    row.closed_at ?? null,
+  ];
+}
+
+// Escritura atómica: INSERT de auditoría condicionado (WHERE EXISTS con
+// el CAS) ANTES del UPDATE, en UN db.batch. Si la caja cambió entremedio
+// (otra anulación, cierre concurrente), nada aplica y devuelve conflict.
+export async function applyCashDeletion(db, row, { reason, snapshot, admin, nowIso } = {}) {
+  const stmts = [
+    {
+      sql: `INSERT INTO cash_register_corrections
+        (cash_register_id, admin_user_id, admin_username, admin_role, admin_branch,
+         field, old_value, new_value, reason, created_at)
+        SELECT ?, ?, ?, ?, ?, 'deleted', NULL, ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM cash_registers WHERE ${DELETE_CAS_WHERE})`,
+      args: [
+        row.id,
+        admin?.userId ?? null,
+        admin?.username ?? (admin?.role === "superadmin" ? "superadmin" : "unknown"),
+        admin?.role ?? "unknown",
+        admin?.branch ?? "",
+        snapshot,
+        reason,
+        nowIso,
+        ...deleteCasArgs(row),
+      ],
+    },
+    {
+      sql: `UPDATE cash_registers SET deleted_at = ?, deleted_reason = ?, updated_at = ?
+        WHERE ${DELETE_CAS_WHERE}`,
+      args: [nowIso, reason, nowIso, ...deleteCasArgs(row)],
+    },
+  ];
+  const results = await db.batch(stmts, "write");
+  if (!results[results.length - 1].rowsAffected) return { conflict: true };
+  return { ok: true };
+}
+
+export async function deleteCashRegister(db, id, body = {}, { scope, admin, nowIso } = {}) {
+  if (!Number.isInteger(id) || id <= 0) {
+    return { error: { status: 404, error: "Arqueo no encontrado" } };
+  }
+  const row = await db.prepare("SELECT * FROM cash_registers WHERE id = ?").get(id);
+  // Caja ajena = mismo 404 que inexistente (igual que cierre/corrección).
+  if (!row || (scope && row.branch !== scope)) {
+    return { error: { status: 404, error: "Arqueo no encontrado" } };
+  }
+  const reason = String(body.reason ?? "").trim();
+  if (reason.length < MOTIVO_MIN) {
+    return { error: { status: 400, error: `Ingresá un motivo (mínimo ${MOTIVO_MIN} caracteres)` } };
+  }
+  if (row.deleted_at) {
+    return { error: { status: 400, error: "Esta caja ya está anulada" } };
+  }
+
+  // Foto de la caja al anularla (estado incluido), para reconstruirla.
+  const snapshot = JSON.stringify({
+    branch: row.branch,
+    estado: row.closed_at ? "cerrada" : "abierta",
+    openingAmount: row.opening_amount,
+    openedAt: row.opened_at,
+    closingCounted: row.closing_counted,
+    closedAt: row.closed_at,
+    expectedAmount: row.expected_amount,
+    difference: row.difference,
+    notes: row.notes,
+    deletedAt: nowIso,
+  });
+
+  const w = await applyCashDeletion(db, row, { reason, snapshot, admin, nowIso });
+  if (w.conflict) {
+    return { error: { status: 409, error: "La caja cambió, recargá y reintentá" } };
+  }
+  const updated = await db.prepare("SELECT * FROM cash_registers WHERE id = ?").get(id);
+  return { ok: true, row: updated };
+}
+
+// Historial de anulaciones (las filas field='deleted' de la auditoría,
+// con la foto JSON de cada caja anulada). SOLO superadmin: 403 al
+// branch_admin, y su UI ni siquiera hace la llamada.
+export async function getDeletedCashRegisters(db, admin) {
+  if (admin?.role !== "superadmin") {
+    return { error: { status: 403, error: "Solo el administrador principal puede ver el historial" } };
+  }
+  const rows = await db
+    .prepare(
+      `SELECT corr.id, corr.cash_register_id, corr.reason, corr.new_value,
+              corr.admin_user_id, corr.admin_username, corr.admin_role, corr.admin_branch,
+              corr.created_at, c.deleted_at
+       FROM cash_register_corrections corr
+       JOIN cash_registers c ON c.id = corr.cash_register_id
+       WHERE corr.field = 'deleted'
+       ORDER BY corr.created_at DESC, corr.id DESC
+       LIMIT 100`
+    )
+    .all();
   return { rows };
 }

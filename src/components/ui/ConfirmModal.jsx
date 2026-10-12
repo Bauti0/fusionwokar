@@ -41,6 +41,7 @@ export default function ConfirmModal({
   cancelText = "Cancelar",
   onConfirm,
   onClose,
+  children,
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -82,6 +83,9 @@ export default function ConfirmModal({
           )}
         </div>
         <p id="confirm-modal-message" className="confirm-modal__message">{message}</p>
+
+        {/* Contenido extra (p. ej. un campo motivo) entre el mensaje y el error. */}
+        {children}
 
         {error && <div className="form-error">{error}</div>}
 

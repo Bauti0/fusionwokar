@@ -89,7 +89,7 @@ import {
 import { validateConfig } from "./config.js";
 import { orderLogLine } from "./order-log.js";
 import { applyOrderEdit, computeOrderEdits, getAuditLogs } from "./order-edit.js";
-import { rowToCashRegister, correctCashRegister, getCashCorrections } from "./cash-register.js";
+import { rowToCashRegister, correctCashRegister, getCashCorrections, deleteCashRegister, getDeletedCashRegisters } from "./cash-register.js";
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from "../src/utils/validation.js";
@@ -142,6 +142,8 @@ import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from
 //   POST  /api/admin/cash-register/open      → abrir caja
 //   POST  /api/admin/cash-register/:id/close → cerrar caja (calcula diferencia)
 //   PATCH /api/admin/cash-register/:id       → corregir un cierre cerrado (montos + motivo; audita y 409 si cambió)
+//   DELETE /api/admin/cash-register/:id      → anular una caja (soft delete + motivo auditable; 400 si ya está anulada, 409 si cambió)
+//   GET   /api/admin/cash-register/deleted   → historial de anulaciones (solo superadmin)
 //   GET   /api/admin/cash-register/:id/corrections → historial de correcciones (solo superadmin)
 //   POST  /api/admin/orders/manual           → cargar pedido de WhatsApp/mostrador
 //   GET   /api/admin/branch-pause           → estado de pausa de pedidos por sucursal
@@ -2920,6 +2922,38 @@ app.patch("/api/admin/cash-register/:id", requireAdmin, async (req, res) => {
     res.json({ ok: true, cash: rowToCashRegister(r.row), ...(r.message ? { message: r.message } : {}) });
   } catch (err) {
     console.error("PATCH /api/admin/cash-register/:id:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Anulación de UNA caja (soft delete, sirve para abiertas y cerradas).
+// Mismo convenio que las correcciones: lógica en server/cash-register.js
+// (scope, motivo obligatorio, CAS con 409), el endpoint es pegamento.
+app.delete("/api/admin/cash-register/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    const r = await deleteCashRegister(db, id, req.body || {}, {
+      scope: adminScope(req),
+      admin: req.admin,
+      nowIso: now(),
+    });
+    if (r.error) return res.status(r.error.status || 400).json({ error: r.error.error });
+    res.json({ ok: true, cash: rowToCashRegister(r.row) });
+  } catch (err) {
+    console.error("DELETE /api/admin/cash-register/:id:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Historial de CAJAS ANULADAS: solo superadmin (403 al branch_admin, que
+// ni siquiera hace esta llamada desde el panel).
+app.get("/api/admin/cash-register/deleted", requireAdmin, async (req, res) => {
+  try {
+    const r = await getDeletedCashRegisters(db, req.admin);
+    if (r.error) return res.status(r.error.status).json({ error: r.error.error });
+    res.json({ deleted: r.rows });
+  } catch (err) {
+    console.error("GET /api/admin/cash-register/deleted:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });

@@ -217,11 +217,11 @@ export async function getCashRegisterState(db, scope, requestedBranch) {
   const results = await db.batch(
     [
       {
-        sql: "SELECT * FROM cash_registers WHERE branch = ? AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+        sql: "SELECT * FROM cash_registers WHERE branch = ? AND closed_at IS NULL AND deleted_at IS NULL ORDER BY opened_at DESC LIMIT 1",
         args: [branch],
       },
       {
-        sql: "SELECT * FROM cash_registers WHERE branch = ? AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 30",
+        sql: "SELECT * FROM cash_registers WHERE branch = ? AND closed_at IS NOT NULL AND deleted_at IS NULL ORDER BY closed_at DESC LIMIT 30",
         args: [branch],
       },
     ],
@@ -246,7 +246,7 @@ export async function openCashRegister(db, { branch, openingAmount, nowIso } = {
   const amount = Number(openingAmount);
   if (!Number.isFinite(amount) || amount < 0) return { error: "Monto inicial inválido", status: 400 };
   const already = await db
-    .prepare("SELECT id FROM cash_registers WHERE branch = ? AND closed_at IS NULL")
+    .prepare("SELECT id FROM cash_registers WHERE branch = ? AND closed_at IS NULL AND deleted_at IS NULL")
     .get(branch);
   if (already) return { error: "Ya hay una caja abierta en esta sucursal", status: 400 };
   // INSERT condicional y atómico (el WHERE NOT EXISTS se evalúa dentro de la
@@ -256,7 +256,7 @@ export async function openCashRegister(db, { branch, openingAmount, nowIso } = {
     .prepare(
       `INSERT INTO cash_registers (branch, opening_amount, opened_at, notes, created_at, updated_at)
        SELECT ?, ?, ?, '', ?, ?
-       WHERE NOT EXISTS (SELECT 1 FROM cash_registers WHERE branch = ? AND closed_at IS NULL)`
+       WHERE NOT EXISTS (SELECT 1 FROM cash_registers WHERE branch = ? AND closed_at IS NULL AND deleted_at IS NULL)`
     )
     .run(branch, Math.round(amount), nowIso, nowIso, nowIso, branch);
   if (info.changes === 0) {
@@ -267,7 +267,8 @@ export async function openCashRegister(db, { branch, openingAmount, nowIso } = {
 
 export async function closeCashRegister(db, id, { counted, notes, scope, nowIso } = {}) {
   if (!Number.isInteger(id) || id <= 0) return { error: "Arqueo no encontrado", status: 404 };
-  const row = await db.prepare("SELECT * FROM cash_registers WHERE id = ?").get(id);
+  // Las anuladas (soft delete) no existen para cerrar: mismo 404.
+  const row = await db.prepare("SELECT * FROM cash_registers WHERE id = ? AND deleted_at IS NULL").get(id);
   // Arqueo ajeno = mismo error que inexistente: 404, sin confirmar
   // que exista (igual que los pedidos).
   if (!row || (scope && row.branch !== scope)) {
