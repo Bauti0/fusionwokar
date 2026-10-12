@@ -750,6 +750,19 @@ body:has(.admin-login) { background: var(--color-secondary); }
   color: var(--color-text) !important;
 }
 .admin-search:focus { border-color: var(--color-primary) !important; }
+/* Chip de sucursal fija (branch_admin): replica el trigger del Dropdown
+   (alto, borde, radio, tipografía) pero NO es un control: sin flecha,
+   sin cursor ni hover. Usa las mismas variables que el trigger, así el
+   modo oscuro del panel lo pinta igual. */
+.admin-branch-fixed {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 44px; min-width: 0; max-width: 100%;
+  border: 2px solid var(--color-border-control); border-radius: var(--radius-sm);
+  background: var(--color-surface); padding: 10px 14px;
+  font-size: 14px; font-weight: 600; color: var(--color-text);
+  white-space: nowrap;
+}
+.admin-branch-fixed svg { color: var(--color-primary); flex-shrink: 0; }
 .admin .dropdown__trigger {
   border-color: var(--color-border-control);
   background: var(--color-surface);
@@ -2219,7 +2232,11 @@ body:has(.admin-login) { background: var(--color-secondary); }
   min-width: 0;
 }
 .admin-pause__chip {
-  display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  /* Sin wrap interno: el texto no se parte a mitad de frase. El chip
+     no se encoge (baja entero a la línea siguiente si no entra) y el
+     texto descriptivo degrada con ellipsis, igual con 1 o 2 sucursales. */
+  display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap;
+  flex-shrink: 0; max-width: 100%;
   background: var(--color-warn-soft, #fff4e0);
   color: var(--color-warn-text, #b36b00);
   border: 1px solid var(--color-warn-border, #f0d9a8);
@@ -2228,6 +2245,8 @@ body:has(.admin-login) { background: var(--color-secondary); }
   font-size: 12.5px; line-height: 1.35;
 }
 .admin-pause__chip strong { font-weight: 700; white-space: nowrap; }
+.admin-pause__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-pause__sep, .admin-pause__resume { flex-shrink: 0; }
 .admin-pause__resume {
   background: transparent;
   border: none;

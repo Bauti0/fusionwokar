@@ -149,7 +149,7 @@ export function buildTicketHtml(order) {
     ${order.orderMode === "delivery" && order.address ? `<tr><td><b>Direccion:</b> ${esc(order.address)}</td></tr>` : ""}
     ${envio > 0 ? `<tr><td><b>Envio:</b> ${precio(envio)}</td></tr>` : ""}
     <tr><td><b>Cliente:</b> ${esc(order.customer?.name)}</td></tr>
-    <tr><td><b>Tel:</b> ${esc(order.customer?.phone)}</td></tr>
+    ${order.customer?.phone ? `<tr><td><b>Tel:</b> ${esc(order.customer?.phone)}</td></tr>` : ""}
   </table>
   <div class="line"></div>
   <table>${items}

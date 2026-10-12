@@ -183,7 +183,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
     e.preventDefault();
     setError("");
     if (cart.length === 0) return setError("Agregá al menos un producto.");
-    if (!name.trim() || !phone.trim()) return setError("Completá nombre y teléfono del cliente.");
+    if (!name.trim()) return setError("Completá el nombre del cliente.");
     if (orderMode === "delivery" && !address.trim()) return setError("Falta la dirección de entrega.");
 
     setBusy(true);
@@ -310,7 +310,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
             <input id="new-order-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor="new-order-phone">Celular</label>
+            <label htmlFor="new-order-phone">Celular (opcional)</label>
             <input id="new-order-phone" type="tel" placeholder={phonePlaceholderFor(branchId)} value={phone} onChange={(e) => setPhone(e.target.value)} />
           </div>
           {orderMode === "delivery" && (

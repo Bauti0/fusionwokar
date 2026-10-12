@@ -28,7 +28,7 @@ import { previewOrderEdit, formatAuditEdits } from "../utils/orderEdit.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import { playNewOrderChime } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
-import { IconEmptySearch, IconRepeat, IconPlus } from "./ui/icons.jsx";
+import { IconEmptySearch, IconRepeat, IconPlus, IconLocation } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
@@ -731,10 +731,15 @@ export default function AdminPanel({ me, onLogout }) {
                   return (
                     <span key={id} className="admin-pause__chip" title={state?.message || ""}>
                       <strong>{BRANCHES[id]?.name || id}</strong>{" "}
-                      {state?.until
-                        ? `pausada hasta ${arClockLabel(state.until)}`
-                        : "pausada hasta reanudar"}{" "}
-                      ·{" "}
+                      {/* Texto y separador en spans: sin wrap interno el
+                          chip no se parte a mitad de frase; si no entra,
+                          degrada con ellipsis, igual con 1 o 2 sucursales. */}
+                      <span className="admin-pause__text">
+                        {state?.until
+                          ? `pausada hasta ${arClockLabel(state.until)}`
+                          : "pausada hasta reanudar"}
+                      </span>{" "}
+                      <span className="admin-pause__sep">·</span>{" "}
                       <button
                         type="button"
                         className="admin-pause__resume"
@@ -791,8 +796,16 @@ export default function AdminPanel({ me, onLogout }) {
             className="admin-search"
           />
           {isBranchAdmin ? (
-            // Sucursal fija: el admin de sucursal no puede filtrar la otra
-            <span className="badge badge--branch">{BRANCHES[branch]?.name}</span>
+            // Sucursal fija: el admin de sucursal no puede filtrar la otra.
+            // Chip de solo lectura con el mismo alto/borde/radio/tipografía
+            // que el Dropdown del superadmin; sin flecha, sin cursor, sin
+            // hover. El nombre visible va aria-hidden y el texto accesible
+            // ("Sucursal: …") va en .sr-only; el pin es decorativo.
+            <span className="admin-branch-fixed">
+              <IconLocation style={{ width: 14, height: 14 }} />
+              <span aria-hidden="true">{BRANCHES[branch]?.name}</span>
+              <span className="sr-only">Sucursal: {BRANCHES[branch]?.name}</span>
+            </span>
           ) : (
             <Dropdown
               value={branch}
@@ -1067,7 +1080,7 @@ const renderOrder = (o) => {
                 <div className="detail-block">
                   <h4>Cliente</h4>
                   <p className="detail-strong">{selected.customer.name}</p>
-                  <p>{selected.customer.phone}</p>
+                  <p>{selected.customer.phone || "Sin teléfono"}</p>
                   {selected.orderMode === "delivery" && selected.address && (
                     <p className="detail-wrap">📍 {selected.address}</p>
                   )}

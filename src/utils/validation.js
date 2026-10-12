@@ -35,6 +35,22 @@ export const IDENTIFICATION_TYPES = {
   Otro: [5, 20],
 };
 
+// Regla de negocio del teléfono del PEDIDO (server/index.js,
+// validateOrderBody): el checkout público lo EXIGE (required true, el
+// default) y la carga manual del panel lo tolera vacío (required false,
+// pedido de mostrador sin teléfono). Si viene algo, el formato se valida
+// igual que siempre y se normaliza a solo dígitos (para que la búsqueda
+// de "Mis pedidos" matchee sin importar cómo se tipeó). Devuelve
+// { error } con el mensaje de siempre, o { phone } normalizado: el
+// vacío queda como "" (la columna orders.customer_phone es NOT NULL y
+// el string vacío la satisface, así que no hay migración).
+export function validatePhone(value, { required = true } = {}) {
+  const phone = String(value || "").trim();
+  if (!phone) return required ? { error: "Falta un teléfono válido" } : { phone: "" };
+  if (!isValidPhone(phone)) return { error: "Falta un teléfono válido" };
+  return { phone: phone.replace(/\D/g, "") };
+}
+
 // Identificación del comprador (viaja como payer.identification a MP).
 // El número se normaliza a solo dígitos (sin puntos ni espacios), igual que
 // hace el teléfono: el cliente tipea "12.345.678" y MP recibe "12345678".

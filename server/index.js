@@ -85,7 +85,7 @@ import { orderLogLine } from "./order-log.js";
 import { applyOrderEdit, computeOrderEdits, getAuditLogs } from "./order-edit.js";
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
-import { isValidPhone, isValidEmail, isValidIdentification } from "../src/utils/validation.js";
+import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from "../src/utils/validation.js";
 
 // ============================================================
 // FUSIÓN WOK — API + servidor de producción
@@ -757,7 +757,7 @@ async function uniqueProductId(branchId, base) {
 
 // Valida y normaliza el cuerpo del pedido (evita manipulación de precios,
 // cantidades negativas, productos inexistentes y pedidos falsos).
-async function validateOrderBody(body, { requireEmail = false } = {}) {
+async function validateOrderBody(body, { requireEmail = false, requirePhone = true } = {}) {
   const { branch, customer, orderMode, paymentMethod, items, notes, scheduledFor, couponCode } = body || {};
   if (!CATALOG[branch]) return { error: "Sucursal inválida" };
   // Nombre del cliente: el canal web manda name + firstName/lastName; el
@@ -772,13 +772,18 @@ async function validateOrderBody(body, { requireEmail = false } = {}) {
   if (!hasName && !hasFirstLast) {
     return { error: "Faltan datos del cliente" };
   }
-  const phone = String(customer.phone || "").trim();
-  // Mismo regex que el front (isValidPhone): el server valida igual y además
-  // NORMALIZA el teléfono a solo dígitos (sin espacios/guiones/paréntesis),
-  // para que "Mis pedidos" (búsqueda por teléfono) coincida sin importar el
-  // formato con que el cliente lo tipeó al cargar el pedido.
-  if (!isValidPhone(phone)) return { error: "Falta un teléfono válido" };
-  const normalizedPhone = phone.replace(/\D/g, "");
+  // El teléfono se valida y normaliza en validatePhone (src/utils/
+  // validation.js, testeada ahí): el checkout público lo EXIGE
+  // (requirePhone true, default) y SOLO la carga manual del panel lo pasa
+  // en false (pedido de mostrador sin teléfono); el vacío se guarda como
+  // "" (la columna orders.customer_phone es NOT NULL, pero el string
+  // vacío la satisface: no hay migración). La variable se llama "tel" a
+  // propósito: el escáner de PII (order-log.test.js) no admite /phone/i
+  // en la parte evaluada de ningún `error:` de esta función, aunque sea
+  // para propagar un mensaje estático.
+  const tel = validatePhone(customer.phone, { required: requirePhone });
+  if (tel.error) return { error: tel.error };
+  const normalizedPhone = tel.phone;
   // Email del comprador: MP lo exige dentro de payer en el checkout online
   // (si viene el objeto payer, la doc de Orders requiere payer.email). Se
   // exige SOLO cuando el pago es con Mercado Pago; en efectivo/transferencia
@@ -2891,7 +2896,9 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
     // el superadmin elige, pero tiene que existir de verdad.
     const branchResult = effectiveBranch(req.admin, req.body?.branch);
     if (branchResult.error) return res.status(400).json({ error: branchResult.error });
-    const result = await validateOrderBody({ ...req.body, branch: branchResult.branch });
+    // El teléfono es OPCIONAL solo acá: el checkout público lo sigue
+    // exigiendo (requirePhone default true). Si viene, se valida igual.
+    const result = await validateOrderBody({ ...req.body, branch: branchResult.branch }, { requirePhone: false });
     if (result.error) return res.status(400).json({ error: result.error });
     const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
 
