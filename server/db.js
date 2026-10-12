@@ -167,6 +167,25 @@ await db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_cash_registers_branch ON cash_registers(branch);
 
+  -- Correcciones de cierres de caja: solo superadmin puede leerlas.
+  -- Una fila por CAMPO corregido (los de una misma corrección comparten
+  -- created_at, admin y reason); incluye los derivados expectedAmount y
+  -- difference para que el historial muestre el impacto completo.
+  CREATE TABLE IF NOT EXISTS cash_register_corrections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cash_register_id INTEGER NOT NULL,
+    admin_user_id INTEGER,          -- NULL para el superadmin del .env
+    admin_username TEXT NOT NULL,
+    admin_role TEXT NOT NULL,       -- 'superadmin' | 'branch_admin'
+    admin_branch TEXT NOT NULL DEFAULT '',
+    field TEXT NOT NULL,            -- 'openingAmount' | 'efectivoCobrado' | 'closingCounted' | 'notes' | 'expectedAmount' | 'difference'
+    old_value TEXT,
+    new_value TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_cash_corr_register ON cash_register_corrections(cash_register_id);
+
   CREATE TABLE IF NOT EXISTS product_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     mime TEXT NOT NULL,
@@ -266,6 +285,12 @@ await ensureColumn("orders", "coupon_released_at", "coupon_released_at TEXT");
 // Dinero devuelto por Mercado Pago (suma) y detalle de cada devolución.
 await ensureColumn("orders", "refunded_amount", "refunded_amount INTEGER NOT NULL DEFAULT 0");
 await ensureColumn("orders", "refunds_json", "refunds_json TEXT NOT NULL DEFAULT '[]'");
+
+// Fecha de la última corrección de montos de UN cierre (cash-register.js):
+// NULL = nunca corregido. La corrección es UPDATE + INSERTs de auditoría
+// en un solo db.batch; con esta columna el panel y el ticket muestran la
+// marca "Corregido" sin joins.
+await ensureColumn("cash_registers", "corrected_at", "corrected_at TEXT");
 
 // Idempotencia de la creación de pedidos (server/order-idempotency.js): la
 // clave que el cliente manda por intento de pedido, para que reintentar tras una

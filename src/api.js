@@ -395,6 +395,21 @@ export function adminCloseCashRegister(id, closingCounted, notes) {
   });
 }
 
+// Corrección de UN cierre ya cerrado (fondo inicial / efectivo cobrado /
+// contado / notas + reason obligatorio).
+export function adminCorrectCashRegister(id, payload) {
+  return request(`/api/admin/cash-register/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+// Historial de correcciones de un cierre. SOLO superadmin: el
+// branch_admin recibe 403, así que el panel ni lo llama en ese rol.
+export function adminCashCorrections(id) {
+  return request(`/api/admin/cash-register/${id}/corrections`);
+}
+
 // ---- carga manual de pedidos (admin) ----
 export function adminCreateManualOrder(payload) {
   return request("/api/admin/orders/manual", {

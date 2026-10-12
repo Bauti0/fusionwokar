@@ -194,7 +194,8 @@ export async function listCustomers(db, { scope, branch, search } = {}) {
 // su sucursal (requestedBranch se ignora); el superadmin mantiene
 // el comportamiento actual y elige con ?branch=/body.
 // El módulo devuelve rows crudas: el mapeo a la respuesta del
-// panel (rowToCashRegister) queda en el endpoint.
+// panel (rowToCashRegister) vive en server/cash-register.js y lo
+// aplica el endpoint.
 // ============================================================
 
 // Efectivo aprobado (no cancelado) de una sucursal desde una fecha.

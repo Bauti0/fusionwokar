@@ -20,6 +20,10 @@ import { esc, precio, PIE } from "./ticketHtml.js";
 //
 // Quién abrió/cerró la caja NO existe en la base: no se muestra ni se
 // inventa.
+//
+// Correcciones: si el cierre fue corregido (cash.correctedAt, última
+// corrección), el ticket muestra los valores VIGENTES (la fila ya viene
+// recalculada) y un renglón "Corregido dd/mm/yyyy hh:mm" en las fechas.
 // ============================================================
 
 // Hora de Argentina SIEMPRE, sin importar dónde esté el navegador que
@@ -121,6 +125,7 @@ export function buildCashTicketHtml({ cash, sales } = {}) {
   <table>
     <tr><td>Apertura</td><td class="right">${esc(fechaAr(cash?.openedAt))}</td></tr>
     <tr><td>Cierre</td><td class="right">${esc(fechaAr(cash?.closedAt))}</td></tr>
+    ${cash?.correctedAt ? `<tr><td>Corregido</td><td class="right">${esc(fechaAr(cash.correctedAt))}</td></tr>` : ""}
   </table>
   <div class="line"></div>
   <table>

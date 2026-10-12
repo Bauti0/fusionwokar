@@ -89,6 +89,7 @@ import {
 import { validateConfig } from "./config.js";
 import { orderLogLine } from "./order-log.js";
 import { applyOrderEdit, computeOrderEdits, getAuditLogs } from "./order-edit.js";
+import { rowToCashRegister, correctCashRegister, getCashCorrections } from "./cash-register.js";
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from "../src/utils/validation.js";
@@ -140,6 +141,8 @@ import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from
 //   GET   /api/admin/cash-register           → caja abierta + historial de arqueos
 //   POST  /api/admin/cash-register/open      → abrir caja
 //   POST  /api/admin/cash-register/:id/close → cerrar caja (calcula diferencia)
+//   PATCH /api/admin/cash-register/:id       → corregir un cierre cerrado (montos + motivo; audita y 409 si cambió)
+//   GET   /api/admin/cash-register/:id/corrections → historial de correcciones (solo superadmin)
 //   POST  /api/admin/orders/manual           → cargar pedido de WhatsApp/mostrador
 //   GET   /api/admin/branch-pause           → estado de pausa de pedidos por sucursal
 //   PUT   /api/admin/branch-pause           → pausar (minutos/indefinida) o reanudar
@@ -2859,19 +2862,10 @@ app.get("/api/admin/cash-register", requireAdmin, async (req, res) => {
   }
 });
 
-function rowToCashRegister(row) {
-  return {
-    id: row.id,
-    branch: row.branch,
-    openingAmount: row.opening_amount,
-    openedAt: row.opened_at,
-    closingCounted: row.closing_counted,
-    closedAt: row.closed_at,
-    expectedAmount: row.expected_amount,
-    difference: row.difference,
-    notes: row.notes,
-  };
-}
+// La forma camelCase que consume el panel/ticket vive en server/cash-register.js
+// (la importan también los tests: una sola fuente de verdad del mapeo).
+
+
 
 app.post("/api/admin/cash-register/open", requireAdmin, async (req, res) => {
   try {
@@ -2905,6 +2899,41 @@ app.post("/api/admin/cash-register/:id/close", requireAdmin, async (req, res) =>
     res.json({ ok: true, expected: r.expected, difference: r.difference });
   } catch (err) {
     console.error("POST /api/admin/cash-register/:id/close:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Corrección de UN cierre ya cerrado (fondo inicial / efectivo cobrado /
+// contado / notas + motivo obligatorio). Toda la lógica vive en
+// server/cash-register.js (testeada en memoria): validación con scope,
+// recálculo de expected/difference, UPDATE + INSERTs de auditoría en UN
+// batch atómico y compare-and-set (409 si la caja cambió entremedio).
+app.patch("/api/admin/cash-register/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    const r = await correctCashRegister(db, id, req.body || {}, {
+      scope: adminScope(req),
+      admin: req.admin,
+      nowIso: now(),
+    });
+    if (r.error) return res.status(r.error.status || 400).json({ error: r.error.error });
+    res.json({ ok: true, cash: rowToCashRegister(r.row), ...(r.message ? { message: r.message } : {}) });
+  } catch (err) {
+    console.error("PATCH /api/admin/cash-register/:id:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Historial de correcciones de un arqueo (solo superadmin; el
+// branch_admin recibe 403 y el panel directamente ni lo llama).
+app.get("/api/admin/cash-register/:id/corrections", requireAdmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    const r = await getCashCorrections(db, req.admin, id);
+    if (r.error) return res.status(r.error.status).json({ error: r.error.error });
+    res.json({ corrections: r.rows });
+  } catch (err) {
+    console.error("GET /api/admin/cash-register/:id/corrections:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });

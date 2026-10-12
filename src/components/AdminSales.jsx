@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { adminSales, adminCashRegister, adminOpenCashRegister, adminCloseCashRegister } from "../api.js";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { adminSales, adminCashRegister, adminOpenCashRegister, adminCloseCashRegister, adminCorrectCashRegister, adminCashCorrections } from "../api.js";
 import { BRANCH_LIST } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
 import { periodRange, dayShort, dayLabel, dateShort, dateTimeShort, isToday } from "../utils/dates.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import DateRangePicker from "./ui/DateRangePicker.jsx";
 import TicketPrint from "./TicketPrint.jsx";
+import useDialogA11y from "../hooks/useDialogA11y.js";
 
 const PERIODS = [
   { id: "today", label: "Hoy" },
@@ -162,7 +163,7 @@ export default function AdminSales({ me }) {
         </>
       )}
 
-      <CashRegister branch={branch} />
+      <CashRegister branch={branch} me={me} />
     </section>
   );
 }
@@ -170,7 +171,7 @@ export default function AdminSales({ me }) {
 // ============================================================
 // Arqueo de caja (por sucursal)
 // ============================================================
-function CashRegister({ branch }) {
+function CashRegister({ branch, me }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [openingAmount, setOpeningAmount] = useState("");
@@ -187,6 +188,12 @@ function CashRegister({ branch }) {
   // resultado. El endpoint de cierre NO devuelve el id: es el id de la caja
   // que se captura antes de cerrar.
   const [closedId, setClosedId] = useState(null);
+  // Cierre que se está corrigiendo (fila del historial) y correcciones
+  // ya cargadas por arqueo (SOLO las pide el superadmin: el branch_admin
+  // ni siquiera ve el disparador). {loading?, error?, groups?}
+  const [corrigiendo, setCorrigiendo] = useState(null);
+  const [correcciones, setCorrecciones] = useState({});
+  const [corrOpen, setCorrOpen] = useState(null); // arqueo con historial desplegado
 
   const load = useCallback(async () => {
     try {
@@ -203,6 +210,9 @@ function CashRegister({ branch }) {
     setClosedId(null);
     setPrint(null);
     setClosing(false);
+    setCorrigiendo(null);
+    setCorrecciones({});
+    setCorrOpen(null);
     load();
     const t = setInterval(load, 20000);
     return () => clearInterval(t);
@@ -258,6 +268,21 @@ function CashRegister({ branch }) {
       setError(err.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Historial de correcciones de UN cierre: solo el superadmin tiene el
+  // disparador, así que el branch_admin nunca hace esta llamada (403).
+  async function toggleCorrecciones(id) {
+    if (corrOpen === id) { setCorrOpen(null); return; }
+    setCorrOpen(id);
+    if (correcciones[id]) return;
+    setCorrecciones((m) => ({ ...m, [id]: { loading: true } }));
+    try {
+      const d = await adminCashCorrections(id);
+      setCorrecciones((m) => ({ ...m, [id]: { groups: groupCorrections(d.corrections) } }));
+    } catch (err) {
+      setCorrecciones((m) => ({ ...m, [id]: { error: err.message } }));
     }
   }
 
@@ -384,23 +409,67 @@ function CashRegister({ branch }) {
             // rojo en el tema oscuro del admin. Sobra = ámbar, falta = rojo.
             const badge = dif === 0 ? "badge--pay-approved" : dif > 0 ? "badge--pay-pending" : "badge--pay-rejected";
             return (
-              <div className="cash-register__hrow" key={h.id}>
-                <span className="cash-register__hdate">{dateShort(h.closedAt)}</span>
-                <span className="cash-register__hmoney">
-                  <span>Apertura <b>{formatPrice(h.openingAmount)}</b></span>
-                  <span>Contado <b>{formatPrice(h.closingCounted)}</b></span>
-                </span>
-                <span className={`badge ${badge}`}>
-                  {dif === 0 ? "Exacta" : `${dif > 0 ? "+" : "−"}${formatPrice(Math.abs(dif))}`}
-                </span>
-                <button
-                  className="btn btn--ghost btn--sm cash-register__hprint"
-                  aria-label={`Imprimir cierre del ${dateShort(h.closedAt)}`}
-                  onClick={() => setPrint({ cashId: h.id })}
-                >
-                  🖨️
-                </button>
-              </div>
+              <Fragment key={h.id}>
+                <div className="cash-register__hrow">
+                  <span className="cash-register__hdate">{dateShort(h.closedAt)}</span>
+                  <span className="cash-register__hmoney">
+                    <span>Apertura <b>{formatPrice(h.openingAmount)}</b></span>
+                    <span>Contado <b>{formatPrice(h.closingCounted)}</b></span>
+                  </span>
+                  <span className={`badge ${badge}`}>
+                    {dif === 0 ? "Exacta" : `${dif > 0 ? "+" : "−"}${formatPrice(Math.abs(dif))}`}
+                  </span>
+                  {h.correctedAt && (
+                    <span className="badge badge--pay-pending" title={`Última corrección: ${dateTimeShort(h.correctedAt)}`}>Corregido</span>
+                  )}
+                  <div className="cash-register__hactions">
+                    <button
+                      className="btn btn--ghost btn--sm cash-register__hprint"
+                      aria-label={`Imprimir cierre del ${dateShort(h.closedAt)}`}
+                      onClick={() => setPrint({ cashId: h.id })}
+                    >
+                      🖨️
+                    </button>
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      onClick={() => setCorrigiendo(h)}
+                    >
+                      Corregir montos
+                    </button>
+                  </div>
+                </div>
+                {/* Historial de correcciones: SOLO superadmin (el branch_admin
+                    no ve el botón y el server le daría 403 de todos modos). */}
+                {h.correctedAt && me?.role === "superadmin" && (
+                  <div className="cash-register__corr">
+                    <button className="btn btn--ghost btn--sm" onClick={() => toggleCorrecciones(h.id)}>
+                      {corrOpen === h.id ? "Ocultar correcciones" : "Ver correcciones"}
+                    </button>
+                    {corrOpen === h.id && (
+                      <div className="cash-register__corr-list">
+                        {(() => {
+                          const c = correcciones[h.id];
+                          if (!c || c.loading) return <p className="hint">Cargando…</p>;
+                          if (c.error) return <p className="form-error">{c.error}</p>;
+                          if (!c.groups.length) return <p className="hint">Sin correcciones registradas.</p>;
+                          return c.groups.map((g) => (
+                            <div className="cash-register__corr-item" key={g.key}>
+                              <p className="cash-register__corr-meta">
+                                {dateTimeShort(g.fecha)} · {g.autor} · Motivo: {g.motivo}
+                              </p>
+                              {g.lineas.map((l) => (
+                                <p className="cash-register__corr-line" key={l.id}>
+                                  {cashCorrLine(l)}
+                                </p>
+                              ))}
+                            </div>
+                          ));
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </Fragment>
             );
           })}
         </div>
@@ -415,6 +484,233 @@ function CashRegister({ branch }) {
           onClose={() => setPrint(null)}
         />
       )}
+
+      {corrigiendo && (
+        <CashCorrectionModal
+          cierre={corrigiendo}
+          onClose={() => setCorrigiendo(null)}
+          onSaved={async () => {
+            setCorrigiendo(null);
+            // La vista previa del modal era solo eso: acá manda el servidor.
+            // load() refresca el historial con los valores que quedaron.
+            await load();
+          }}
+        />
+      )}
     </div>
   );
+}
+
+// ============================================================
+// Corrección de un cierre (modal). Los 4 campos editables son los inputs
+// humanos de la caja; expectedAmount y difference los recalcula siempre
+// el servidor (acá solo se previsualizan con la misma fórmula). El
+// efectivo cobrado NO se deriva de los pedidos: lo carga el admin a mano
+// (un pedido pudo cambiar de medio de pago DESPUÉS del cierre). Como
+// referencia de solo lectura se muestra el efectivo que hoy da el
+// reporte de ventas del turno (si la llamada falla, no se muestra).
+// ============================================================
+const MONTO_MAX = 100000000;
+
+function parseMontoModal(v) {
+  const t = String(v).trim();
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isInteger(n) || n < 0 || n > MONTO_MAX) return null;
+  return n;
+}
+
+function CashCorrectionModal({ cierre, onClose, onSaved }) {
+  const [apertura, setApertura] = useState(String(cierre.openingAmount));
+  const [cobrado, setCobrado] = useState(String(cierre.expectedAmount - cierre.openingAmount));
+  const [contado, setContado] = useState(String(cierre.closingCounted));
+  const [notas, setNotas] = useState(cierre.notes || "");
+  const [motivo, setMotivo] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  // Efectivo del reporte actual del turno (referencia read-only).
+  const [efectivoReporte, setEfectivoReporte] = useState(null);
+  const dialogRef = useDialogA11y({ onClose, isActive: true });
+
+  useEffect(() => {
+    let alive = true;
+    adminSales({ branch: cierre.branch, from: cierre.openedAt, to: cierre.closedAt })
+      .then((s) => {
+        if (!alive) return;
+        const m = s.byMethod?.find((x) => x.method === "efectivo");
+        setEfectivoReporte(m ? m.total : 0);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [cierre]);
+
+  // Vista previa: solo si los 3 montos son válidos. La diferencia nueva
+  // definitiva es la que devuelve el servidor al guardar.
+  const nApertura = parseMontoModal(apertura);
+  const nCobrado = parseMontoModal(cobrado);
+  const nContado = parseMontoModal(contado);
+  const montosOk = nApertura !== null && nCobrado !== null && nContado !== null;
+  const nuevoEsperado = montosOk ? nApertura + nCobrado : null;
+  const nuevaDiferencia = montosOk ? nContado - nuevoEsperado : null;
+
+  async function handleSave(e) {
+    e.preventDefault();
+    if (busy) return; // anti doble toque
+    if (!montosOk) {
+      setError("Los montos deben ser enteros entre 0 y 100.000.000");
+      return;
+    }
+    if (motivo.trim().length < 5) {
+      setError("Ingresá el motivo de la corrección (mínimo 5 caracteres)");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await adminCorrectCashRegister(cierre.id, {
+        openingAmount: nApertura,
+        efectivoCobrado: nCobrado,
+        closingCounted: nContado,
+        notes: notas,
+        reason: motivo.trim(),
+      });
+      await onSaved();
+    } catch (err) {
+      // El modal NO se cierra: el error del server (409 incluido) se muestra
+      // arriba y los datos del formulario quedan intactos.
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cash-corr-title"
+        ref={dialogRef}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="modal__head">
+          <h3 id="cash-corr-title">Corregir cierre del {dateShort(cierre.closedAt)}</h3>
+          <button className="modal__close" onClick={onClose} aria-label="Cerrar">✕</button>
+        </div>
+        <form className="modal__body" onSubmit={handleSave}>
+          {error && <div className="form-error">{error}</div>}
+          <div className="field">
+            <label htmlFor="corr-apertura">Fondo inicial</label>
+            <input
+              id="corr-apertura"
+              type="number"
+              min="0"
+              max={MONTO_MAX}
+              step="1"
+              value={apertura}
+              onChange={(e) => setApertura(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="corr-cobrado">Efectivo cobrado</label>
+            <input
+              id="corr-cobrado"
+              type="number"
+              min="0"
+              max={MONTO_MAX}
+              step="1"
+              value={cobrado}
+              onChange={(e) => setCobrado(e.target.value)}
+            />
+            {efectivoReporte !== null && (
+              <p className="hint">Efectivo según el reporte de ventas actual: {formatPrice(efectivoReporte)}</p>
+            )}
+          </div>
+          <div className="field">
+            <label htmlFor="corr-contado">Monto contado en caja</label>
+            <input
+              id="corr-contado"
+              type="number"
+              min="0"
+              max={MONTO_MAX}
+              step="1"
+              value={contado}
+              onChange={(e) => setContado(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="corr-notas">Notas</label>
+            <textarea id="corr-notas" rows={2} value={notas} onChange={(e) => setNotas(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="corr-motivo">Motivo de la corrección</label>
+            <input
+              id="corr-motivo"
+              type="text"
+              placeholder="Ej: el fondo real era otro"
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+            />
+          </div>
+          {montosOk && (
+            <p className="hint">
+              Esperado: {formatPrice(nuevoEsperado)} · Nueva diferencia:{" "}
+              {nuevaDiferencia === 0 ? "caja exacta" : `${nuevaDiferencia > 0 ? "+" : "−"}${formatPrice(Math.abs(nuevaDiferencia))}`}
+            </p>
+          )}
+          <div className="modal__footer">
+            <button type="button" className="btn btn--ghost btn--block" onClick={onClose} disabled={busy}>
+              Cancelar
+            </button>
+            <button type="submit" className="btn btn--primary btn--block" disabled={busy}>
+              {busy ? "Guardando…" : "Guardar corrección"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Historial de correcciones — vista del panel, SOLO superadmin.
+// El server devuelve UNA fila por campo (una corrección que toca fondo +
+// contado son 4 filas: los 2 campos + los 2 derivados, que van rotulados
+// "recalculado"). Se agrupan por (admin, fecha, motivo), igual que el
+// historial de pedidos (formatAuditEdits).
+// ============================================================
+const CASH_FIELD_LABEL = {
+  openingAmount: "Fondo inicial",
+  efectivoCobrado: "Efectivo cobrado",
+  closingCounted: "Efectivo contado",
+  notes: "Notas",
+  expectedAmount: "Esperado (recalculado)",
+  difference: "Diferencia (recalculada)",
+};
+
+function cashCorrValue(field, value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (field === "notes") return String(value);
+  return formatPrice(Number(value));
+}
+
+function cashCorrLine(r) {
+  return `${CASH_FIELD_LABEL[r.field] || r.field}: ${cashCorrValue(r.field, r.old_value)} → ${cashCorrValue(r.field, r.new_value)}`;
+}
+
+function groupCorrections(rows) {
+  const groups = [];
+  for (const r of rows || []) {
+    const key = `${r.admin_username}|${r.created_at}|${r.reason}`;
+    let g = groups.find((x) => x.key === key);
+    if (!g) {
+      g = { key, autor: r.admin_username || "superadmin", fecha: r.created_at, motivo: r.reason, lineas: [] };
+      groups.push(g);
+    }
+    g.lineas.push(r);
+  }
+  return groups;
 }

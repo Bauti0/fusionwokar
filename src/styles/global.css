@@ -3264,10 +3264,17 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .cash-register__hrow .badge { justify-self: end; }
 /* Botón de imprimir el cierre, dentro del resultado del arqueo. */
 .cash-register__result .btn { margin-top: 8px; }
-/* Botón chico de imprimir en cada fila del historial: va en la línea entera
-   de abajo (grid-column: 1 / -1 funciona con el grid de 3 columnas de
-   desktop y con las areas de mobile) alineado a la derecha. */
-.cash-register__hprint { grid-column: 1 / -1; justify-self: end; }
+/* Botón chico de imprimir en cada fila del historial: va junto al de
+   corregir montos en la línea entera de abajo (grid-column: 1 / -1 sirve
+   con el grid de 3 columnas de desktop y con las areas de mobile). */
+.cash-register__hactions { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; }
+/* Historial de correcciones desplegado (solo superadmin): una entrada por
+   corrección con fecha·autor·motivo y una línea por campo antes → después. */
+.cash-register__corr { padding: 4px 0 8px; border-bottom: 1px solid var(--color-border); }
+.cash-register__corr-list { margin-top: 6px; display: flex; flex-direction: column; gap: 8px; }
+.cash-register__corr-item { font-size: 12px; color: var(--color-text-mute); }
+.cash-register__corr-meta { margin: 0 0 2px; color: var(--color-text-soft); font-weight: 600; }
+.cash-register__corr-line { margin: 0; }
 @media (max-width: 480px) {
   .cash-register { padding: 14px; }
   .cash-register__hrow {
