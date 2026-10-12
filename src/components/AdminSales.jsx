@@ -5,6 +5,7 @@ import { formatPrice } from "../utils/format.js";
 import { periodRange, dayShort, dayLabel, dateShort, dateTimeShort, isToday } from "../utils/dates.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import DateRangePicker from "./ui/DateRangePicker.jsx";
+import TicketPrint from "./TicketPrint.jsx";
 
 const PERIODS = [
   { id: "today", label: "Hoy" },
@@ -178,6 +179,14 @@ function CashRegister({ branch }) {
   const [closing, setClosing] = useState(false);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Impresión del ticket de cierre: `print` guarda SOLO el id del arqueo; el
+  // cierre se resuelve siempre desde data.history (estado fresco, se refresca
+  // cada 20s), nunca de una copia guardada.
+  const [print, setPrint] = useState(null);
+  // Id del arqueo que acabamos de cerrar, para el botón de imprimir del
+  // resultado. El endpoint de cierre NO devuelve el id: es el id de la caja
+  // que se captura antes de cerrar.
+  const [closedId, setClosedId] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -191,6 +200,8 @@ function CashRegister({ branch }) {
 
   useEffect(() => {
     setResult(null);
+    setClosedId(null);
+    setPrint(null);
     setClosing(false);
     load();
     const t = setInterval(load, 20000);
@@ -233,8 +244,12 @@ function CashRegister({ branch }) {
     }
     setBusy(true);
     try {
-      const res = await adminCloseCashRegister(data.open.id, counted, closingNotes);
+      // El id del arqueo se captura ANTES de cerrar: la respuesta del endpoint
+      // no lo trae y después del close la caja ya no está en data.open.
+      const arqueoId = data.open.id;
+      const res = await adminCloseCashRegister(arqueoId, counted, closingNotes);
       setResult(res);
+      setClosedId(arqueoId);
       setClosingCounted("");
       setClosingNotes("");
       setClosing(false);
@@ -255,6 +270,9 @@ function CashRegister({ branch }) {
   const cobrado = Number.isFinite(data.open?.expectedNow)
     ? data.open.expectedNow - data.open.openingAmount
     : 0;
+  // Cierre elegido para imprimir: SIEMPRE desde data.history (los datos que
+  // están en pantalla ahora), nunca una copia guardada al hacer click.
+  const cierreAImprimir = print ? data.history.find((h) => h.id === print.cashId) : null;
 
   return (
     <div className="cash-register">
@@ -349,6 +367,11 @@ function CashRegister({ branch }) {
               : `Faltan ${formatPrice(Math.abs(result.difference))}`}
           </strong>
           <span>Esperado: {formatPrice(result.expected)}</span>
+          {closedId && (
+            <button className="btn btn--ghost btn--block" onClick={() => setPrint({ cashId: closedId })}>
+              🖨️ Imprimir cierre
+            </button>
+          )}
         </div>
       )}
 
@@ -370,10 +393,27 @@ function CashRegister({ branch }) {
                 <span className={`badge ${badge}`}>
                   {dif === 0 ? "Exacta" : `${dif > 0 ? "+" : "−"}${formatPrice(Math.abs(dif))}`}
                 </span>
+                <button
+                  className="btn btn--ghost btn--sm cash-register__hprint"
+                  aria-label={`Imprimir cierre del ${dateShort(h.closedAt)}`}
+                  onClick={() => setPrint({ cashId: h.id })}
+                >
+                  🖨️
+                </button>
               </div>
             );
           })}
         </div>
+      )}
+
+      {/* Ticket del cierre: la ventana se abre adentro del click (sin await
+          de por medio) y el desglose llega después, dentro de TicketPrint. */}
+      {cierreAImprimir && (
+        <TicketPrint
+          variant="cierre"
+          cash={cierreAImprimir}
+          onClose={() => setPrint(null)}
+        />
       )}
     </div>
   );

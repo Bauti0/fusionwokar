@@ -2614,7 +2614,11 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
     // El nombre queda registrado en la entrada de refunds_json junto con el
     // usuario admin logueado. NO entra en la clave idempotente (que sigue
     // calculándose igual que antes) ni se loguea.
-    const refundMeta = { by: refundedBy, admin: req.admin?.username || "" };
+    // (como order-edit: si no hay cuenta de sucursal, "superadmin")
+    const refundMeta = {
+      by: refundedBy,
+      admin: req.admin?.username ?? (req.admin?.role === "superadmin" ? "superadmin" : "unknown"),
+    };
 
     const refundable = refundableAmount(row);
     if (refundable <= 0) {

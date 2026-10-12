@@ -3262,6 +3262,12 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .cash-register__hmoney b { color: var(--color-text-soft); font-weight: 600; }
 .cash-register__hrow .badge { justify-self: end; }
+/* Botón de imprimir el cierre, dentro del resultado del arqueo. */
+.cash-register__result .btn { margin-top: 8px; }
+/* Botón chico de imprimir en cada fila del historial: va en la línea entera
+   de abajo (grid-column: 1 / -1 funciona con el grid de 3 columnas de
+   desktop y con las areas de mobile) alineado a la derecha. */
+.cash-register__hprint { grid-column: 1 / -1; justify-self: end; }
 @media (max-width: 480px) {
   .cash-register { padding: 14px; }
   .cash-register__hrow {

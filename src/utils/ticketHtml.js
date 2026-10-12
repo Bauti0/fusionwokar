@@ -4,9 +4,12 @@ import { formatPrice } from "./format.js";
 import { sanitizeForPrinter, sortItemsByQty } from "./printer.js";
 
 // ============================================================
-// Armado de los dos documentos que salen por la impresora térmica:
+// Armado de los dos documentos de PEDIDOS que salen por la impresora
+// térmica:
 //   buildTicketHtml  → ticket para la bolsa del pedido (importes, cliente, etc.)
 //   buildComandaHtml → comanda para la cocina (solo qué y cuántas unidades)
+// (El ticket del cierre de caja vive en cashTicketHtml.js y reusa acá
+// esc(), precio() y el pie de relleno.)
 // Vienen en un .js (y no adentro del componente) para poder testearlos con
 // node:test, que no parsea JSX.
 //
@@ -25,7 +28,8 @@ import { sanitizeForPrinter, sortItemsByQty } from "./printer.js";
 // Limpia el texto para la impresora y lo escapa para el HTML. El escapado va
 // DESPUÉS de la limpieza. Cubre los dos documentos: nombre de sucursal,
 // dirección, cliente, productos, variantes, notas, rótulos y precios.
-function esc(value) {
+// (Compartido también con el ticket del cierre: ver cashTicketHtml.js.)
+export function esc(value) {
   return sanitizeForPrinter(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -36,7 +40,7 @@ function esc(value) {
 
 // El precio de Intl viene con un espacio duro entre el $ y el número
 // ("$\u00A036.000"): también pasa por la limpieza.
-function precio(value) {
+export function precio(value) {
   return esc(formatPrice(value));
 }
 
@@ -63,7 +67,7 @@ function nota(value) {
 // Solo ASCII y nada de &nbsp;: el espacio duro (U+00A0) es justo el byte que el
 // driver chino convertía en ideograma, y el pie se escribe a mano, sin pasar
 // por sanitizeForPrinter().
-const PIE = `<div style="height:12mm"></div>
+export const PIE = `<div style="height:12mm"></div>
   <br><br><br><br>
   `;
 
