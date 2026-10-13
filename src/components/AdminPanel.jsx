@@ -26,7 +26,8 @@ import {
 import { formatPrice } from "../utils/format.js";
 import { previewOrderEdit, formatAuditEdits } from "../utils/orderEdit.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
-import { playNewOrderChime } from "../utils/notifySound.js";
+import { playNewOrderChime, stopNewOrderChime, onOrderAlarmBlocked } from "../utils/notifySound.js";
+import { isActiveOrder, unseenActiveIds } from "../utils/orderAlarm.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 import { IconEmptySearch, IconRepeat, IconPlus, IconLocation } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
@@ -65,9 +66,6 @@ function timeAgo(iso) {
   return `hace ${mo} ${mo === 1 ? "mes" : "meses"}`;
 }
 
-// Estados que cuentan como "en curso" (todavía no se entregó ni se canceló)
-const ACTIVE_STATUS_IDS = new Set(["received", "preparing", "ready", "out_for_delivery"]);
-
 // Etiquetas de los filtros de pago, para los chips de "filtros activos"
 const PAYMENT_FILTER_LABELS = {
   approved: "Pagados",
@@ -84,15 +82,9 @@ const ORDER_TABS = [
   { id: "ajustes", label: "Ajustes" },
 ];
 // Un pedido programado para más adelante (con +1h de holgura) no cuenta como
-// "en curso" ni dispara el aviso sonoro hasta que llegue su momento.
-function isFutureScheduled(o) {
-  if (!o?.scheduledFor) return false;
-  const t = new Date(o.scheduledFor).getTime();
-  return !Number.isNaN(t) && t > Date.now() + 60 * 60000;
-}
-function isActiveOrder(o) {
-  return ACTIVE_STATUS_IDS.has(o.status) && o.paymentStatus !== "rejected" && !isFutureScheduled(o);
-}
+// "en curso" ni dispara el aviso sonoro hasta que llegue su momento. El
+// criterio "activo/no visto" vive en utils/orderAlarm.js (función pura,
+// testeada con pedidos reales).
 
 // Hash corto del commit con el que se compiló la app. vite.config.js lo
 // inyecta como constante global (ver "define") al arrancar el dev server o
@@ -352,23 +344,56 @@ export default function AdminPanel({ me, onLogout }) {
     };
   }, [selected?.id, me?.role, auditTick]);
 
-  // Detecta pedidos "en curso" nuevos (no vistos todavía) y suena un
-  // aviso corto. No suena en la primera carga de la página, solo
+  // Detecta pedidos "en curso" nuevos (no vistos todavía) y arranca la
+  // alarma (utils/notifySound.js), que se repite hasta que no quede ningún
+  // pedido sin ver. No suena en la primera carga de la página, solo
   // cuando aparece uno realmente nuevo durante la sesión.
   const loadedOnceRef = useRef(false);
   const prevNotSeenRef = useRef(new Set());
+  // La alarma solo corre si fue pedida por un pedido nuevo de ESTA sesión:
+  // cargar o recargar la página con pedidos sin ver no suena (como siempre).
+  const alarmWantedRef = useRef(false);
   useEffect(() => {
-    const activeIds = orders.filter(isActiveOrder).map((o) => o.id);
-    const notSeen = activeIds.filter((id) => !seenRef.current.has(id));
+    const notSeen = unseenActiveIds(orders, seenRef.current);
     const isNew = notSeen.some((id) => !prevNotSeenRef.current.has(id));
-    // El sonido se dispara FUERA del setState (un updater de React puede
+    // El arranche se dispara FUERA del setState (un updater de React puede
     // ejecutarse dos veces en StrictMode y sonar de más) y solo cuando aparece
     // un pedido nuevo durante la sesión, no en la primera carga.
-    if (loadedOnceRef.current && isNew) setTimeout(playNewOrderChime, 0);
+    if (loadedOnceRef.current && isNew) {
+      alarmWantedRef.current = true;
+      setTimeout(playNewOrderChime, 0);
+    }
     prevNotSeenRef.current = new Set(notSeen);
     setUnseenIds(new Set(notSeen));
     if (orders.length > 0) loadedOnceRef.current = true;
   }, [orders]);
+
+  // Sincroniza la alarma con el contador de no vistos de la barra: mientras
+  // quede AL MENOS UN pedido activo sin ver sigue sonando (si entra otro
+  // mientras tanto, es la MISMA alarma, no se apila); si el pedido sin ver
+  // desaparece de la lista (visto, cancelado, cambio de estado, fuera de la
+  // página cargada) o se ve el último, se corta. Se depende de `size` (un
+  // número) para que un refresco del poll sin cambios no re-ejecute nada.
+  const unseenCount = unseenIds.size;
+  useEffect(() => {
+    if (unseenCount > 0) {
+      if (alarmWantedRef.current) playNewOrderChime();
+    } else {
+      alarmWantedRef.current = false;
+      stopNewOrderChime();
+    }
+  }, [unseenCount]);
+
+  // Estado del audio bloqueado por la política de autoplay (chip "Sonido
+  // desactivado"). Sin esto, un pedido nuevo en una PC recién reiniciada
+  // (nadie interactuó con la página) quedaría mudo sin aviso.
+  const [alarmBloqueado, setAlarmBloqueado] = useState(false);
+  useEffect(() => onOrderAlarmBlocked(setAlarmBloqueado), []);
+
+  // Desmontaje del panel (logout incluido): corta la alarma y sus timers
+  // para que no quede un sonido fantasma. El mismo stop limpia el listener
+  // de desbloqueo por gesto que registra notifySound.js.
+  useEffect(() => () => stopNewOrderChime(), []);
 
   function markSeen(id) {
     if (!seenRef.current.has(id)) {
@@ -724,7 +749,10 @@ export default function AdminPanel({ me, onLogout }) {
               setRepeatOrder(null);
               setSection("orders");
             }}
-            onCreated={() => {
+            onCreated={(orderId) => {
+              // Se marca visto ANTES del reload: un pedido que carga el
+              // propio admin no debe sonar como pedido nuevo.
+              if (orderId) markSeen(orderId);
               setRepeatOrder(null);
               load({ showSpinner: false });
             }}
@@ -785,6 +813,15 @@ export default function AdminPanel({ me, onLogout }) {
               </div>
             );
           })()}
+          {/* Audio bloqueado por la política de autoplay (la PC arrancó y
+              nadie interactuó con la página): mientras quede un pedido sin
+              ver, avisa que la alarma está muda. Cualquier click o tecla la
+              reactiva (notifySound.js escucha el primer gesto). */}
+          {unseenCount > 0 && alarmBloqueado && (
+            <div className="admin-pause">
+              <span className="admin-pause__chip">🔇 Sonido desactivado: tocá para activar</span>
+            </div>
+          )}
           <div className="admin-orders-toolbar">
             {(() => {
               const isSuperAdmin = me?.role === "superadmin";
