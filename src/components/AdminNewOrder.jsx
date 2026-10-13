@@ -201,9 +201,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
         scheduledFor: "",
       });
       setSuccess(res.orderNumber);
-      // Se pasa el id para que el panel lo marque como visto: un pedido que
-      // carga el propio admin no debe disparar la alarma de pedido nuevo.
-      onCreated?.(res.orderId);
+      onCreated?.();
       setCart([]);
       setName("");
       setPhone("");
