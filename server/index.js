@@ -85,6 +85,8 @@ import {
   listCoupons,
   getScopedCoupon,
   isCouponCodeTaken,
+  listExtras,
+  updateExtra,
 } from "./admin-queries.js";
 import { validateConfig } from "./config.js";
 import { orderLogLine } from "./order-log.js";
@@ -124,6 +126,8 @@ import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from
 //   PATCH /api/admin/products/:id/available → ocultar/mostrar producto
 //   DELETE /api/admin/products/:id          → eliminar producto
 //   POST  /api/admin/products/:id/move      → reordenar producto (↑/↓)
+//   GET   /api/admin/extras                 → adicionales agrupados (uno por id)
+//   PUT   /api/admin/extras/:extraId        → precio/visibilidad del adicional en TODOS los productos
 //   POST  /api/admin/categories             → crear categoría
 //   PUT   /api/admin/categories/:id         → renombrar categoría
 //   DELETE /api/admin/categories/:id        → eliminar categoría (+ productos)
@@ -3387,6 +3391,63 @@ app.patch("/api/admin/products/:id/available", requireAdmin, async (req, res) =>
     res.json({ ok: true, product: productRowToAdmin(updated) });
   } catch (err) {
     console.error("PATCH /api/admin/products/:id/available:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- adicionales (precio / visibilidad global por sucursal) ----------
+// El teriyaki vive copiado en el extras_json de todos los woks: estos
+// endpoints lo editan EN TODOS los productos de la sucursal de una
+// sola vez. La sucursal sale de la sesión para el branch_admin; el
+// superadmin la pasa por ?branch= / body (validada contra MENUS).
+function extrasBranch(req, requested) {
+  const scope = adminScope(req);
+  if (scope) return { branch: scope };
+  if (typeof requested === "string" && MENUS[requested.trim()]) {
+    return { branch: requested.trim() };
+  }
+  return { error: "Sucursal inválida" };
+}
+
+app.get("/api/admin/extras", requireAdmin, async (req, res) => {
+  try {
+    const branchResult = extrasBranch(req, req.query.branch);
+    if (branchResult.error) return res.status(400).json({ error: branchResult.error });
+    const extras = await listExtras(db, { scope: branchResult.branch });
+    res.json({ ok: true, extras });
+  } catch (err) {
+    console.error("GET /api/admin/extras:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.put("/api/admin/extras/:extraId", requireAdmin, async (req, res) => {
+  try {
+    const extraId = String(req.params.extraId || "");
+    const { branch, price, available } = req.body || {};
+    const branchResult = extrasBranch(req, branch);
+    if (branchResult.error) return res.status(400).json({ error: branchResult.error });
+    // Precio opcional pero, si viene, entero en ARS (como los de products).
+    let priceValue;
+    if (price !== undefined) {
+      priceValue = Number(price);
+      if (!Number.isInteger(priceValue) || priceValue < 0) {
+        return res.status(400).json({ error: "Precio inválido" });
+      }
+    }
+    const result = await updateExtra(db, {
+      branch: branchResult.branch,
+      extraId,
+      price: priceValue,
+      available: available === undefined ? undefined : available === true || available === 1,
+      nowIso: now(),
+    });
+    if (result.updated === 0) return res.status(404).json({ error: "Adicional no encontrado" });
+    CATALOG = await buildCatalog();
+    invalidateMenuCache();
+    res.json({ ok: true, updated: result.updated });
+  } catch (err) {
+    console.error("PUT /api/admin/extras/:extraId:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });

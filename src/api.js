@@ -271,6 +271,19 @@ export function adminToggleProduct(id, available) {
   });
 }
 
+// Adicionales globales (precio/visibilidad en todos los productos de la sucursal)
+export function adminExtras(branch) {
+  const qs = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+  return request(`/api/admin/extras${qs}`);
+}
+
+export function adminUpdateExtra(extraId, payload) {
+  return request(`/api/admin/extras/${encodeURIComponent(extraId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function adminDeleteProduct(id) {
   return request(`/api/admin/products/${id}`, { method: "DELETE" });
 }

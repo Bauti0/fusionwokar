@@ -324,6 +324,91 @@ export async function getScopedProduct(db, id, scope) {
   return row;
 }
 
+// ============================================================
+// Adicionales globales del panel (sección "Adicionales").
+//
+// Los extras viven COPIADOS en el extras_json de cada producto
+// (el teriyaki está en todos los woks). Para que el local pueda
+// cambiar un precio u ocultar un adicional de una sola vez, acá
+// se trabaja agrupado por id DENTRO de una sucursal: el scope del
+// branch_admin manda igual que en el resto del módulo.
+// ============================================================
+
+// Un renglón por adicional: id, label, subgrupo, precio, visibilidad
+// y en cuántos productos de la sucursal aparece. Cuando hay copias
+// divergentes (un wok lo tiene a otro precio) se muestra el del
+// producto más arriba del menú (sort_order): editarlo pisa todas.
+export async function listExtras(db, { scope } = {}) {
+  const where = scope ? "WHERE branch = ?" : "";
+  const params = scope ? [scope] : [];
+  const rows = await db
+    .prepare(`SELECT branch, extras_json FROM products ${where} ORDER BY branch, sort_order`)
+    .all(...params);
+  const byId = new Map();
+  for (const row of rows) {
+    let extras;
+    try {
+      extras = JSON.parse(row.extras_json || "[]");
+    } catch {
+      continue;
+    }
+    for (const e of extras) {
+      if (!e || typeof e.id !== "string" || !e.id) continue;
+      const entry = byId.get(`${row.branch}|${e.id}`) || {
+        branch: row.branch,
+        id: e.id,
+        label: e.label || e.id,
+        price: e.price ?? 0,
+        available: e.available !== false,
+        subgroupLabel: e.subgroupLabel || e.subgroup || "",
+        productCount: 0,
+      };
+      entry.productCount += 1;
+      byId.set(`${row.branch}|${e.id}`, entry);
+    }
+  }
+  return Array.from(byId.values());
+}
+
+// Cambia precio y/o visibilidad de UN adicional en TODOS los
+// productos de la sucursal que lo contienen. Devuelve cuántos
+// productos se tocaron. No crea ni borra extras, solo pisa los
+// existentes; el resto de campos del extra quedan intactos.
+export async function updateExtra(db, { branch, extraId, price, available, nowIso = new Date().toISOString() } = {}) {
+  if (!branch || !extraId) return { updated: 0 };
+  const rows = await db
+    .prepare("SELECT id, extras_json FROM products WHERE branch = ?")
+    .all(branch);
+  let updated = 0;
+  for (const row of rows) {
+    let extras;
+    try {
+      extras = JSON.parse(row.extras_json || "[]");
+    } catch {
+      continue;
+    }
+    let changed = false;
+    const next = extras.map((e) => {
+      if (e && e.id === extraId) {
+        changed = true;
+        return {
+          ...e,
+          price: price === undefined ? e.price : Math.round(price),
+          available: available === undefined ? e.available !== false : available === true,
+        };
+      }
+      return e;
+    });
+    if (changed) {
+      await db
+        .prepare("UPDATE products SET extras_json = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(next), nowIso, row.id);
+      updated += 1;
+    }
+  }
+  return { updated };
+}
+
 // Categoría por id con el mismo convenio.
 export async function getScopedCategory(db, id, scope) {
   if (!Number.isInteger(id) || id <= 0) return null;

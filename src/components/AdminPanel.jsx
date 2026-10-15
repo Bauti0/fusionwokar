@@ -36,6 +36,7 @@ import PauseModal from "./ui/PauseModal.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import AdminStats from "./AdminStats.jsx";
 import AdminProducts from "./AdminProducts.jsx";
+import AdminExtras from "./AdminExtras.jsx";
 import AdminCoupons from "./AdminCoupons.jsx";
 import AdminCustomers from "./AdminCustomers.jsx";
 import AdminSales from "./AdminSales.jsx";
@@ -675,6 +676,12 @@ export default function AdminPanel({ me, onLogout }) {
             🍜 Productos
           </button>
           <button
+            className={`admin-nav__btn ${section === "extras" ? "is-active" : ""}`}
+            onClick={() => setSection("extras")}
+          >
+            🥢 Adicionales
+          </button>
+          <button
             className={`admin-nav__btn ${section === "coupons" ? "is-active" : ""}`}
             onClick={() => setSection("coupons")}
           >
@@ -707,6 +714,8 @@ export default function AdminPanel({ me, onLogout }) {
         {section === "stats" && <AdminStats me={me} />}
 
         {section === "products" && <AdminProducts me={me} />}
+
+        {section === "extras" && <AdminExtras me={me} />}
 
         {section === "coupons" && <AdminCoupons me={me} />}
 

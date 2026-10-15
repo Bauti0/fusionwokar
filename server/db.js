@@ -390,6 +390,8 @@ for (const row of wokExtraRows) {
   );
 };
 
+import { availableExtras } from "./extras.js";
+
 // Convierte una fila de products en el objeto de producto del menú
 export function toProduct(row) {
   if (!row) return null;
@@ -399,7 +401,9 @@ export function toProduct(row) {
     price: row.price,
     description: row.description || "",
     image: row.image || "",
-    extras: JSON.parse(row.extras_json || "[]"),
+    // Extras con available:false (sección "Adicionales" del panel) no
+    // llegan al menú público ni al catálogo que valida precios.
+    extras: availableExtras(JSON.parse(row.extras_json || "[]")),
     available: row.available === 1,
   };
 }
