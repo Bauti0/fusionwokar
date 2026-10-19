@@ -10,6 +10,11 @@ function itemLines(item) {
   if (item.extras && item.extras.length) {
     lines.push(`    · ${item.extras.map((e) => `${e.label} (+${formatPrice(e.price)})`).join(", ")}`);
   }
+  if (item.options && item.options.length) {
+    lines.push(
+      `    · ${item.options.map((o) => `${o.label}${o.extraPrice > 0 ? ` (+${formatPrice(o.extraPrice)})` : ""}`).join(", ")}`
+    );
+  }
   if (item.notes) {
     lines.push(`    · Nota: ${item.notes}`);
   }

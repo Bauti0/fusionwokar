@@ -38,6 +38,36 @@ const woksExtras = () => [
   { id: "galleta-fortuna-2", label: "Galleta de la fortuna x2", price: 2000, group: "galleta", subgroup: "galleta" },
 ];
 
+// Opciones reales de wok del menú de Tandil (sin inventar variedades).
+// Los IDs son slugs internos; las etiquetas son los nombres exactos del menú.
+const wokMeinPolloCerdoVeggie = [
+  { id: "wok-mein-pollo", label: "Mein de pollo", extraPrice: 0 },
+  { id: "wok-mein-cerdo", label: "Mein de cerdo", extraPrice: 0 },
+  { id: "wok-mein-veggie", label: "Mein veggie", extraPrice: 0 },
+];
+
+const wokMeinSinLangostinos = [
+  { id: "wok-mein-carne", label: "Mein de carne", extraPrice: 0 },
+  { id: "wok-mein-cerdo", label: "Mein de cerdo", extraPrice: 0 },
+  { id: "wok-mein-pollo", label: "Mein de pollo", extraPrice: 0 },
+  { id: "wok-mein-veggie", label: "Mein veggie", extraPrice: 0 },
+  { id: "wok-mein-mixto", label: "Mein mixto", extraPrice: 0 },
+];
+
+const wokFanSinLangostinos = [
+  { id: "wok-fan-carne", label: "Chow fan de carne", extraPrice: 0 },
+  { id: "wok-fan-cerdo", label: "Chow fan de cerdo", extraPrice: 0 },
+  { id: "wok-fan-pollo", label: "Chow fan de pollo", extraPrice: 0 },
+  { id: "wok-fan-veggie", label: "Chow fan veggie", extraPrice: 0 },
+  { id: "wok-fan-mixto", label: "Chow fan mixto", extraPrice: 0 },
+];
+
+// Solo existe "Bao de bondiola braseada" en el menú de Tandil;
+// no hay "Bao de mix de hongos", así que no se inventa.
+const baoOpciones = [
+  { id: "bao-bondiola", label: "Bao de bondiola braseada", extraPrice: 0 },
+];
+
 export default {
   branchId: "tandil",
   categories: [
@@ -85,6 +115,14 @@ export default {
               name: "Promo Wok + Ice Tea",
               price: 20900,
               description: "Wok a elección (no entran los de langostinos) + Ice Tea Coreano",
+              extras: woksExtras(),
+              optionGroups: [
+                {
+                  name: "Elegí tu wok",
+                  required: true,
+                  options: [...wokMeinSinLangostinos, ...wokFanSinLangostinos],
+                },
+              ],
               available: true,
             },
             {
@@ -92,6 +130,7 @@ export default {
               name: "Promo para Compartir",
               price: 38900,
               description: "Incluye un mein de pollo, 6 dumplings fritos de cerdo y 2 ice tea",
+              extras: woksExtras(),
               available: true,
             },
             {
@@ -99,6 +138,29 @@ export default {
               name: "Promo 2 Fan a Elección (no incluye carne ni langostinos) + salsa teriyaki",
               price: 35900,
               description: "",
+              extras: woksExtras(),
+              optionGroups: [
+                {
+                  name: "Wok 1",
+                  required: true,
+                  options: [
+                    ...wokMeinPolloCerdoVeggie,
+                    { id: "wok-fan-cerdo", label: "Chow fan de cerdo", extraPrice: 0 },
+                    { id: "wok-fan-pollo", label: "Chow fan de pollo", extraPrice: 0 },
+                    { id: "wok-fan-veggie", label: "Chow fan veggie", extraPrice: 0 },
+                  ],
+                },
+                {
+                  name: "Wok 2",
+                  required: true,
+                  options: [
+                    ...wokMeinPolloCerdoVeggie,
+                    { id: "wok-fan-cerdo", label: "Chow fan de cerdo", extraPrice: 0 },
+                    { id: "wok-fan-pollo", label: "Chow fan de pollo", extraPrice: 0 },
+                    { id: "wok-fan-veggie", label: "Chow fan veggie", extraPrice: 0 },
+                  ],
+                },
+              ],
               available: true,
             },
             {
@@ -106,6 +168,19 @@ export default {
               name: "Promo 2 Fan a Elección (no incluye langostinos)",
               price: 35000,
               description: "2 wok a elección con base de arroz + una salsa teriyaki",
+              extras: woksExtras(),
+              optionGroups: [
+                {
+                  name: "Wok 1",
+                  required: true,
+                  options: [...wokMeinSinLangostinos, ...wokFanSinLangostinos],
+                },
+                {
+                  name: "Wok 2",
+                  required: true,
+                  options: [...wokMeinSinLangostinos, ...wokFanSinLangostinos],
+                },
+              ],
               available: true,
             },
             {
@@ -114,6 +189,19 @@ export default {
               name: "Combo Kung Fu (1 Persona)",
               price: 22900,
               description: "1 mein de pollo + 1 bao de bondiola braseada",
+              extras: woksExtras(),
+              optionGroups: [
+                {
+                  name: "Elegí tu mein",
+                  required: true,
+                  options: wokMeinPolloCerdoVeggie,
+                },
+                {
+                  name: "Elegí tu bao",
+                  required: true,
+                  options: baoOpciones,
+                },
+              ],
               available: true,
             },
             {
@@ -121,6 +209,7 @@ export default {
               name: "Combo Wok + Dumplings Fritos (para compartir)",
               price: 29900,
               description: "1 wok de spaguettis con pollo + 6 dumplings de cerdo fritos con salsa agridulce china",
+              extras: woksExtras(),
               available: true,
             },
           ],

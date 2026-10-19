@@ -112,6 +112,11 @@ export function buildTicketHtml(order) {
           lines.push(`<tr><td class="sub">- ${esc(e.label)}</td><td class="right">${precio(e.price * it.qty)}</td></tr>`);
         }
       }
+      if (it.options?.length) {
+        for (const o of it.options) {
+          lines.push(`<tr><td class="sub">- ${esc(o.label)}</td><td class="right">${precio((o.extraPrice || 0) * it.qty)}</td></tr>`);
+        }
+      }
       if (it.notes) {
         lines.push(`<tr><td colspan="2" class="sub">Nota: ${esc(it.notes)}</td></tr>`);
       }
@@ -182,6 +187,9 @@ export function buildComandaHtml(order) {
       const extras = (it.extras || [])
         .map((e) => `<tr><td class="qty"></td><td class="sub">- ${esc(e.label)}</td></tr>`)
         .join("");
+      const opciones = (it.options || [])
+        .map((o) => `<tr><td class="qty"></td><td class="sub">- ${esc(o.label)}</td></tr>`)
+        .join("");
       // La nota del ítem va debajo de sus variantes, con un asterisco para
       // distinguirla de un adicional. Como sale del .map() sobre los ítems ya
       // ordenados, la nota viaja con su plato.
@@ -189,7 +197,7 @@ export function buildComandaHtml(order) {
       const filaNota = notaItem
         ? `<tr><td class="qty"></td><td class="sub">* ${notaItem}</td></tr>`
         : "";
-      return row + extras + filaNota;
+      return row + extras + opciones + filaNota;
     })
     .join("");
 

@@ -24,6 +24,8 @@ import { IconSparkle } from "./ui/icons.jsx";
 // ============================================================
 const ProductCard = memo(function ProductCard({ product, categoryName, isTop, onAdd, onCustomize, qty = 0 }) {
   const hasExtras = product.extras && product.extras.length > 0;
+  const hasOptions = product.optionGroups && product.optionGroups.length > 0;
+  const customizable = hasExtras || hasOptions;
   const unavailable = product.available === false;
   const [added, setAdded] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
@@ -44,7 +46,7 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   function handleClick() {
     if (unavailable) return;
     track("product_view");
-    if (hasExtras) onCustomize(product);
+    if (customizable) onCustomize(product);
     else {
       onAdd(product, { extras: [], notes: "" });
       flash();
@@ -66,7 +68,7 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
         {product.description && <p className="product__desc">{product.description}</p>}
         <div className="product__foot">
           <span className="product__price">{formatPrice(product.price)}</span>
-          {hasExtras && (
+          {customizable && (
             <span className="product__badge">
               <IconSparkle /> Personalizar
             </span>

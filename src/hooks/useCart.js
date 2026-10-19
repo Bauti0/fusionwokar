@@ -102,7 +102,11 @@ export default function useCart(branchId) {
   // Totales
   const subtotal = items.reduce((acc, it) => acc + it.unitPrice * it.qty, 0);
   const extrasTotal = items.reduce(
-    (acc, it) => acc + (it.extras || []).reduce((a, e) => a + e.price, 0) * it.qty,
+    (acc, it) =>
+      acc +
+      ((it.extras || []).reduce((a, e) => a + e.price, 0) +
+        (it.options || []).reduce((a, o) => a + (o.extraPrice || 0), 0)) *
+        it.qty,
     0
   );
   const total = subtotal + extrasTotal;
