@@ -3101,8 +3101,13 @@ app.get("/api/admin/expenses", requireAdmin, async (req, res) => {
 app.post("/api/admin/expenses", requireAdmin, async (req, res) => {
   try {
     const scope = adminScope(req);
-    const branch = scope || (req.body || {}).branch;
-    if (!branch) return res.status(400).json({ error: "Falta la sucursal" });
+    const { branch } = req.body || {};
+    const branchId = scope || branch;
+    if (!branchId) return res.status(400).json({ error: "Falta la sucursal" });
+    // Si el branch_admin manda un branch distinto al de su sesión, rechazar
+    if (req.admin?.role === "branch_admin" && branch && branch !== req.admin.branch) {
+      return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    }
 
     // Validación de input
     const validation = validateExpenseInput(req.body, true);
@@ -3323,20 +3328,25 @@ app.delete("/api/admin/expenses/:id", requireAdmin, async (req, res) => {
 // ---------- carga manual de pedidos (WhatsApp / mostrador) ----------
 app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
   try {
-    const { source } = req.body || {};
+    const { source, branch: bodyBranch } = req.body || {};
     if (!["whatsapp", "counter"].includes(source)) {
       return res.status(400).json({ error: "Origen inválido" });
     }
     // La sucursal del pedido manual sale de la SESIÓN, no del body:
     // el branch_admin carga SIEMPRE en la suya (body.branch se ignora);
     // el superadmin elige, pero tiene que existir de verdad.
-    const branchResult = effectiveBranch(req.admin, req.body?.branch);
+    const branchResult = effectiveBranch(req.admin, bodyBranch);
     if (branchResult.error) return res.status(400).json({ error: branchResult.error });
+    // Si el branch_admin manda un branch distinto al de su sesión, rechazar
+    if (req.admin?.role === "branch_admin" && bodyBranch && bodyBranch !== req.admin.branch) {
+      return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    }
     // El teléfono es OPCIONAL solo acá: el checkout público lo sigue
     // exigiendo (requirePhone default true). Si viene, se valida igual.
     const result = await validateOrderBody({ ...req.body, branch: branchResult.branch }, { requirePhone: false });
     if (result.error) return res.status(400).json({ error: result.error });
-    const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
+    const { customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
+    const branch = branchResult.branch;
 
     const ts = now();
     // INSERT del pedido + número definitivo (derivado del id real) + evento
@@ -3686,12 +3696,22 @@ async function ensureCategoryRow(branch, categoryId, categoryName) {
 app.post("/api/admin/products", requireAdmin, async (req, res) => {
   try {
     const { branch, ...rest } = req.body || {};
-    // La sucursal sale de la SESIÓN: el branch_admin crea SIEMPRE en
-    // la suya (body.branch se ignora); el superadmin elige, pero
-    // tiene que existir de verdad (misma validación que antes).
+    // Branch isolation: branch_admin solo puede crear en SU sucursal
+    const isBranchAdmin = req.admin?.role === "branch_admin";
+    const bodyBranch = branch;
+    const adminBranch = req.admin?.branch;
+    const checkResult = { isBranchAdmin, bodyBranch, adminBranch, different: bodyBranch && bodyBranch !== adminBranch };
+    console.error('[DEBUG-PRODUCTS] CHECK:', checkResult);
+    if (isBranchAdmin && bodyBranch && bodyBranch !== adminBranch) {
+      console.error('[DEBUG-PRODUCTS] REJECTING - branch_admin tried to create in different branch:', { bodyBranch, adminBranch });
+      return res.status(403).json({ error: "No autorizado para esta sucursal", test: "REJECTED-v2", debug: checkResult });
+    }
+    // Always include debug info in response for testing
     const branchResult = effectiveBranch(req.admin, branch);
     if (branchResult.error) return res.status(400).json({ error: branchResult.error });
     const branchId = branchResult.branch;
+    // Add debug info to all responses for testing
+    res.setHeader('X-Debug-Check', JSON.stringify(checkResult));
     // Si no se manda categoryId pero sí categoryName, se genera el slug
     if (!rest.categoryId && rest.categoryName) {
       rest.categoryId = slugify(rest.categoryName);
@@ -3956,12 +3976,16 @@ function catScope(req) {
 
 app.post("/api/admin/categories", requireAdmin, async (req, res) => {
   try {
-    const { name } = req.body || {};
+    const { name, branch } = req.body || {};
     // La sucursal sale de la SESIÓN (igual que POST /products):
     // branch_admin → SIEMPRE la suya; superadmin → la del body.
-    const branchResult = effectiveBranch(req.admin, req.body?.branch);
+    const branchResult = effectiveBranch(req.admin, branch);
     if (branchResult.error) return res.status(400).json({ error: branchResult.error });
-    const branch = branchResult.branch;
+    // Si el branch_admin manda un branch distinto al de su sesión, rechazar
+    if (req.admin?.role === "branch_admin" && branch && branch !== req.admin.branch) {
+      return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    }
+    const branchId = branchResult.branch;
     const catName = String(name || "").trim();
     if (!catName || catName.length > 120) return res.status(400).json({ error: "Nombre de categoría inválido" });
     let catId = slugify(catName);
@@ -4160,9 +4184,13 @@ app.get("/api/admin/coupons", requireAdmin, async (req, res) => {
 
 app.post("/api/admin/coupons", requireAdmin, async (req, res) => {
   try {
-    const { code, type, value, minTotal, maxUses, active, expiresAt } = req.body || {};
-    const branch = couponBranchFor(req);
-    if (branch === null) return res.status(400).json({ error: "Sucursal inválida" });
+    const { code, type, value, minTotal, maxUses, active, expiresAt, branch } = req.body || {};
+    const branchResult = couponBranchFor(req);
+    if (branchResult === null) return res.status(400).json({ error: "Sucursal inválida" });
+    // Si el branch_admin manda un branch distinto al de su sesión, rechazar
+    if (req.admin?.role === "branch_admin" && branch && branch !== req.admin.branch) {
+      return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    }
     const cleanCode = String(code || "").trim().toUpperCase();
     if (!/^[A-Z0-9_-]{2,30}$/.test(cleanCode)) return res.status(400).json({ error: "Código de cupón inválido" });
     if (!["percent", "fixed"].includes(type)) return res.status(400).json({ error: "Tipo de cupón inválido" });
