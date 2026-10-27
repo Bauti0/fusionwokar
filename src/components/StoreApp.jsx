@@ -195,6 +195,21 @@ export default function StoreApp() {
 
   const cart = useCart(branchId || "none");
 
+  // Valida el carrito contra el menú actual al cargar este (cambio de sucursal,
+  // actualización de menú, etc.). Quita items de productos que ya no existen.
+  // Solo corre cuando cambian menu o branchId (no en cada render).
+  // Evita ejecutarse mientras menu es null (cargando) para no borrar el carrito por error.
+  useEffect(() => {
+    if (!menu) return; // esperando menú
+    if (cart.validateAgainstMenu) {
+      cart.validateAgainstMenu(menu, (removed) => {
+        if (removed > 0) {
+          setToast(`${removed} producto${removed > 1 ? "s" : ""} quitado${removed > 1 ? "s" : ""} del carrito (ya no están en el menú)`);
+        }
+      });
+    }
+  }, [menu, branchId]);
+
   // Cantidad por producto en el carrito: suma de TODAS las líneas del mismo
   // productId (extras o notas distintas cuentan igual). Va por props a <Menu>
   // para que cada tarjeta muestre cuántas unidades hay de ese plato.

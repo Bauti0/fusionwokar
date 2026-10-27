@@ -1411,31 +1411,15 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
     const demo = isDemoMode();
     const isMp = paymentMethod === "mercadopago";
 
-    // Reserva atómica del uso del cupón ANTES de cualquier await/insert:
-    // evita que dos checkouts simultáneos consuman el mismo cupón limitado.
-    // Primero se liberan reservas huérfanas de pedidos nunca pagados para que
-    // el cupo no se queme con pedidos en pending_payment abandonados, y de
-    // paso se cierran los que ya superaron las 24 h (BUG-08). OJO: acá solo se
-    // cancelan los pedidos SIN mp_order_id (CHECKOUT_EXPIRE_OPTIONS): el checkout
-    // no tiene barrido previo que confirme el estado real en MP, y un pendiente
-    // de 24 h puede ser un pago aprobado con el webhook perdido. Esos los
-    // cancela el timer, que barre antes de expirar (PAY-04).
+    // Libera reservas huérfanas y expira pagos abandonados ANTES de validar el cupón.
+    // Así el cupo disponible es real al momento de reservar.
     await releaseStaleCouponReservations(db);
     await expireAbandonedPayments(db, CHECKOUT_EXPIRE_OPTIONS);
-    let couponReserved = false;
-    if (couponCode) {
-      if (!(await reserveCoupon(db, couponCode, branch))) {
-        // El cupón se acaba de agotar, pero puede que lo haya agotado un request
-        // gemelo con la MISMA clave de idempotencia (dos tabs con el mismo
-        // intento). Antes de rechazar se re-consulta la clave: si el pedido ya
-        // está guardado, se lo devolvemos en vez de darle un 400 a un cliente
-        // que solo quiere recuperar lo que ya hizo.
-        if (await replayExistingOrder(req, res, { clientRequestId, fingerprint })) return;
-        warnOrder(ORDER_ROUTE, 400, { branch, orderMode, paymentMethod }, "El cupón ya no tiene usos disponibles");
-        return res.status(400).json({ error: "El cupón ya no tiene usos disponibles" });
-      }
-      couponReserved = true;
-    }
+    // NO reservamos el cupón acá: la reserva se hace DENTRO de la transacción
+    // del INSERT del pedido (ver insertOrderWithIdempotency). Así es atómico:
+    // o se crea el pedido Y se reserva el cupón, o no pasa nada (sin cupón
+    // quemado si falla el pedido).
+    let couponReserved = false; // se pone true dentro del batch si hay cupón
 
     const ts = now();
 
@@ -1472,7 +1456,7 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
           address,
           orderMode,
           paymentMethod,
-          isMp ? "pending" : "approved", // efectivo/transferencia pagan al recibir → se aprueba directo
+          isMp ? "pending" : "approved",
           isMp ? "pending_payment" : "received",
           JSON.stringify(items),
           total,
@@ -1483,14 +1467,26 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
           shipping.cost,
           shipping.blocks,
           shipping.pending ? 1 : 0,
-          // NULL cuando el cliente no mandó clave: el índice único es parcial
-          // sobre IS NOT NULL, así que todos los pedidos sin clave conviven.
           clientRequestId || null,
           fingerprint || null,
           ts,
           ts,
         ],
       },
+      // Reserva atómica del cupón DENTRO de la misma transacción:
+      // si el INSERT falla, la reserva se revierte automáticamente (no cupón quemado).
+      ...(couponCode
+        ? [
+            {
+              sql: `
+                UPDATE coupons SET used_count = used_count + 1, updated_at = ?
+                WHERE code = ? AND (branch = ? OR branch = '') AND active = 1
+                  AND (max_uses = 0 OR used_count < max_uses)
+              `,
+              args: [ts, couponCode, branch],
+            },
+          ]
+        : []),
       {
         // Número definitivo, derivado del id de la fila recién insertada
         sql: "UPDATE orders SET order_number = ? || printf('%05d', id), updated_at = ? WHERE id = last_insert_rowid()",
@@ -1508,13 +1504,14 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
     // reserva de cupón huérfana y la fila que otro request ya creó, sin insertar
     // ni reservar nada. Cualquier otro error se propaga al catch general, que
     // responde 500 como antes.
+    // couponReserved: false porque la reserva va DENTRO del batch (atómica).
     const outcome = await insertOrderWithIdempotency(db, {
       stmts,
       clientRequestId,
       fingerprint,
       couponCode,
       branch,
-      couponReserved,
+      couponReserved: false,
     });
     if (outcome.conflict) {
       warnOrder(
@@ -3345,8 +3342,7 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
     // INSERT del pedido + número definitivo (derivado del id real) + evento
     // "order_created" en UN solo batch atómico (sin carrera de MAX(id)+1).
     const tmpNumber = `tmp-${randomBytes(8).toString("hex")}`;
-    const results = await db.batch(
-      [
+    const batch = [
         {
           sql: `INSERT INTO orders
           (order_number, branch, customer_name, customer_phone, customer_email, customer_first_name, customer_last_name, address, order_mode,
@@ -3378,6 +3374,19 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
             ts,
           ],
         },
+        // Reserva atómica del cupón DENTRO de la transacción.
+        ...(couponCode
+          ? [
+              {
+                sql: `
+                  UPDATE coupons SET used_count = used_count + 1, updated_at = ?
+                  WHERE code = ? AND (branch = ? OR branch = '') AND active = 1
+                    AND (max_uses = 0 OR used_count < max_uses)
+                `,
+                args: [ts, couponCode, branch],
+              },
+            ]
+          : []),
         {
           // Número definitivo, derivado del id de la fila recién insertada
           sql: "UPDATE orders SET order_number = ? || printf('%05d', id), updated_at = ? WHERE id = last_insert_rowid()",
@@ -3387,9 +3396,8 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
           sql: "INSERT INTO events (type, branch, created_at) VALUES (?, ?, ?)",
           args: ["order_created", branch, ts],
         },
-      ],
-      "write"
-    );
+      ];
+      const results = await db.batch(batch, "write");
     const info = results[0];
     const orderId = Number(info.lastInsertRowid);
     const orderNumber = formatOrderNumber(orderId);

@@ -8,10 +8,40 @@ import { cartKey as makeCartKey } from "../utils/format.js";
 // El carrito se guarda por sucursal (clave fw.cart.<branchId>)
 // ============================================================
 
+// Valida y normaliza un item de carrito cargado de localStorage.
+// Devuelve null si el item tiene formato inválido.
+export function validateCartItem(item) {
+  if (!item || typeof item !== "object") return null;
+  if (!item.productId || !item.name || typeof item.unitPrice !== "number") return null;
+  if (!Number.isInteger(item.qty) || item.qty <= 0) return null;
+
+  // Normaliza arrays que pueden venir undefined de localStorage viejo
+  const extras = Array.isArray(item.extras) ? item.extras : [];
+  const options = Array.isArray(item.options) ? item.options : [];
+  const notes = typeof item.notes === "string" ? item.notes : "";
+  const image = typeof item.image === "string" ? item.image : "";
+
+  return {
+    key: item.key || "",
+    productId: item.productId,
+    name: item.name,
+    image,
+    unitPrice: item.unitPrice,
+    extras,
+    options,
+    notes,
+    qty: item.qty,
+  };
+}
+
 function load(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return fallback;
+    // Valida cada item y descarta los inválidos
+    return parsed.map(validateCartItem).filter(Boolean);
   } catch {
     return fallback;
   }
@@ -178,6 +208,33 @@ export default function useCart(branchId) {
     });
   }, []);
 
+  // Valida los items actuales contra el menú de la sucursal.
+  // Elimina items cuyo producto ya no existe y normaliza extras/options.
+  // Llama a onRemoved con la cantidad de items quitados (si hay callback).
+  const validateAgainstMenu = useCallback((menu, onRemoved) => {
+    if (!menu) return;
+    const flatMenu = [];
+    for (const cat of menu.categories) {
+      for (const group of cat.groups) {
+        for (const product of group.products) {
+          flatMenu.push(product.id);
+        }
+      }
+    }
+    const validIds = new Set(flatMenu);
+    setItems((prev) => {
+      const valid = prev.filter((it) => validIds.has(it.productId));
+      const removed = prev.length - valid.length;
+      if (removed > 0 && onRemoved) onRemoved(removed);
+      // Normaliza extras/options por si acaso
+      return valid.map((it) => ({
+        ...it,
+        extras: Array.isArray(it.extras) ? it.extras : [],
+        options: Array.isArray(it.options) ? it.options : [],
+      }));
+    });
+  }, []);
+
   return {
     items,
     addItem,
@@ -193,5 +250,6 @@ export default function useCart(branchId) {
     registerOrder,
     placeOrderWithNumber,
     repeatOrder,
+    validateAgainstMenu,
   };
 }
