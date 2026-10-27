@@ -50,17 +50,17 @@ export function toPublicOrder(row) {
     refunds: parseRefunds(row.refunds_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    seenAt: row.seen_at || null,
   };
 }
 
 // Proyección SIN datos personales para endpoints públicos
-// (tracking y polling). No expone nombre, teléfono, dirección ni notas.
+// (tracking y polling). No expone nombre, teléfono, dirección, notas ni sucursal.
 export function toPublicOrderPublic(row) {
   if (!row) return null;
   return {
     id: row.id,
     orderNumber: row.order_number,
-    branch: row.branch,
     orderMode: row.order_mode,
     paymentMethod: row.payment_method,
     paymentStatus: row.payment_status,

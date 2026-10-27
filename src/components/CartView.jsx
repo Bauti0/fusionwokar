@@ -9,7 +9,7 @@ import Tooltip from "./ui/Tooltip.jsx";
 // edición de cantidades, resumen de totales y botón al checkout.
 // ============================================================
 export default function CartView({ cart, branch, onCheckout, onBack }) {
-  const { items, updateQty, removeItem, subtotal, extrasTotal, total, count } = cart;
+  const { items = [], updateQty, removeItem, subtotal = 0, extrasTotal = 0, total = 0, count = 0 } = cart || {};
 
   // Bloquea el scroll de fondo mientras el drawer está abierto
   useEffect(() => {
@@ -27,7 +27,7 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
         <div className="drawer__head">
           <div>
             <h2 className="drawer__title">Tu pedido</h2>
-            <p className="drawer__branch">{branch.name}</p>
+            <p className="drawer__branch">{branch?.name || "Sucursal"}</p>
           </div>
           <button className="drawer__close" onClick={onBack} aria-label="Cerrar carrito">
             ✕
@@ -45,21 +45,24 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
             </div>
           ) : (
             <>
-              {items.map((item) => (
+              {items.map((item) => {
+                const extras = Array.isArray(item.extras) ? item.extras : [];
+                const options = Array.isArray(item.options) ? item.options : [];
+                return (
                 <div className="cart-item" key={item.key}>
                   {item.image && (
                     <img className="cart-item__thumb" src={item.image} alt="" />
                   )}
                   <div className="cart-item__info">
                     <p className="cart-item__name">{item.name}</p>
-                    {item.extras.length > 0 && (
+                    {extras.length > 0 && (
                       <p className="cart-item__extras">
-                        {item.extras.map((e) => `${e.label} (+${formatPrice(e.price)})`).join(", ")}
+                        {extras.map((e) => `${e.label} (+${formatPrice(e.price)})`).join(", ")}
                       </p>
                     )}
-                    {item.options.length > 0 && (
+                    {options.length > 0 && (
                       <p className="cart-item__extras">
-                        {item.options
+                        {options
                           .map((o) => `${o.label}${o.extraPrice > 0 ? ` (+${formatPrice(o.extraPrice)})` : ""}`)
                           .join(", ")}
                       </p>
@@ -103,7 +106,8 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
                     {formatPrice(lineTotal(item))}
                   </div>
                 </div>
-              ))}
+                );
+              })}
 
               <div className="summary">
                 <div className="summary__row">

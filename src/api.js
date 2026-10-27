@@ -202,6 +202,12 @@ export function adminOrderAudit(id) {
   return request(`/api/admin/orders/${id}/audit`);
 }
 
+// Marca un pedido como visto por un admin (para controlar aviso sonoro).
+// Persistido en BD, compartido entre admins y dispositivos.
+export function adminSetSeen(id) {
+  return request(`/api/admin/orders/${id}/seen`, { method: "POST" });
+}
+
 export function adminSetStatus(id, status) {
   return request(`/api/admin/orders/${id}/status`, {
     method: "PATCH",

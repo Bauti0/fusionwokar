@@ -417,9 +417,15 @@ app.use("/api", (req, res, next) => {
 //     leer esa cookie (same-origin policy): cubre DNS rebinding y peticiones
 //     cross-site sin Origin, aunque el Host coincida con el nuestro.
 // /api/admin/login queda exento: el primer login todavía no tiene cookie CSRF.
+// Requests con Authorization: Bearer <token> están exentos de CSRF: son
+// llamadas headless (scripts, curl) que no usan cookies y no están expuestas
+// a ataques CSRF basados en navegador. El chequeo de Origin se mantiene.
 app.use("/api/admin", (req, res, next) => {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
   if (req.originalUrl === "/api/admin/login") return next();
+  // Eximir Bearer token del check CSRF (el chequeo de Origin se mantiene)
+  const auth = req.headers.authorization || "";
+  const isBearer = auth.startsWith("Bearer ");
   const origin = req.headers.origin;
   if (origin) {
     let allowed = false;
@@ -444,11 +450,13 @@ app.use("/api/admin", (req, res, next) => {
     }
     if (!allowed) return res.status(403).json({ error: "Origen no permitido" });
   }
-  // Doble cookie CSRF: header debe igualar la cookie emitida en el login.
-  const cookieToken = readCookie(req, "fw_admin_csrf");
-  const headerToken = String(req.headers["x-csrf-token"] || "").trim();
-  if (!cookieToken || !headerToken || !safeEqual(cookieToken, headerToken)) {
-    return res.status(403).json({ error: "Token CSRF inválido" });
+  // Doble cookie CSRF: solo para autenticación por cookie (no Bearer).
+  if (!isBearer) {
+    const cookieToken = readCookie(req, "fw_admin_csrf");
+    const headerToken = String(req.headers["x-csrf-token"] || "").trim();
+    if (!cookieToken || !headerToken || !safeEqual(cookieToken, headerToken)) {
+      return res.status(403).json({ error: "Token CSRF inválido" });
+    }
   }
   return next();
 });
@@ -489,6 +497,25 @@ const TOKEN_TTL_MS = Number(process.env.ADMIN_TOKEN_TTL_MS || 24 * 3600 * 1000);
 function paramId(value) {
   const s = String(value || "").trim();
   return /^\d+$/.test(s) ? Number(s) : NaN;
+}
+
+// Valida parámetros de búsqueda y filtro de sucursal en endpoints admin.
+// Limita longitud y formato para evitar entradas anómalas (no es anti-SQLi:
+// las queries ya usan prepared statements). Devuelve { error } o { search, branch }.
+function validateAdminQueryParams(query) {
+  const search = typeof query.search === "string" ? query.search.trim() : "";
+  const branch = typeof query.branch === "string" ? query.branch.trim() : "";
+  if (search && search.length > 100) {
+    return { error: "Búsqueda demasiado larga (máx. 100 caracteres)" };
+  }
+  // search: solo alfanumérico, espacios, guiones, puntos, @, # (comunes en teléfonos/emails/números de pedido)
+  if (search && !/^[A-Za-z0-9\s@.#_-]+$/.test(search)) {
+    return { error: "Búsqueda con caracteres no permitidos" };
+  }
+  if (branch && !["necochea", "tandil"].includes(branch)) {
+    return { error: "Sucursal inválida" };
+  }
+  return { search: search || undefined, branch: branch || undefined };
 }
 
 // Carpeta de imágenes de producto (servida como /uploads)
@@ -1983,7 +2010,7 @@ app.get("/api/orders/:id", rateLimit({ max: 120, windowMs: 60000, name: "orderge
 });
 
 // Tracking del cliente por número de pedido (FW-00001)
-app.get("/api/orders/number/:orderNumber", rateLimit({ max: 120, windowMs: 60000, name: "ordernum" }), async (req, res) => {
+app.get("/api/orders/number/:orderNumber", rateLimit({ max: 10, windowMs: 60000, name: "ordernum" }), async (req, res) => {
   try {
     const num = String(req.params.orderNumber || "").trim().toUpperCase();
     if (!/^FW-\d{4,10}$/.test(num)) return res.status(400).json({ error: "Número de pedido inválido" });
@@ -2448,14 +2475,16 @@ function adminScope(req) {
 // Listado de pedidos para el admin (con filtros, búsqueda y paginación)
 app.get("/api/admin/orders", requireAdmin, async (req, res) => {
   try {
+    const validation = validateAdminQueryParams(req.query);
+    if (validation.error) return res.status(400).json({ error: validation.error });
     const { search, status, payment, includePending } = req.query;
     const scope = adminScope(req);
     // El ?branch= del query es el filtro del panel del superadmin;
     // para el branch_admin se ignora (listOrders no lo recibe).
     const { rows, total, page, limit, hasMore } = await listOrders(db, {
       scope,
-      branch: scope ? undefined : req.query.branch,
-      search,
+      branch: scope ? undefined : validation.branch,
+      search: validation.search,
       status,
       payment,
       includePending,
@@ -2785,6 +2814,26 @@ app.get("/api/admin/orders/:id/audit", requireAdmin, async (req, res) => {
   }
 });
 
+// ---------- marcar pedido como visto (para aviso sonoro) ----------
+// Actualiza seen_at con la hora actual. Idempotente: si ya estaba visto,
+// no hace nada y devuelve ok=true.
+app.post("/api/admin/orders/:id/seen", requireAdmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+    const scope = adminScope(req);
+    const row = await getOrderScoped(db, id, scope);
+    if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (!row.seen_at) {
+      await db.prepare("UPDATE orders SET seen_at = ?, updated_at = ? WHERE id = ?").run(now(), now(), id);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /api/admin/orders/:id/seen:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
 // ---------- estadísticas (panel admin) ----------
 // "Venta neta" = total de pedidos confirmados/pagados (payment_status approved
 // y status distinto de cancelled), evitando cancelados y pagos rechazados.
@@ -2816,12 +2865,14 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
 // el superadmin conserva su filtro ?branch= del panel.
 app.get("/api/admin/customers", requireAdmin, async (req, res) => {
   try {
+    const validation = validateAdminQueryParams(req.query);
+    if (validation.error) return res.status(400).json({ error: validation.error });
     const { search } = req.query;
     const scope = adminScope(req);
     const customers = await listCustomers(db, {
       scope,
-      branch: scope ? undefined : req.query.branch,
-      search,
+      branch: scope ? undefined : validation.branch,
+      search: validation.search,
     });
     res.json({ customers, total: customers.length });
   } catch (err) {

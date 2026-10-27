@@ -294,6 +294,11 @@ await ensureColumn("orders", "refunds_json", "refunds_json TEXT NOT NULL DEFAULT
 // DESPUÉS de agregar las columnas (sino falla en la DB vieja).
 await ensureColumn("orders", "client_request_id", "client_request_id TEXT");
 await ensureColumn("orders", "client_request_fingerprint", "client_request_fingerprint TEXT");
+
+// Timestamp de cuando un admin vio el pedido (para sonar aviso solo en pedidos
+// no vistos). NULL = no visto aún. Persistido en BD para compartir entre admins
+// y sobrevivir a limpiezas de caché.
+await ensureColumn("orders", "seen_at", "seen_at TEXT");
 try {
   await db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_client_request

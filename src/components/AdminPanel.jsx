@@ -12,6 +12,7 @@ import {
   adminStats,
   adminBranchPause,
   adminSetBranchPause,
+  adminSetSeen,
   shippingQuote,
 } from "../api.js";
 import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
@@ -26,7 +27,7 @@ import {
 import { formatPrice } from "../utils/format.js";
 import { previewOrderEdit, formatAuditEdits } from "../utils/orderEdit.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
-import { playNewOrderChime } from "../utils/notifySound.js";
+import { playNewOrderChime, startNewOrderLoop, stopNewOrderLoop } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 import { IconEmptySearch, IconRepeat, IconPlus, IconLocation } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
@@ -100,21 +101,6 @@ function isActiveOrder(o) {
 // al hacer el build; el "?" es el fallback cuando no se pudo leer el hash
 // (build sin la carpeta .git) y en ese caso no se dibuja nada.
 const BUILD_COMMIT = typeof __APP_COMMIT__ === "undefined" ? "?" : __APP_COMMIT__;
-
-// IDs ya vistos por el admin, persistidos para no repetir el sonido
-// en cada recarga de la página.
-const SEEN_KEY = "fw.admin.seenOrders";
-function loadSeen() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || "[]"));
-  } catch {
-    return new Set();
-  }
-}
-function saveSeen(set) {
-  const arr = Array.from(set).slice(-400); // acotado, no crece sin límite
-  localStorage.setItem(SEEN_KEY, JSON.stringify(arr));
-}
 
 function LiveClock() {
   const [now, setNow] = useState(() => new Date());
@@ -212,7 +198,6 @@ export default function AdminPanel({ me, onLogout }) {
   // Se reinicia al abrir cada pedido para no heredar la tab de otro.
   const [detailTab, setDetailTab] = useState("pedido");
   const pageRef = useRef(1);
-  const seenRef = useRef(loadSeen());
   const [unseenIds, setUnseenIds] = useState(() => new Set());
   const [today, setToday] = useState(null);
   // ---------- pausa de pedidos por sucursal ----------
@@ -354,40 +339,68 @@ export default function AdminPanel({ me, onLogout }) {
   }, [selected?.id, me?.role, auditTick]);
 
   // Detecta pedidos "en curso" nuevos (no vistos todavía) y suena un
-  // aviso corto. No suena en la primera carga de la página, solo
-  // cuando aparece uno realmente nuevo durante la sesión.
+  // aviso en loop hasta que se marque como visto.
+  // - En la primera carga: si hay pedidos sin ver (seenAt == null), suena.
+  // - En cargas posteriores: suena solo si aparecen pedidos NUEVOS durante la sesión.
   const loadedOnceRef = useRef(false);
   const prevNotSeenRef = useRef(new Set());
+  const loopActiveRef = useRef(false);
   useEffect(() => {
-    const activeIds = orders.filter(isActiveOrder).map((o) => o.id);
-    const notSeen = activeIds.filter((id) => !seenRef.current.has(id));
+    const activeOrders = orders.filter(isActiveOrder);
+    const notSeen = activeOrders.filter((o) => !o.seenAt).map((o) => o.id);
     const isNew = notSeen.some((id) => !prevNotSeenRef.current.has(id));
-    // El sonido se dispara FUERA del setState (un updater de React puede
-    // ejecutarse dos veces en StrictMode y sonar de más) y solo cuando aparece
-    // un pedido nuevo durante la sesión, no en la primera carga.
-    if (loadedOnceRef.current && isNew) setTimeout(playNewOrderChime, 0);
+
+    // Primera carga: si hay pedidos sin ver, arrancar loop
+    if (!loadedOnceRef.current && notSeen.length > 0 && !loopActiveRef.current) {
+      loopActiveRef.current = true;
+      setTimeout(startNewOrderLoop, 0);
+    }
+    // Cargas posteriores: solo si aparecen pedidos nuevos
+    if (loadedOnceRef.current && isNew && !loopActiveRef.current) {
+      loopActiveRef.current = true;
+      setTimeout(startNewOrderLoop, 0);
+    }
+
+    // Si ya no hay pedidos sin ver, detener el loop
+    if (loopActiveRef.current && notSeen.length === 0) {
+      loopActiveRef.current = false;
+      stopNewOrderLoop();
+    }
+
     prevNotSeenRef.current = new Set(notSeen);
     setUnseenIds(new Set(notSeen));
     if (orders.length > 0) loadedOnceRef.current = true;
   }, [orders]);
 
-  function markSeen(id) {
-    if (!seenRef.current.has(id)) {
-      seenRef.current.add(id);
-      saveSeen(seenRef.current);
-    }
+  async function markSeen(id) {
+    // Llamada al server para marcar como visto (idempotente)
+    await adminSetSeen(id);
     setUnseenIds((prev) => {
       if (!prev.has(id)) return prev;
       const next = new Set(prev);
       next.delete(id);
+      // Si ya no quedan pedidos sin ver, detener el loop de inmediato
+      if (next.size === 0 && loopActiveRef.current) {
+        loopActiveRef.current = false;
+        stopNewOrderLoop();
+      }
       return next;
     });
+    // Refrescar la lista para que seenAt se actualice en el próximo polling
+    load({ showSpinner: false });
   }
 
-  function markAllSeen() {
-    orders.filter(isActiveOrder).forEach((o) => seenRef.current.add(o.id));
-    saveSeen(seenRef.current);
+  async function markAllSeen() {
+    const activeOrders = orders.filter(isActiveOrder);
+    for (const o of activeOrders) {
+      if (!o.seenAt) await adminSetSeen(o.id);
+    }
     setUnseenIds(new Set());
+    if (loopActiveRef.current) {
+      loopActiveRef.current = false;
+      stopNewOrderLoop();
+    }
+    load({ showSpinner: false });
   }
 
   // Búsqueda sin debounce: al cambiar cualquier filtro (incluida la búsqueda)
