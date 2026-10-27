@@ -1,5 +1,5 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
-import { adminSales, adminCashRegister, adminOpenCashRegister, adminCloseCashRegister, adminCorrectCashRegister, adminCashCorrections, adminDeleteCashRegister, adminDeletedCashRegisters } from "../api.js";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { adminSales, adminCashRegister, adminOpenCashRegister, adminCloseCashRegister, adminCorrectCashRegister, adminCashCorrections, adminDeleteCashRegister, adminDeletedCashRegisters, adminExpenses, adminCreateExpense, adminUpdateExpense, adminDeleteExpense } from "../api.js";
 import { BRANCH_LIST, BRANCHES } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
 import { periodRange, dayShort, dayLabel, dateShort, dateTimeShort, isToday } from "../utils/dates.js";
@@ -8,6 +8,10 @@ import DateRangePicker from "./ui/DateRangePicker.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import useDialogA11y from "../hooks/useDialogA11y.js";
+import {
+  IconPlus, IconCash, IconBank, IconCard, IconCheck, IconX,
+  IconEdit, IconTrash, IconRefresh, IconInfo, IconAlertCircle
+} from "./ui/icons.jsx";
 
 const PERIODS = [
   { id: "today", label: "Hoy" },
@@ -204,6 +208,36 @@ function CashRegister({ branch, me }) {
   // Cajas anuladas: SOLO las pide el superadmin (el branch_admin ni hace la
   // llamada, el server le daría 403).
   const [anuladas, setAnuladas] = useState(null);
+  // Gastos de la caja: lista, formulario, edición
+  const [expenses, setExpenses] = useState([]);
+  const [expensesLoading, setExpensesLoading] = useState(false);
+  const [expenseForm, setExpenseForm] = useState({ amount: "", concept: "", category: "", payment_method: "cash" });
+  const [expenseFormError, setExpenseFormError] = useState("");
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [editForm, setEditForm] = useState({ amount: "", concept: "", category: "", payment_method: "cash" });
+  const [editFormError, setEditFormError] = useState("");
+  const [deletingExpense, setDeletingExpense] = useState(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  // UI state para diseño mejorado
+  const [showExpenseForm, setShowExpenseForm] = useState(false);
+  const [prevExpectedNow, setPrevExpectedNow] = useState(null);
+  const [highlightExpected, setHighlightExpected] = useState(false);
+
+  const CATEGORY_CHIPS = [
+    { value: "Insumos", label: "Insumos" },
+    { value: "Servicios", label: "Servicios" },
+    { value: "Personal", label: "Personal" },
+    { value: "Delivery", label: "Delivery" },
+    { value: "Mantenimiento", label: "Mantenimiento" },
+    { value: "Otros", label: "Otros" },
+  ];
+
+  const PAYMENT_OPTIONS = [
+    { value: "cash", label: "Efectivo", icon: <IconCash /> },
+    { value: "transfer", label: "Transferencia", icon: <IconBank /> },
+    { value: "card", label: "Tarjeta", icon: <IconCard /> },
+    { value: "other", label: "Otro", icon: <IconAlertCircle /> },
+  ];
 
   const load = useCallback(async () => {
     try {
@@ -214,6 +248,38 @@ function CashRegister({ branch, me }) {
       setError(err.message);
     }
   }, [branch]);
+
+  // Cargar gastos de la caja (abierta o la última cerrada del historial)
+  const loadExpenses = useCallback(async () => {
+    if (!data) return;
+    // Usar la caja abierta si hay, sino la primera del historial (la más reciente cerrada)
+    const cashId = data.open?.id || (data.history[0]?.id || null);
+    if (!cashId) {
+      setExpenses([]);
+      return;
+    }
+    setExpensesLoading(true);
+    try {
+      const d = await adminExpenses({ from: data.open?.openedAt || data.history[0]?.openedAt, to: new Date().toISOString() });
+      // Filtrar solo los de esta caja
+      const filtered = d.expenses?.filter((e) => e.cash_register_id === cashId && !e.deleted_at) || [];
+      setExpenses(filtered);
+    } catch (err) {
+      setExpenses([]);
+    } finally {
+      setExpensesLoading(false);
+    }
+  }, [data]);
+
+  // Disparar animación cuando expectedNow cambia
+  useEffect(() => {
+    if (data?.open?.expectedNow !== undefined && prevExpectedNow !== null && prevExpectedNow !== data.open.expectedNow) {
+      setHighlightExpected(true);
+      const t = setTimeout(() => setHighlightExpected(false), 900);
+      return () => clearTimeout(t);
+    }
+    setPrevExpectedNow(data?.open?.expectedNow ?? null);
+  }, [data?.open?.expectedNow, prevExpectedNow]);
 
   // Historial de anulaciones (global, no por sucursal de la vista).
   const loadAnuladas = useCallback(async () => {
@@ -245,6 +311,10 @@ function CashRegister({ branch, me }) {
     }, 20000);
     return () => clearInterval(t);
   }, [load, loadAnuladas]);
+
+  useEffect(() => {
+    loadExpenses();
+  }, [loadExpenses]);
 
   async function handleOpen(e) {
     e.preventDefault();
@@ -299,6 +369,130 @@ function CashRegister({ branch, me }) {
     }
   }
 
+  // ============ GASTOS ============
+  async function handleCreateExpense(e) {
+    e.preventDefault();
+    setExpenseFormError("");
+    const amount = Number(expenseForm.amount);
+    if (!Number.isInteger(amount) || amount <= 0 || amount > 10000000) {
+      setExpenseFormError("Monto inválido (entero 1..10.000.000)");
+      return;
+    }
+    if (!expenseForm.concept.trim()) {
+      setExpenseFormError("El concepto es obligatorio");
+      return;
+    }
+    if (expenseForm.concept.length > 200) {
+      setExpenseFormError("Concepto máximo 200 caracteres");
+      return;
+    }
+    if (expenseForm.category && expenseForm.category.length > 100) {
+      setExpenseFormError("Categoría máxima 100 caracteres");
+      return;
+    }
+    setBusy(true);
+    try {
+      await adminCreateExpense({
+        amount,
+        concept: expenseForm.concept.trim(),
+        category: expenseForm.category?.trim() || null,
+        payment_method: expenseForm.payment_method,
+      });
+      setExpenseForm({ amount: "", concept: "", category: "", payment_method: "cash" });
+      setShowExpenseForm(false);
+      await loadExpenses();
+      // Refrescar la caja para ver el expectedNow actualizado
+      await load();
+    } catch (err) {
+      setExpenseFormError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startEditExpense(expense) {
+    setEditingExpense(expense);
+    setShowExpenseForm(true);
+    setEditForm({
+      amount: String(expense.amount),
+      concept: expense.concept,
+      category: expense.category || "",
+      payment_method: expense.payment_method,
+    });
+    setEditFormError("");
+  }
+
+  function cancelExpenseForm() {
+    setEditingExpense(null);
+    setShowExpenseForm(false);
+    setExpenseForm({ amount: "", concept: "", category: "", payment_method: "cash" });
+    setEditForm({ amount: "", concept: "", category: "", payment_method: "cash" });
+    setExpenseFormError("");
+    setEditFormError("");
+  }
+
+  async function handleUpdateExpense(e) {
+    e.preventDefault();
+    if (!editingExpense) return;
+    setEditFormError("");
+    const amount = Number(editForm.amount);
+    if (!Number.isInteger(amount) || amount <= 0 || amount > 10000000) {
+      setEditFormError("Monto inválido (entero 1..10.000.000)");
+      return;
+    }
+    if (!editForm.concept.trim()) {
+      setEditFormError("El concepto es obligatorio");
+      return;
+    }
+    if (editForm.concept.length > 200) {
+      setEditFormError("Concepto máximo 200 caracteres");
+      return;
+    }
+    if (editForm.category && editForm.category.length > 100) {
+      setEditFormError("Categoría máxima 100 caracteres");
+      return;
+    }
+    setBusy(true);
+    try {
+      await adminUpdateExpense(editingExpense.id, {
+        amount,
+        concept: editForm.concept.trim(),
+        category: editForm.category?.trim() || null,
+        payment_method: editForm.payment_method,
+      });
+      setEditingExpense(null);
+      await loadExpenses();
+      await load(); // refrescar expectedNow
+    } catch (err) {
+      setEditFormError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startDeleteExpense(expense) {
+    setDeletingExpense(expense);
+    setDeleteReason("");
+  }
+
+  function cancelDeleteExpense() {
+    setDeletingExpense(null);
+    setDeleteReason("");
+  }
+
+  async function confirmDeleteExpense(e) {
+    e.preventDefault();
+    if (!deletingExpense) return;
+    const reason = deleteReason.trim();
+    if (reason.length < 5) {
+      throw new Error("Motivo obligatorio (mínimo 5 caracteres)");
+    }
+    await adminDeleteExpense(deletingExpense.id, reason);
+    setDeletingExpense(null);
+    await loadExpenses();
+    await load();
+  }
+
   // Historial de correcciones de UN cierre: solo el superadmin tiene el
   // disparador, así que el branch_admin nunca hace esta llamada (403).
   async function toggleCorrecciones(id) {
@@ -333,15 +527,23 @@ function CashRegister({ branch, me }) {
   }
 
   // El server NO manda el efectivo cobrado como campo: manda `expectedNow`,
-  // que ya es apertura + cobrado (server/admin-queries.js). La diferencia es
-  // exactamente ese monto, sin recalcular nada. Si no hay caja abierta el
-  // cálculo no se hace.
+  // que ya es apertura + ventas - gastos (server/admin-queries.js).
+  // Para mostrar el desglose correcto: calculamos gastos en efectivo del frontend
+  // y derivamos "Efectivo cobrado" = expectedNow - apertura + gastos.
+  const gastosEfectivo = expenses.reduce((s, e) => e.payment_method === "cash" ? s + e.amount : s, 0);
   const cobrado = Number.isFinite(data.open?.expectedNow)
-    ? data.open.expectedNow - data.open.openingAmount
+    ? data.open.expectedNow - data.open.openingAmount + gastosEfectivo
     : 0;
   // Cierre elegido para imprimir: SIEMPRE desde data.history (los datos que
   // están en pantalla ahora), nunca una copia guardada al hacer click.
   const cierreAImprimir = print ? data.history.find((h) => h.id === print.cashId) : null;
+
+  // Determinar si mostrar gastos: siempre que haya una caja (abierta o cerrada en historial)
+  const cashIdForExpenses = data.open?.id || data.history[0]?.id;
+  const hasCashRegister = !!cashIdForExpenses;
+  // Si la caja está cerrada, usar la fecha de cierre como límite; si está abierta, now
+  const cashOpenedAt = data.open?.openedAt || data.history[0]?.openedAt;
+  const cashClosedAt = data.open ? null : data.history[0]?.closedAt;
 
   return (
     <div className="cash-register">
@@ -350,7 +552,11 @@ function CashRegister({ branch, me }) {
 
       {!data.open ? (
         <form className="cash-register__open" onSubmit={handleOpen}>
-          <p className="hint">No hay una caja abierta en esta sucursal.</p>
+          <div className="cash-register__no-open">
+            <IconAlertCircle className="cash-register__no-open-icon" />
+            <p className="cash-register__no-open-title">No hay una caja abierta en esta sucursal</p>
+            <p className="cash-register__no-open-hint">Abrí la caja para cargar gastos en efectivo</p>
+          </div>
           <div className="field">
             <label htmlFor="opening-amount">Monto inicial</label>
             <input
@@ -368,8 +574,7 @@ function CashRegister({ branch, me }) {
         </form>
       ) : (
         <div className="cash-register__open-state">
-          {/* La cuenta de la caja: apertura + cobrado = esperado ahora. Los
-              signos "+" y "=" van por CSS (::before) y el total en rojo. */}
+          {/* La cuenta de la caja: apertura + cobrado - gastos = esperado ahora. */}
           <div className="cash-register__ledger">
             <div className="cash-register__row">
               <span>Apertura</span>
@@ -379,13 +584,272 @@ function CashRegister({ branch, me }) {
               <span>Efectivo cobrado</span>
               <strong>{formatPrice(cobrado)}</strong>
             </div>
-            <div className="cash-register__row cash-register__row--highlight cash-register__row--total">
+            {/* Gastos en efectivo */}
+            <div className="cash-register__row cash-register__row--subtract">
+              <span>Gastos en efectivo</span>
+              <strong>−{formatPrice(expenses.reduce((s, e) => e.payment_method === "cash" ? s + e.amount : s, 0))}</strong>
+            </div>
+            <div className={`cash-register__row cash-register__row--highlight cash-register__row--total${highlightExpected ? " is-highlighted" : ""}`}>
               <span>Esperado ahora</span>
               <strong>{formatPrice(data.open.expectedNow)}</strong>
             </div>
           </div>
 
           <p className="cash-register__since">Caja abierta desde {dateTimeShort(data.open.openedAt)}</p>
+
+          {/* ============ SECCIÓN GASTOS ============ */}
+          <div className="cash-register__expenses">
+            <div className="cash-register__expenses-header">
+              <h5>💸 Gastos de esta caja</h5>
+              {expenses.length > 0 && (
+                <div className="cash-register__expenses-total">
+                  <span className="cash-register__expenses-total-label">Total gastos en efectivo:</span>
+                  <strong className="cash-register__expenses-total-amount">−{formatPrice(expenses.reduce((s, e) => e.payment_method === "cash" ? s + e.amount : s, 0))}</strong>
+                  <span className="cash-register__expenses-count">({expenses.length} {expenses.length === 1 ? "gasto" : "gastos"})</span>
+                </div>
+              )}
+            </div>
+
+            {expensesLoading && <p className="hint cash-register__loading">Cargando gastos…</p>}
+
+            {/* Estado vacío */}
+            {!expensesLoading && expenses.length === 0 && (
+              <div className="cash-register__expenses-empty">
+                <IconInfo className="cash-register__empty-icon" />
+                <p className="cash-register__empty-title">Todavía no hay gastos en esta caja</p>
+                <p className="cash-register__empty-hint">Los gastos en efectivo se descuentan del efectivo esperado</p>
+              </div>
+            )}
+
+            {/* Botón para abrir formulario (cuando no se está editando ni eliminando) */}
+            {!editingExpense && !deletingExpense && !showExpenseForm && (
+              <button
+                type="button"
+                className="btn btn--ghost btn--block cash-register__add-expense-btn"
+                onClick={() => setShowExpenseForm(true)}
+                disabled={busy}
+              >
+                <IconPlus className="cash-register__add-icon" /> Nuevo gasto
+              </button>
+            )}
+
+            {/* Formulario colapsable para AGREGAR/EDITAR gasto */}
+            {(showExpenseForm || editingExpense) && (
+              <form className="cash-register__expense-form" onSubmit={editingExpense ? handleUpdateExpense : handleCreateExpense}>
+                {(editingExpense ? editFormError : expenseFormError) && (
+                  <div className="form-error">{editingExpense ? editFormError : expenseFormError}</div>
+                )}
+
+                {editingExpense && (
+                  <p className="cash-register__editing-hint">
+                    Editando: <strong>{editingExpense.concept}</strong> ({formatPrice(editingExpense.amount)})
+                  </p>
+                )}
+
+                <div className="cash-register__form-row">
+                  <div className="cash-register__field cash-register__field--amount">
+                    <label htmlFor={editingExpense ? "edit-expense-amount" : "expense-amount"} className="cash-register__label">
+                      Monto <span className="cash-register__required">*</span>
+                    </label>
+                    <div className="cash-register__amount-input">
+                      <span className="cash-register__currency" aria-hidden="true">$</span>
+                      <input
+                        id={editingExpense ? "edit-expense-amount" : "expense-amount"}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={8}
+                        placeholder="5.000"
+                        value={editingExpense ? editForm.amount : expenseForm.amount}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, "");
+                          if (editingExpense) {
+                            setEditForm({ ...editForm, amount: val });
+                          } else {
+                            setExpenseForm({ ...expenseForm, amount: val });
+                          }
+                        }}
+                        onBlur={(e) => {
+                          // Formatear con miles al perder foco
+                          const val = e.target.value.replace(/\D/g, "");
+                          if (val) {
+                            const formatted = Number(val).toLocaleString("es-AR");
+                            if (editingExpense) {
+                              setEditForm({ ...editForm, amount: val });
+                            } else {
+                              setExpenseForm({ ...expenseForm, amount: val });
+                            }
+                          }
+                        }}
+                        disabled={busy}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="cash-register__field cash-register__field--payment">
+                    <label htmlFor={editingExpense ? "edit-expense-payment" : "expense-payment"} className="cash-register__label">
+                      Medio de pago <span className="cash-register__required">*</span>
+                    </label>
+                    <Dropdown
+                      value={editingExpense ? editForm.payment_method : expenseForm.payment_method}
+                      onChange={(v) => editingExpense
+                        ? setEditForm({ ...editForm, payment_method: v })
+                        : setExpenseForm({ ...expenseForm, payment_method: v })}
+                      options={PAYMENT_OPTIONS.map((o) => ({ value: o.value, label: <span><o.icon style={{width:18,height:18,marginRight:8}} /> {o.label}</span> }))}
+                      placeholder="Elegí medio de pago"
+                      disabled={busy}
+                      ariaLabel="Medio de pago"
+                    />
+                  </div>
+                </div>
+
+                <div className="cash-register__field cash-register__field--concept">
+                  <label htmlFor={editingExpense ? "edit-expense-concept" : "expense-concept"} className="cash-register__label">
+                    Concepto <span className="cash-register__required">*</span>
+                  </label>
+                  <input
+                    id={editingExpense ? "edit-expense-concept" : "expense-concept"}
+                    type="text"
+                    maxLength="200"
+                    placeholder="Ej: Compra insumos, pago proveedor…"
+                    value={editingExpense ? editForm.concept : expenseForm.concept}
+                    onChange={(e) => editingExpense
+                      ? setEditForm({ ...editForm, concept: e.target.value })
+                      : setExpenseForm({ ...expenseForm, concept: e.target.value })}
+                    disabled={busy}
+                  />
+                </div>
+
+                <div className="cash-register__field cash-register__field--category">
+                  <label className="cash-register__label">Categoría (opcional)</label>
+                  <div className="cash-register__category-chips">
+                    {CATEGORY_CHIPS.map((chip) => {
+                      const isActive = editingExpense
+                        ? editForm.category === chip.value
+                        : expenseForm.category === chip.value;
+                      return (
+                        <button
+                          key={chip.value}
+                          type="button"
+                          className={`cash-register__chip${isActive ? " is-active" : ""}`}
+                          onClick={() => editingExpense
+                            ? setEditForm({ ...editForm, category: isActive ? "" : chip.value })
+                            : setExpenseForm({ ...expenseForm, category: isActive ? "" : chip.value })}
+                          disabled={busy}
+                        >
+                          {chip.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="hidden"
+                    value={editingExpense ? editForm.category : expenseForm.category}
+                  />
+                </div>
+
+                <div className="cash-register__form-actions">
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--block"
+                    onClick={cancelExpenseForm}
+                    disabled={busy}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn--primary btn--block"
+                    disabled={busy || !((editingExpense ? editForm : expenseForm).amount) || !((editingExpense ? editForm : expenseForm).concept?.trim())}
+                  >
+                    {busy ? "Guardando…" : (editingExpense ? "Guardar cambios" : "Agregar gasto")}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Confirmar ELIMINAR gasto */}
+            {deletingExpense && (
+              <ConfirmModal
+                variant="danger"
+                title="Eliminar gasto"
+                message={
+                  <>
+                    Vas a eliminar el gasto <strong>{deletingExpense.concept}</strong> ({formatPrice(deletingExpense.amount)}){" "}
+                    {deletingExpense.payment_method === "cash" ? "en efectivo" : `por ${deletingExpense.payment_method}`}.
+                    {deletingExpense.cash_register_id && data.open && (
+                      <>
+                        {" "}
+                        <strong>La caja está abierta:</strong> se descontará del esperado ahora.
+                      </>
+                    )}
+                    {deletingExpense.cash_register_id && !data.open && (
+                      <>
+                        {" "}
+                        <strong>La caja está cerrada:</strong> el servidor recalculará expected/difference y auditará el cambio.
+                      </>
+                    )}
+                  </>
+                }
+                confirmText="Eliminar"
+                onConfirm={confirmDeleteExpense}
+                onClose={cancelDeleteExpense}
+              >
+                <div className="field">
+                  <label htmlFor="delete-expense-reason">Motivo (obligatorio, min 5 caracteres)</label>
+                  <textarea
+                    id="delete-expense-reason"
+                    rows={2}
+                    value={deleteReason}
+                    onChange={(e) => setDeleteReason(e.target.value)}
+                    placeholder="Ej: se cargó por error, no correspondía"
+                  />
+                </div>
+              </ConfirmModal>
+            )}
+
+            {/* Lista de gastos */}
+            {!expensesLoading && expenses.length > 0 && (
+              <div className="cash-register__expense-list">
+                {expenses.map((expense) => (
+                  <div className="cash-register__expense-item" key={expense.id}>
+                    <div className="cash-register__expense-main">
+                      <span className="cash-register__expense-concept">{expense.concept}</span>
+                    </div>
+                    <div className="cash-register__expense-meta">
+                      {expense.category && <span className="cash-register__category-chip">{expense.category}</span>}
+                      <span className="hint">{dateTimeShort(expense.created_at)}</span>
+                    </div>
+                    <div className="cash-register__expense-side">
+                      <span className={`cash-register__expense-amount ${expense.payment_method === "cash" ? "is-cash" : "is-other"}`}>
+                        {expense.payment_method === "cash" ? "−" : ""}{formatPrice(expense.amount)}
+                        {expense.payment_method !== "cash" && <span className="cash-register__no-affect">no afecta caja</span>}
+                      </span>
+                      <div className="cash-register__expense-actions">
+                        <button
+                          className="icon-btn cash-register__action-btn"
+                          onClick={() => startEditExpense(expense)}
+                          disabled={busy}
+                          aria-label={`Editar gasto: ${expense.concept}`}
+                        >
+                          <IconEdit />
+                        </button>
+                        <button
+                          className="icon-btn cash-register__action-btn"
+                          onClick={() => startDeleteExpense(expense)}
+                          disabled={busy}
+                          aria-label={`Eliminar gasto: ${expense.concept}`}
+                        >
+                          <IconTrash />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* ============ FIN GASTOS ============ */}
 
           {!closing ? (
             <>
