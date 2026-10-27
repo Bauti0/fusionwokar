@@ -68,6 +68,27 @@ export async function listOrders(db, { scope, branch, search, status, payment, i
   return { rows, total, page: safePage, limit: safeLimit, hasMore: offset + rows.length < total };
 }
 
+// IDs de pedidos activos (misma lógica que isActiveOrder del front) sin seen_at.
+// scope: null=superadmin (todas), "tandil"/"necochea"=branch_admin.
+// Replica isFutureScheduled: excluye programados > now + 1h.
+// scheduled_for puede ser NULL, '' o ISO string. datetime('') = NULL en SQLite.
+export async function getUnseenOrderIds(db, scope) {
+  const conds = [
+    "status IN ('received','preparing','ready','out_for_delivery')",
+    "payment_status != 'rejected'",
+    "seen_at IS NULL",
+    "(scheduled_for IS NULL OR scheduled_for = '' OR datetime(scheduled_for) <= datetime('now', '+1 hour'))"
+  ];
+  const params = [];
+  if (scope) {
+    conds.push("branch = ?");
+    params.push(scope);
+  }
+  const where = `WHERE ${conds.join(" AND ")}`;
+  const rows = await db.prepare(`SELECT id FROM orders ${where}`).all(...params);
+  return rows.map((r) => r.id);
+}
+
 // Carga un pedido por id respetando el scope: fila ajena → null
 // (el endpoint responde 404, sin confirmar la existencia).
 export async function getOrderScoped(db, id, scope) {

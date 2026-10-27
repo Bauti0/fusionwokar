@@ -10,6 +10,7 @@ import {
   db,
   toPublicOrder,
   toPublicOrderPublic,
+  toAdminOrder,
   formatOrderNumber,
   saveProductImage,
   getProductImage,
@@ -18,6 +19,7 @@ import {
   toCategory,
   seedProducts,
   seedCategories,
+  seedBranchHours,
 } from "./db.js";
 import {
   createOrder,
@@ -33,8 +35,9 @@ import {
   buildOrderItems,
 } from "./mp.js";
 import { MENUS } from "../src/data/menus.js";
+import { BRANCHES } from "../src/data/branches.js";
 import { enhanceHtml } from "./seo.js";
-import { isOpenAtTime, toWallclock, outsideHoursMessage } from "../src/utils/schedule.js";
+import { toWallclock } from "../src/utils/schedule.js";
 import { computeShipping } from "./shipping.js";
 import {
   applyCoupon,
@@ -87,6 +90,7 @@ import {
   isCouponCodeTaken,
   listExtras,
   updateExtra,
+  getUnseenOrderIds,
 } from "./admin-queries.js";
 import { validateConfig } from "./config.js";
 import { orderLogLine } from "./order-log.js";
@@ -95,6 +99,7 @@ import { rowToCashRegister, correctCashRegister, getCashCorrections, deleteCashR
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from "../src/utils/validation.js";
+import { getBranchWindows, isOpenAtTime, validateBranchHours, replaceBranchHours, getBranchHoursForAdmin, outsideHoursMessage } from "./branch-hours.js";
 
 // ============================================================
 // FUSIÓN WOK — API + servidor de producción
@@ -199,6 +204,7 @@ runConfigCheck();
 // escribamos 97 productos en la base antes de descubrirlo.
 await seedProducts(MENUS);
 await seedCategories(MENUS);
+await seedBranchHours();
 
 // ---------- salud de las credenciales de Mercado Pago ----------
 // MP_ACCESS_TOKEN "estar presente" no significa "ser válido": un token revocado,
@@ -416,7 +422,7 @@ app.use("/api", (req, res, next) => {
 //     cookie fw_admin_csrf que se emite en el login. Un sitio ajeno no puede
 //     leer esa cookie (same-origin policy): cubre DNS rebinding y peticiones
 //     cross-site sin Origin, aunque el Host coincida con el nuestro.
-// /api/admin/login queda exento: el primer login todavía no tiene cookie CSRF.
+// /api/admin/login queda exento: el primer login no tiene cookie CSRF aún.
 app.use("/api/admin", (req, res, next) => {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
   if (req.originalUrl === "/api/admin/login") return next();
@@ -856,10 +862,10 @@ async function validateOrderBody(body, { requireEmail = false, requirePhone = tr
     }
     // El pedido programado debe caer dentro de la apertura de la sucursal
     // (ventanas definidas en src/data/branches.js, hora local argentina)
-    if (!isOpenAtTime(branch, toWallclock(iso, "America/Argentina/Buenos_Aires"))) {
+    if (!(await isOpenAtTime(db, branch, toWallclock(iso, "America/Argentina/Buenos_Aires")))) {
       // El texto se arma desde openWindows de la sucursal (ver BUG-04 en
       // src/utils/schedule.js): no hay horarios escritos a mano acá.
-      return { error: outsideHoursMessage(branch) };
+      return { error: await outsideHoursMessage(branch) };
     }
     scheduled = iso.toISOString();
   }
@@ -2346,6 +2352,7 @@ app.post(
         envUser: ADMIN_USER,
         envPassword: ADMIN_PASSWORD,
       });
+      console.error('[DEBUG LOGIN] authenticateAdmin result:', admin);
       if (!admin.ok) {
         recordLoginFailure(req);
         return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
@@ -2463,7 +2470,7 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
       limit: req.query.limit,
     });
     res.json({
-      orders: rows.map(toPublicOrder),
+      orders: rows.map(toAdminOrder),
       total,
       page,
       limit,
@@ -2475,6 +2482,63 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
   }
 });
 
+// IDs de pedidos "en curso" sin seen_at (respeta scope, sin filtros de UI).
+// LO USA EL PANEL PARA SABER SI HAY PEDIDOS NUEVOS AUNQUE ESTÉN EN OTRA PÁGINA/FILTRO.
+// Debe ir ANTES de /:id para que Express no lo capture como parámetro.
+app.get("/api/admin/orders/unseen", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const branch = scope?.branch || null;
+    if (scope?.role === "branch_admin" && !branch) return res.json({ ids: [] });
+    const ids = await getUnseenOrderIds(db, branch);
+    res.json({ ids });
+  } catch (err) {
+    console.error("GET /api/admin/orders/unseen:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Marca MÚLTIPLES pedidos como vistos de una vez (respeta scope).
+app.post("/api/admin/orders/seen-all", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const branch = scope?.branch || null;
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "Faltan ids" });
+    const validIds = ids.filter((id) => Number.isInteger(id) && id > 0).slice(0, 200);
+    if (validIds.length === 0) return res.status(400).json({ error: "Ids inválidos" });
+    const placeholders = validIds.map(() => "?").join(",");
+    const params = [now(), ...validIds];
+    if (branch) {
+      params.splice(1, 0, branch);
+      await db.prepare(`UPDATE orders SET seen_at = ? WHERE id IN (${placeholders}) AND branch = ? AND seen_at IS NULL`).run(...params);
+    } else {
+      await db.prepare(`UPDATE orders SET seen_at = ? WHERE id IN (${placeholders}) AND seen_at IS NULL`).run(...params);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /api/admin/orders/seen-all:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Marca un pedido como "visto" (corta el loop de sonido). Idempotente.
+// Actualiza SOLO seen_at (no updated_at) para no disparar polling innecesario.
+app.patch("/api/admin/orders/:id/seen", requireAdmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+    const row = await getOrderScoped(db, id, adminScope(req));
+    if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (row.seen_at) return res.json({ ok: true, already: true });
+    await db.prepare("UPDATE orders SET seen_at = ? WHERE id = ?").run(now(), id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /api/admin/orders/:id/seen:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
 app.get("/api/admin/orders/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
@@ -2482,7 +2546,7 @@ app.get("/api/admin/orders/:id", requireAdmin, async (req, res) => {
     // Pedido ajeno → 404 (no 403): no se confirma que exista.
     const row = await getOrderScoped(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
-    res.json({ ...toPublicOrder(row), whatsappLink: orderWhatsAppLink(row, row.status) });
+    res.json({ ...toAdminOrder(row), whatsappLink: orderWhatsAppLink(row, row.status) });
   } catch (err) {
     console.error("GET /api/admin/orders/:id:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2551,7 +2615,7 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (req, res) => {
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
     res.json({
       ok: true,
-      order: toPublicOrder(updated),
+      order: toAdminOrder(updated),
       whatsappLink: orderWhatsAppLink(row, status),
     });
   } catch (err) {
@@ -2586,7 +2650,7 @@ app.post("/api/admin/orders/:id/shipping", requireAdmin, async (req, res) => {
       "UPDATE orders SET shipping = ?, shipping_km = ?, shipping_pending = 0, total = ?, updated_at = ? WHERE id = ?"
     ).run(shipping, km, newTotal, now(), id);
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-    res.json({ ok: true, order: toPublicOrder(updated) });
+    res.json({ ok: true, order: toAdminOrder(updated) });
   } catch (err) {
     console.error("POST /api/admin/orders/:id/shipping:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2660,7 +2724,7 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
         patch: markIfFullyRefunded,
       });
       const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-      return res.json({ ok: true, demo: true, order: toPublicOrder(updated) });
+      return res.json({ ok: true, demo: true, order: toAdminOrder(updated) });
     }
 
     if (!row.mp_order_id) {
@@ -2731,7 +2795,7 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
     await applyRefunds(db, row.id, { mpRefunds, patch: markIfFullyRefunded });
 
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-    res.json({ ok: true, order: toPublicOrder(updated) });
+    res.json({ ok: true, order: toAdminOrder(updated) });
   } catch (err) {
     console.error("POST /api/admin/orders/:id/refund:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2763,7 +2827,7 @@ app.patch("/api/admin/orders/:id", requireAdmin, async (req, res) => {
     await applyOrderEdit(db, result);
 
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-    res.json({ ok: true, order: toPublicOrder(updated) });
+    res.json({ ok: true, order: toAdminOrder(updated) });
   } catch (err) {
     console.error("PATCH /api/admin/orders/:id:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -3122,6 +3186,80 @@ app.put("/api/admin/branch-pause", requireAdmin, async (req, res) => {
     res.json({ ok: true, branch, pause: state });
   } catch (err) {
     console.error("PUT /api/admin/branch-pause:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- horarios por sucursal (público: solo lectura) ----------
+// GET /api/branch-hours/:branchId → horarios de una sucursal para el cliente
+// Usa BD con respaldo a branches.js. Nunca falla mostrando todo cerrado.
+// Cache-Control corto: el cliente re-pide cada 2-3 min y al enfocar la pestaña.
+app.get("/api/branch-hours/:branchId", async (req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  const branchId = String(req.params.branchId || "").trim();
+  try {
+    if (!BRANCHES[branchId]) return res.status(404).json({ error: "Sucursal no encontrada" });
+    const hours = await getBranchHoursForAdmin(db, branchId);
+    // Convertir a formato simple para el cliente
+    const days = [];
+    for (let d = 0; d < 7; d++) {
+      const day = hours[d] || { closed: true, slots: [] };
+      days.push({
+        dayOfWeek: d,
+        closed: day.closed,
+        slots: day.slots.map((s) => ({ open: s.open, close: s.close })),
+      });
+    }
+    res.json({ branch: branchId, days });
+  } catch (err) {
+    console.error("GET /api/branch-hours/:branchId:", err.message);
+    // Respaldo: devolver horarios de branches.js para no romper el cliente
+    const b = BRANCHES[branchId];
+    if (b?.openWindows) {
+      const days = [];
+      for (let d = 0; d < 7; d++) {
+        const slots = b.openWindows.filter((w) => w.days.includes(d)).map((w) => ({ open: w.from, close: w.to }));
+        days.push({ dayOfWeek: d, closed: slots.length === 0, slots });
+      }
+      return res.json({ branch: branchId, days, fallback: true });
+    }
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- horarios por sucursal (admin) ----------
+// GET /api/admin/branch-hours → horarios de las sucursales visibles para la sesión
+app.get("/api/admin/branch-hours", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const branches = scope ? [scope] : Object.keys(BRANCHES);
+    const result = {};
+    for (const b of branches) {
+      result[b] = await getBranchHoursForAdmin(db, b);
+    }
+    res.json({ hours: result });
+  } catch (err) {
+    console.error("GET /api/admin/branch-hours:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// PUT /api/admin/branch-hours → reemplazar horarios de una sucursal (todo o nada)
+app.put("/api/admin/branch-hours", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const { branch, hours } = req.body || {};
+    if (!branch || !BRANCHES[branch]) return res.status(400).json({ error: "Sucursal inválida" });
+    // branch_admin solo puede editar su sucursal
+    if (scope && branch !== scope) return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    if (!hours || typeof hours !== "object") return res.status(400).json({ error: "Faltan horarios" });
+
+    const updatedBy = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+    const result = await replaceBranchHours(db, branch, hours, now(), updatedBy);
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("PUT /api/admin/branch-hours:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });
@@ -4161,3 +4299,14 @@ app.listen(PORT, () => {
   console.log(`🌱 Fusión Wok API corriendo en http://localhost:${PORT}`);
   console.log(`   Modo demo: ${isDemoMode() ? "SÍ (sin credenciales reales)" : "NO (Mercado Pago real)"}`);
 });
+
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
+
+// Keep process alive
+setInterval(() => {}, 1000);
