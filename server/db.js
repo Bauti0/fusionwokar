@@ -163,10 +163,35 @@ await db.exec(`
     expected_amount INTEGER,
     difference INTEGER,
     notes TEXT NOT NULL DEFAULT '',
+    corrected_at TEXT,
+    deleted_at TEXT,
+    deleted_reason TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_cash_registers_branch ON cash_registers(branch);
+
+  -- Gastos de caja (descientan del efectivo esperado si son en efectivo).
+  -- payment_method: 'cash' | 'transfer' | 'card' | 'other'
+  -- Solo los 'cash' con cash_register_id vinculado a una caja abierta afectan el arqueo.
+  CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    branch TEXT NOT NULL,
+    cash_register_id INTEGER,           -- NULL si no es efectivo o no hay caja abierta
+    amount INTEGER NOT NULL,            -- pesos enteros, > 0
+    concept TEXT NOT NULL,              -- descripción obligatoria
+    category TEXT,                      -- opcional, texto libre
+    payment_method TEXT NOT NULL DEFAULT 'cash',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,           -- username de la sesión (nunca del body)
+    updated_by TEXT,
+    deleted_at TEXT,                    -- borrado lógico
+    deleted_by TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_expenses_branch ON expenses(branch);
+  CREATE INDEX IF NOT EXISTS idx_expenses_cash_register ON expenses(cash_register_id);
+  CREATE INDEX IF NOT EXISTS idx_expenses_deleted ON expenses(deleted_at);
 
   -- Correcciones de cierres de caja: solo superadmin puede leerlas.
   -- Una fila por CAMPO corregido (los de una misma corrección comparten

@@ -3040,6 +3040,289 @@ app.get("/api/admin/cash-register/:id/corrections", requireAdmin, async (req, re
   }
 });
 
+// ---------- gastos de caja ----------
+// GET /api/admin/expenses?from=&to=&branch=  (branch_admin ignora ?branch=)
+// POST /api/admin/expenses  { amount, concept, category?, payment_method? }
+// PATCH /api/admin/expenses/:id  { amount?, concept?, category?, payment_method? }
+// DELETE /api/admin/expenses/:id  { reason }  (borrado lógico, motivo obligatorio)
+const ALLOWED_PAYMENT_METHODS = ["cash", "transfer", "card", "other"];
+const MAX_EXPENSE_AMOUNT = 10_000_000;
+const MAX_CONCEPT_LENGTH = 200;
+const MAX_CATEGORY_LENGTH = 100;
+const MIN_REASON_LENGTH = 5;
+
+function validateExpenseInput(body, requireCashRegister) {
+  const { amount, concept, category, payment_method } = body || {};
+  if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_EXPENSE_AMOUNT) {
+    return { error: `Monto inválido: debe ser un entero entre 1 y ${MAX_EXPENSE_AMOUNT}` };
+  }
+  const c = String(concept ?? "").trim();
+  if (!c) return { error: "El concepto es obligatorio" };
+  if (c.length > MAX_CONCEPT_LENGTH) return { error: `El concepto no puede superar ${MAX_CONCEPT_LENGTH} caracteres` };
+  if (category !== undefined && category !== null && category !== "") {
+    const cat = String(category).trim();
+    if (cat.length > MAX_CATEGORY_LENGTH) return { error: `La categoría no puede superar ${MAX_CATEGORY_LENGTH} caracteres` };
+  }
+  const pm = payment_method || "cash";
+  if (!ALLOWED_PAYMENT_METHODS.includes(pm)) return { error: "Método de pago no permitido" };
+  if (pm === "cash" && requireCashRegister) {
+    // La validación de caja abierta se hace en el handler, acá solo validamos el input
+  }
+  return { amount, concept: c, category: category?.trim() || null, payment_method: pm };
+}
+
+app.get("/api/admin/expenses", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const { from, to, branch: queryBranch } = req.query;
+    const branch = scope || (scope ? undefined : queryBranch);
+    if (!branch && !scope) return res.status(400).json({ error: "Falta la sucursal" });
+
+    const conds = ["deleted_at IS NULL"];
+    const params = [];
+    if (branch) {
+      conds.push("branch = ?");
+      params.push(branch);
+    }
+    if (from) {
+      conds.push("created_at >= ?");
+      params.push(from);
+    }
+    if (to) {
+      conds.push("created_at <= ?");
+      params.push(to);
+    }
+    const where = `WHERE ${conds.join(" AND ")}`;
+    const rows = await db.prepare(`SELECT * FROM expenses ${where} ORDER BY created_at DESC LIMIT 200`).all(...params);
+    res.json({ expenses: rows });
+  } catch (err) {
+    console.error("GET /api/admin/expenses:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.post("/api/admin/expenses", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const branch = scope || (req.body || {}).branch;
+    if (!branch) return res.status(400).json({ error: "Falta la sucursal" });
+
+    // Validación de input
+    const validation = validateExpenseInput(req.body, true);
+    if (validation.error) return res.status(400).json({ error: validation.error });
+
+    const { amount, concept, category, payment_method } = validation;
+
+    // Si es efectivo, debe haber una caja ABIERTA en esa sucursal
+    let cashRegisterId = null;
+    if (payment_method === "cash") {
+      const open = await db
+        .prepare("SELECT id FROM cash_registers WHERE branch = ? AND closed_at IS NULL AND deleted_at IS NULL")
+        .get(branch);
+      if (!open) return res.status(400).json({ error: "Abrí la caja para cargar gastos en efectivo" });
+      cashRegisterId = open.id;
+    }
+
+    const ts = now();
+    const username = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+    const info = await db
+      .prepare(
+        `INSERT INTO expenses (branch, cash_register_id, amount, concept, category, payment_method, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(branch, cashRegisterId, amount, concept, category, payment_method, ts, ts, username);
+
+    const expense = await db.prepare("SELECT * FROM expenses WHERE id = ?").get(info.lastInsertRowid);
+    res.json({ ok: true, expense });
+  } catch (err) {
+    console.error("POST /api/admin/expenses:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.patch("/api/admin/expenses/:id", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+
+    const row = await db.prepare("SELECT * FROM expenses WHERE id = ? AND deleted_at IS NULL").get(id);
+    if (!row || (scope && row.branch !== scope)) return res.status(404).json({ error: "Gasto no encontrado" });
+
+    // Validación de input (campos opcionales en PATCH)
+    const { amount, concept, category, payment_method } = req.body || {};
+    const updates = [];
+    const args = [];
+
+    if (amount !== undefined) {
+      if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_EXPENSE_AMOUNT) {
+        return res.status(400).json({ error: `Monto inválido: debe ser un entero entre 1 y ${MAX_EXPENSE_AMOUNT}` });
+      }
+      updates.push("amount = ?");
+      args.push(amount);
+    }
+    if (concept !== undefined) {
+      const c = String(concept).trim();
+      if (!c) return res.status(400).json({ error: "El concepto es obligatorio" });
+      if (c.length > MAX_CONCEPT_LENGTH) return res.status(400).json({ error: `El concepto no puede superar ${MAX_CONCEPT_LENGTH} caracteres` });
+      updates.push("concept = ?");
+      args.push(c);
+    }
+    if (category !== undefined) {
+      const cat = category === null || category === "" ? null : String(category).trim();
+      if (cat && cat.length > MAX_CATEGORY_LENGTH) return res.status(400).json({ error: `La categoría no puede superar ${MAX_CATEGORY_LENGTH} caracteres` });
+      updates.push("category = ?");
+      args.push(cat);
+    }
+    if (payment_method !== undefined) {
+      if (!ALLOWED_PAYMENT_METHODS.includes(payment_method)) return res.status(400).json({ error: "Método de pago no permitido" });
+      // Si se cambia a cash, validar caja abierta; si se cambia de cash, cash_register_id se pone NULL
+      if (payment_method === "cash") {
+        const open = await db
+          .prepare("SELECT id FROM cash_registers WHERE branch = ? AND closed_at IS NULL AND deleted_at IS NULL")
+          .get(row.branch);
+        if (!open) return res.status(400).json({ error: "Abrí la caja para cargar gastos en efectivo" });
+        updates.push("cash_register_id = ?");
+        args.push(open.id);
+      } else if (row.payment_method === "cash" && payment_method !== "cash") {
+        updates.push("cash_register_id = ?");
+        args.push(null);
+      }
+      updates.push("payment_method = ?");
+      args.push(payment_method);
+    }
+
+    if (updates.length === 0) return res.json({ ok: true, expense: row, message: "Sin cambios" });
+
+    // Si el gasto ANTES era cash y tenía cash_register_id, y la caja estaba CERRADA:
+    // recalcular expected/difference de esa caja con la DIFERENCIA del monto (o cambio de método)
+    const wasCashWithRegister = row.payment_method === "cash" && row.cash_register_id;
+    const newAmount = amount !== undefined ? amount : row.amount;
+    const newPaymentMethod = payment_method !== undefined ? payment_method : row.payment_method;
+
+    const username = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+    const ts = now();
+    updates.push("updated_at = ?", "updated_by = ?");
+    args.push(ts, username, id);
+
+    await db.prepare(`UPDATE expenses SET ${updates.join(", ")} WHERE id = ?`).run(...args);
+
+    // Recalcular caja cerrada si el gasto original era cash y tenía caja vinculada
+    if (wasCashWithRegister && row.cash_register_id) {
+      const cash = await db.prepare("SELECT * FROM cash_registers WHERE id = ? AND deleted_at IS NULL").get(row.cash_register_id);
+      if (cash && cash.closed_at) {
+        // Si el nuevo método ya no es cash, el delta es -row.amount (quitamos todo el gasto)
+        // Si sigue siendo cash, el delta es newAmount - row.amount
+        const delta = newPaymentMethod === "cash" ? newAmount - row.amount : -row.amount;
+        const stmts = [
+          {
+            sql: `UPDATE cash_registers
+                  SET expected_amount = expected_amount - ?,
+                      difference = closing_counted - (expected_amount - ?),
+                      corrected_at = ?,
+                      updated_at = ?
+                  WHERE id = ?`,
+            args: [delta, delta, ts, ts, row.cash_register_id],
+          },
+          {
+            sql: `INSERT INTO cash_register_corrections
+                  (cash_register_id, admin_user_id, admin_username, admin_role, admin_branch,
+                   field, old_value, new_value, reason, created_at)
+                  VALUES (?, ?, ?, ?, ?, 'expenses', ?, ?, ?, ?)`,
+            args: [
+              row.cash_register_id,
+              req.admin?.userId ?? null,
+              username,
+              req.admin?.role ?? "unknown",
+              req.admin?.branch ?? "",
+              String(cash.expected_amount),
+              String(cash.expected_amount - delta),
+              newPaymentMethod === "cash" ? `Edición de gasto: ${row.concept}` : `Cambio a ${newPaymentMethod}: ${row.concept}`,
+              ts,
+            ],
+          },
+        ];
+        await db.batch(stmts, "write");
+      }
+    }
+
+    const updated = await db.prepare("SELECT * FROM expenses WHERE id = ?").get(id);
+    res.json({ ok: true, expense: updated });
+  } catch (err) {
+    console.error("PATCH /api/admin/expenses/:id:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.delete("/api/admin/expenses/:id", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+
+    const { reason } = req.body || {};
+    const r = String(reason ?? "").trim();
+    if (r.length < MIN_REASON_LENGTH) return res.status(400).json({ error: `Motivo obligatorio (mínimo ${MIN_REASON_LENGTH} caracteres)` });
+
+    const row = await db.prepare("SELECT * FROM expenses WHERE id = ? AND deleted_at IS NULL").get(id);
+    if (!row || (scope && row.branch !== scope)) return res.status(404).json({ error: "Gasto no encontrado" });
+
+    // Si el gasto es de una caja CERRADA y es en efectivo: recalcular expected/difference
+    // y auditar en cash_register_corrections (igual que correctCashRegister)
+    if (row.payment_method === "cash" && row.cash_register_id) {
+      const cash = await db.prepare("SELECT * FROM cash_registers WHERE id = ? AND deleted_at IS NULL").get(row.cash_register_id);
+      if (cash && cash.closed_at) {
+        // Recalcular expected_amount y difference restando este gasto
+        const username = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+        const ts = now();
+
+        // Transacción atómica: UPDATE cash_registers + INSERT cash_register_corrections
+        const stmts = [
+          {
+            sql: `UPDATE cash_registers
+                  SET expected_amount = expected_amount - ?,
+                      difference = closing_counted - (expected_amount - ?),
+                      corrected_at = ?,
+                      updated_at = ?
+                  WHERE id = ?`,
+            args: [row.amount, row.amount, ts, ts, row.cash_register_id],
+          },
+          {
+            sql: `INSERT INTO cash_register_corrections
+                  (cash_register_id, admin_user_id, admin_username, admin_role, admin_branch,
+                   field, old_value, new_value, reason, created_at)
+                  VALUES (?, ?, ?, ?, ?, 'expenses', ?, ?, ?, ?)`,
+            args: [
+              row.cash_register_id,
+              req.admin?.userId ?? null,
+              username,
+              req.admin?.role ?? "unknown",
+              req.admin?.branch ?? "",
+              String(cash.expected_amount),
+              String(cash.expected_amount - row.amount),
+              r,
+              ts,
+            ],
+          },
+        ];
+        await db.batch(stmts, "write");
+      }
+    }
+
+    // Borrado lógico del gasto
+    const ts = now();
+    const username = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+    await db
+      .prepare("UPDATE expenses SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ? WHERE id = ?")
+      .run(ts, username, ts, username, id);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/expenses/:id:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
 // ---------- carga manual de pedidos (WhatsApp / mostrador) ----------
 app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
   try {

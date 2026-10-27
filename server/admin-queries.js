@@ -232,6 +232,18 @@ async function cashIncomeSince(db, branch, sinceIso) {
   return Number(row.s) || 0;
 }
 
+// Gastos en efectivo de una caja específica (payment_method='cash',
+// deleted_at IS NULL, cash_register_id = esa caja).
+async function cashExpensesSince(db, cashRegisterId) {
+  const row = await db
+    .prepare(
+      `SELECT COALESCE(SUM(amount), 0) AS s FROM expenses
+     WHERE cash_register_id = ? AND payment_method = 'cash' AND deleted_at IS NULL`
+    )
+    .get(cashRegisterId);
+  return Number(row.s) || 0;
+}
+
 export async function getCashRegisterState(db, scope, requestedBranch) {
   const branch = scope || requestedBranch;
   if (!branch) return { open: null, history: [], expectedNow: null };
@@ -253,7 +265,9 @@ export async function getCashRegisterState(db, scope, requestedBranch) {
 
   let expectedNow = null;
   if (open) {
-    expectedNow = open.opening_amount + (await cashIncomeSince(db, branch, open.opened_at));
+    const ingresos = await cashIncomeSince(db, branch, open.opened_at);
+    const gastos = await cashExpensesSince(db, open.id);
+    expectedNow = open.opening_amount + ingresos - gastos;
   }
   return { open, history, expectedNow };
 }
@@ -303,16 +317,47 @@ export async function closeCashRegister(db, id, { counted, notes, scope, nowIso 
   const monto = Number(counted);
   if (!Number.isFinite(monto) || monto < 0) return { error: "Monto contado inválido", status: 400 };
 
-  const expected = row.opening_amount + (await cashIncomeSince(db, row.branch, row.opened_at));
-  const difference = Math.round(monto) - expected;
-
-  await db.prepare(
+  // UPDATE atómico con subconsultas: ventas en efectivo del período MENOS
+  // gastos en efectivo de ESTA caja (payment_method='cash', deleted_at IS NULL).
+  // Así un POST /expenses concurrente no queda fuera del cálculo.
+  const info = await db.prepare(
     `UPDATE cash_registers
-   SET closing_counted = ?, closed_at = ?, expected_amount = ?, difference = ?, notes = ?, updated_at = ?
-   WHERE id = ?`
-  ).run(Math.round(monto), nowIso, expected, difference, String(notes || "").slice(0, 500), nowIso, id);
+     SET closing_counted = ?,
+         closed_at = ?,
+         expected_amount = opening_amount +
+           (SELECT COALESCE(SUM(total), 0) FROM orders
+            WHERE branch = cash_registers.branch
+              AND payment_method = 'efectivo'
+              AND payment_status = 'approved'
+              AND status != 'cancelled'
+              AND created_at >= cash_registers.opened_at) -
+           (SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE cash_register_id = cash_registers.id
+              AND payment_method = 'cash'
+              AND deleted_at IS NULL),
+         difference = ? - (
+           opening_amount +
+           (SELECT COALESCE(SUM(total), 0) FROM orders
+            WHERE branch = cash_registers.branch
+              AND payment_method = 'efectivo'
+              AND payment_status = 'approved'
+              AND status != 'cancelled'
+              AND created_at >= cash_registers.opened_at) -
+           (SELECT COALESCE(SUM(amount), 0) FROM expenses
+            WHERE cash_register_id = cash_registers.id
+              AND payment_method = 'cash'
+              AND deleted_at IS NULL)
+         ),
+         notes = ?,
+         updated_at = ?
+     WHERE id = ?`
+  ).run(Math.round(monto), nowIso, Math.round(monto), String(notes || "").slice(0, 500), nowIso, id);
 
-  return { ok: true, expected, difference };
+  if (info.changes === 0) return { error: "Arqueo no encontrado", status: 404 };
+
+  // Leer los valores calculados para devolverlos
+  const updated = await db.prepare("SELECT expected_amount, difference FROM cash_registers WHERE id = ?").get(id);
+  return { ok: true, expected: updated.expected_amount, difference: updated.difference };
 }
 
 // ============================================================
