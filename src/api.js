@@ -495,3 +495,15 @@ export function adminSetUserActive(id, active) {
 export function adminDeleteUser(id) {
   return request(`/api/admin/users/${id}`, { method: "DELETE" });
 }
+
+export function adminMarkSeen(id) {
+  return request(`/api/admin/orders/${id}/seen`, { method: "PATCH" });
+}
+
+export function adminGetUnseenIds() {
+  return request("/api/admin/orders/unseen");
+}
+
+export function adminMarkAllSeen(ids) {
+  return request("/api/admin/orders/seen-all", { method: "POST", body: JSON.stringify({ ids }) });
+}
