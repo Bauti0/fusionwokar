@@ -4,6 +4,39 @@ import { useCallback, useEffect, useState } from "react";
 import { cartKey as makeCartKey } from "../utils/format.js";
 
 // ============================================================
+// Valida y normaliza un item de carrito desde localStorage.
+// Devuelve null si el item no es válido; en caso contrario, el item
+// con valores por defecto para campos opcionales (extras, options, notes, image).
+// La clave (key) se preserva si existe; si no, queda como string vacío
+// (el hook la genera al agregar items con makeCartKey).
+export function validateCartItem(item) {
+  if (!item || typeof item !== "object") return null;
+  if (typeof item.productId !== "string" || !item.productId.trim()) return null;
+  if (typeof item.name !== "string" || !item.name.trim()) return null;
+  if (typeof item.unitPrice !== "number" || !Number.isFinite(item.unitPrice)) return null;
+  const qty = Number(item.qty);
+  if (!Number.isInteger(qty) || qty < 1) return null;
+
+  const extras = Array.isArray(item.extras) ? item.extras : [];
+  const options = Array.isArray(item.options) ? item.options : [];
+  const notes = typeof item.notes === "string" ? item.notes : "";
+  const image = typeof item.image === "string" ? item.image : "";
+  const key = typeof item.key === "string" ? item.key : "";
+
+  return {
+    key,
+    productId: item.productId,
+    name: item.name.trim(),
+    image,
+    unitPrice: item.unitPrice,
+    extras,
+    options,
+    notes,
+    qty,
+  };
+}
+
+// ============================================================
 // useCart — carrito + historial de pedidos en localStorage
 // El carrito se guarda por sucursal (clave fw.cart.<branchId>)
 // ============================================================

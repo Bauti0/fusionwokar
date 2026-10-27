@@ -3,6 +3,9 @@ import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import StoreApp from "./components/StoreApp.jsx";
 import { adminMe } from "./api.js";
 import { track } from "./utils/tracking.js";
+import ErrorBoundary from "./components/ui/ErrorBoundary.jsx";
+import { RouteFallback, AdminRouteFallback } from "./components/ui/ErrorFallbacks.jsx";
+import { checkCrashTrack, checkCrashAdmin } from "./hooks/useCrashTest.js";
 
 // ============================================================
 // FUSIÓN WOK — Router
@@ -26,6 +29,54 @@ function PageFallback() {
         <p className="hint">Cargando…</p>
       </div>
     </div>
+  );
+}
+
+// Wrappers con ErrorBoundary por ruta
+function StoreRoute() {
+  return (
+    <ErrorBoundary
+      fallback={(err, reset) => <RouteFallback error={err} reset={reset} routeName="la tienda" />}
+      resetKeys={[window.location.pathname]}
+    >
+      <StoreApp />
+    </ErrorBoundary>
+  );
+}
+
+function TrackRoute() {
+  checkCrashTrack();
+  return (
+    <ErrorBoundary
+      fallback={(err, reset) => <RouteFallback error={err} reset={reset} routeName="el seguimiento" />}
+      resetKeys={[window.location.pathname]}
+    >
+      <TrackOrder />
+    </ErrorBoundary>
+  );
+}
+
+function AdminRoute({ adminSession, setAdminSession }) {
+  checkCrashAdmin();
+  return (
+    <ErrorBoundary
+      fallback={(err, reset, info) => <AdminRouteFallback error={err} reset={reset} errorInfo={info} />}
+      // No usamos resetKeys aquí: el AdminRouteFallback maneja su propio reintento
+    >
+      {adminSession === null ? (
+        <PageFallback />
+      ) : adminSession ? (
+        <AdminPanel me={adminSession} onLogout={() => setAdminSession(false)} />
+      ) : (
+        <AdminLogin
+          onLogin={() =>
+            adminMe()
+              .then((me) => setAdminSession(me))
+              .catch(() => setAdminSession(false))
+          }
+        />
+      )}
+    </ErrorBoundary>
   );
 }
 
@@ -70,30 +121,15 @@ export default function App() {
   return (
     <Suspense fallback={<PageFallback />}>
       <Routes>
-        <Route path="/" element={<StoreApp />} />
+        <Route path="/" element={<StoreRoute />} />
         <Route
           path="/track"
-          element={<Navigate to="/" state={{ view: "my-orders" }} replace />} />
-        <Route path="/track/:orderNumber" element={<TrackOrder />} />
+          element={<Navigate to="/" state={{ view: "my-orders" }} replace />}
+        />
+        <Route path="/track/:orderNumber" element={<TrackRoute />} />
         <Route
           path="/admin"
-          element={
-            adminSession === null ? (
-              <PageFallback />
-            ) : adminSession ? (
-              <AdminPanel me={adminSession} onLogout={() => setAdminSession(false)} />
-            ) : (
-              // Tras el login se vuelve a consultar /me: el panel necesita
-              // el rol y la sucursal de la sesión recién creada.
-              <AdminLogin
-                onLogin={() =>
-                  adminMe()
-                    .then((me) => setAdminSession(me))
-                    .catch(() => setAdminSession(false))
-                }
-              />
-            )
-          }
+          element={<AdminRoute adminSession={adminSession} setAdminSession={setAdminSession} />}
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
