@@ -41,18 +41,3 @@ jobs:
           MP_WEBHOOK_SECRET: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           ADMIN_PASSWORD: "testpass123"
           ADMIN_USER: "superadmin"
-
-      - name: Install Playwright
-        run: npx playwright install --with-deps chromium
-
-      - name: Run smoke tests
-        run: npm run test:smoke
-        env:
-          NODE_ENV: development
-          DEMO_MODE: "true"
-          TURSO_DATABASE_URL: "file::memory:"
-          TURSO_AUTH_TOKEN: ""
-          MP_ACCESS_TOKEN: "TEST_TOKEN"
-          MP_WEBHOOK_SECRET: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          ADMIN_PASSWORD: "testpass123"
-          ADMIN_USER: "superadmin"

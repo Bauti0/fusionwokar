@@ -197,6 +197,32 @@ function runConfigCheck() {
     process.exit(1);
   }
 }
+
+// Datos de prueba para tests e2e (solo en modo test)
+async function seedTestData() {
+  const now = new Date().toISOString();
+  const hash = await (await import("./auth.js")).hashPassword("testpass123");
+
+  // Admin users de prueba
+  await db.prepare(`
+    INSERT OR IGNORE INTO admin_users (username, password_hash, role, branch, active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("tandil_admin", hash, "branch_admin", "tandil", 1, now, now);
+  await db.prepare(`
+    INSERT OR IGNORE INTO admin_users (username, password_hash, role, branch, active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("neco_admin", hash, "branch_admin", "necochea", 1, now, now);
+  await db.prepare(`
+    INSERT OR IGNORE INTO admin_users (username, password_hash, role, branch, active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run("superadmin", hash, "superadmin", "", 1, now, now);
+
+  // Pedido de prueba sin abrir
+  await db.prepare(`
+    INSERT OR IGNORE INTO orders (order_number, branch, customer_name, customer_phone, order_mode, payment_method, payment_status, status, items, total, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("FW-00001", "tandil", "Test User", "1111111111", "pickup", "cash", "pending", "pending_payment", JSON.stringify([{productId: "wok-pollo", name: "Wok Pollo", qty: 1, unitPrice: 18900}]), 18900, now, now);
+}
 runConfigCheck();
 
 // Siembra el menú y las categorías en la BD (solo la primera vez).
@@ -205,6 +231,11 @@ runConfigCheck();
 await seedProducts(MENUS);
 await seedCategories(MENUS);
 await seedBranchHours();
+
+// En modo test, sembramos datos de prueba adicionales (pedido pendiente, admins, etc.)
+if (process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true") {
+  await seedTestData();
+}
 
 // ---------- salud de las credenciales de Mercado Pago ----------
 // MP_ACCESS_TOKEN "estar presente" no significa "ser válido": un token revocado,
