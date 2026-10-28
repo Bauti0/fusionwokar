@@ -491,6 +491,14 @@ export function verifyWebhookSignature(req) {
   const tsMatch = signature.match(/ts=(\d+)/);
   const v1Match = signature.match(/v1=([a-f0-9]+)/i);
   if (!tsMatch || !v1Match) return false;
+  // B-4: si el id viaja en el QUERY y en el BODY y no coinciden, la firma es
+  // ambigua: el manifest se arma con el del query, pero el handler procesa el
+  // del body — un id firmado legítimo quedaría autorizando a otro recurso.
+  const qId = new URL(req.originalUrl || req.url || "", "http://mp.local").searchParams.get("data.id");
+  const bId = req.body?.data?.id;
+  if (qId && bId != null && String(bId) !== "" && qId.toLowerCase() !== String(bId).toLowerCase()) {
+    return false;
+  }
   // El id del recurso viaja en el QUERY (?data.id=ORD...) y, en Orders, en
   // mayúsculas: el manifest exige minúsculas. Se lee del originalUrl para no
   // depender de cómo Express parseó el query. Si no viniera, se cae al body

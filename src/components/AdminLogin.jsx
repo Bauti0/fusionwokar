@@ -40,6 +40,7 @@ export default function AdminLogin({ onLogin }) {
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
+              data-testid="admin-username"
             />
           </div>
           <div className="field">
@@ -50,10 +51,11 @@ export default function AdminLogin({ onLogin }) {
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              data-testid="admin-password"
             />
           </div>
           {error && <div className="form-error">{error}</div>}
-          <button className="btn btn--primary btn--block" disabled={busy}>
+          <button className="btn btn--primary btn--block" disabled={busy} data-testid="admin-login-submit">
             {busy ? "Ingresando…" : "Ingresar"}
           </button>
         </form>

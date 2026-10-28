@@ -10,7 +10,7 @@ export default function CartBar({ count, total, onView }) {
 
   return (
     <div className="cart-bar">
-      <button className="cart-bar__inner" onClick={onView}>
+      <button data-testid="cart-bar-btn" className="cart-bar__inner" onClick={onView}>
         <span className="cart-bar__icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 6h15l-1.6 8.2a2 2 0 0 1-2 1.6H9.4a2 2 0 0 1-2-1.6L5.3 3.6A2 2 0 0 0 3.3 2H2" />

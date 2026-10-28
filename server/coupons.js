@@ -56,19 +56,19 @@ export async function applyCoupon(db, code, total, branch) {
       // no vale acá (sin revelar de cuál sucursal es).
       const exists = await db.prepare("SELECT 1 FROM coupons WHERE code = ?").get(clean);
       if (exists) return { error: "Este cupón no es válido para esta sucursal" };
-      return { error: "El cupón no existe" };
+      return { error: "Cupón inválido" };
     }
   } else {
     row = await db.prepare("SELECT * FROM coupons WHERE code = ?").get(clean);
-    if (!row) return { error: "El cupón no existe" };
+    if (!row) return { error: "Cupón inválido" };
   }
-  if (row.active !== 1) return { error: "El cupón ya no está activo" };
+  if (row.active !== 1) return { error: "Cupón inválido" };
   if (row.max_uses > 0 && row.used_count >= row.max_uses) {
-    return { error: "El cupón ya no tiene usos disponibles" };
+    return { error: "Cupón inválido" };
   }
   if (row.expires_at) {
     const exp = new Date(row.expires_at);
-    if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) return { error: "El cupón está vencido" };
+    if (isNaN(exp.getTime()) || exp.getTime() < Date.now()) return { error: "Cupón inválido" };
   }
   if (total < row.min_total) return { error: `El cupón requiere un pedido mínimo de $${row.min_total}` };
   let discount;

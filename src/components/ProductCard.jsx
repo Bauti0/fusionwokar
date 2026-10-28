@@ -76,6 +76,7 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
         </div>
       </div>
       <button
+        data-testid="add-to-cart"
         className={`product__add ${added ? "is-added" : ""}`}
         onClick={handleClick}
         disabled={unavailable}

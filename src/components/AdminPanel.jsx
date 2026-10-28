@@ -708,6 +708,7 @@ export default function AdminPanel({ me, onLogout }) {
               en móvil son display:none y la nav sigue de píldoras. */}
           <span className="admin-nav__group">Operación</span>
           <button
+            data-testid="nav-orders"
             className={`admin-nav__btn ${section === "orders" ? "is-active" : ""}`}
             onClick={() => setSection("orders")}
           >
@@ -716,12 +717,14 @@ export default function AdminPanel({ me, onLogout }) {
           </button>
           <span className="admin-nav__group">Análisis</span>
           <button
+            data-testid="nav-stats"
             className={`admin-nav__btn ${section === "stats" ? "is-active" : ""}`}
             onClick={() => setSection("stats")}
           >
             📊 Estadísticas
           </button>
           <button
+            data-testid="nav-sales"
             className={`admin-nav__btn ${section === "sales" ? "is-active" : ""}`}
             onClick={() => setSection("sales")}
           >
@@ -729,18 +732,21 @@ export default function AdminPanel({ me, onLogout }) {
           </button>
           <span className="admin-nav__group">Catálogo</span>
           <button
+            data-testid="nav-products"
             className={`admin-nav__btn ${section === "products" ? "is-active" : ""}`}
             onClick={() => setSection("products")}
           >
             🍜 Productos
           </button>
           <button
+            data-testid="nav-extras"
             className={`admin-nav__btn ${section === "extras" ? "is-active" : ""}`}
             onClick={() => setSection("extras")}
           >
             🥢 Adicionales
           </button>
           <button
+            data-testid="nav-coupons"
             className={`admin-nav__btn ${section === "coupons" ? "is-active" : ""}`}
             onClick={() => setSection("coupons")}
           >
@@ -748,6 +754,7 @@ export default function AdminPanel({ me, onLogout }) {
           </button>
           <span className="admin-nav__group">Administración</span>
           <button
+            data-testid="nav-customers"
             className={`admin-nav__btn ${section === "customers" ? "is-active" : ""}`}
             onClick={() => setSection("customers")}
           >
@@ -755,6 +762,7 @@ export default function AdminPanel({ me, onLogout }) {
           </button>
           {me?.role === "superadmin" && (
             <button
+              data-testid="nav-users"
               className={`admin-nav__btn ${section === "users" ? "is-active" : ""}`}
               onClick={() => setSection("users")}
             >

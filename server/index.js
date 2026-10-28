@@ -670,7 +670,24 @@ async function buildCatalog() {
   }
   return catalog;
 }
+// B-6: el catálogo se cachea con TTL para que las instancias convergan sin
+// reiniciar (rolling deploy). Las mutaciones admin lo refrescan ya vía
+// refreshCatalog(); el TTL es la red de seguridad para todo lo demás.
+const CATALOG_TTL_MS = 30 * 1000;
 let CATALOG = await buildCatalog();
+let CATALOG_AT = Date.now();
+
+async function refreshCatalog() {
+  const fresh = await buildCatalog();
+  CATALOG = fresh;
+  CATALOG_AT = Date.now();
+  return CATALOG;
+}
+
+async function getCatalog() {
+  if (Date.now() - CATALOG_AT < CATALOG_TTL_MS) return CATALOG;
+  return refreshCatalog();
+}
 
 // El menú público es casi estático: se cachea por sucursal para no golpear la
 // DB en cada carga de la tienda. Se invalida ante cualquier edición de
@@ -713,7 +730,9 @@ async function getMenuFromDb(branchId) {
     group.products.push(p);
   }
   const menu = { branchId, categories, topProductIds: await getTopProductIds(branchId) };
-  menuCache.set(branchId, { at: Date.now(), menu });
+  // B-8: no cachear resultados vacíos (branchId inexistente): evita que el
+  // Map crezca sin tope con claves arbitrarias mandadas por el cliente.
+  if (categories.length > 0) menuCache.set(branchId, { at: Date.now(), menu });
   return menu;
 }
 
@@ -807,7 +826,8 @@ async function uniqueProductId(branchId, base) {
 // cantidades negativas, productos inexistentes y pedidos falsos).
 async function validateOrderBody(body, { requireEmail = false, requirePhone = true } = {}) {
   const { branch, customer, orderMode, paymentMethod, items, notes, scheduledFor, couponCode } = body || {};
-  if (!CATALOG[branch]) return { error: "Sucursal inválida" };
+  const catalog = await getCatalog();
+  if (!catalog[branch]) return { error: "Sucursal inválida" };
   // Nombre del cliente: el canal web manda name + firstName/lastName; el
   // manual solo name. Con cualquiera de los dos alcanza.
   const hasName =
@@ -896,7 +916,7 @@ async function validateOrderBody(body, { requireEmail = false, requirePhone = tr
     }
     scheduled = iso.toISOString();
   }
-  const menu = CATALOG[branch];
+  const menu = catalog[branch];
   const cleanItems = [];
   let total = 0;
   for (const it of items) {
@@ -1021,7 +1041,7 @@ async function recordEvent(type, branch) {
   if (!EVENT_TYPES.includes(type)) return;
   await db.prepare("INSERT INTO events (type, branch, created_at) VALUES (?, ?, ?)").run(
     type,
-    typeof branch === "string" && CATALOG[branch] ? branch : "",
+    typeof branch === "string" && (await getCatalog())[branch] ? branch : "",
     now()
   );
 }
@@ -1408,7 +1428,7 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
     // es el mismo que validateOrderBody (CATALOG): una branch inválida
     // no se chequea acá y cae en el 400 de siempre.
     const pauseBranch = req.body?.branch;
-    if (typeof pauseBranch === "string" && CATALOG[pauseBranch]) {
+    if (typeof pauseBranch === "string" && (await getCatalog())[pauseBranch]) {
       const pause = await getPause(db, pauseBranch, Date.now());
       if (pause.paused) {
         const message = pauseMessage(pause, { scheduled: Boolean(req.body?.scheduledFor) });
@@ -1997,7 +2017,9 @@ function isNotModified(req, row) {
 // Estado público de un pedido (por id) — usado para el polling del pago.
 // El polling de PaymentModal hace 1 request/2.5s por pestaña (≈24/min): 120/min
 // deja margen sin abrir el endpoint a spam.
-app.get("/api/orders/:id", rateLimit({ max: 120, windowMs: 60000, name: "orderget" }), async (req, res) => {
+// M-4: 60/min (antes 120): el id es conocible y secuencial, así que un
+// barrido rápido necesitaba solo dos minutos para mapear miles de pedidos.
+app.get("/api/orders/:id", rateLimit({ max: 60, windowMs: 60000, name: "orderget" }), async (req, res) => {
   try {
     const id = paramId(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
@@ -2013,7 +2035,9 @@ app.get("/api/orders/:id", rateLimit({ max: 120, windowMs: 60000, name: "orderge
 });
 
 // Tracking del cliente por número de pedido (FW-00001)
-app.get("/api/orders/number/:orderNumber", rateLimit({ max: 10, windowMs: 60000, name: "ordernum" }), async (req, res) => {
+// M-4: 5/min (antes 10): el número de pedido es lineal ("FW-000123") y
+// probarlo es trivial; con 10/min un barrido seguía siendo factible.
+app.get("/api/orders/number/:orderNumber", rateLimit({ max: 5, windowMs: 60000, name: "ordernum" }), async (req, res) => {
   try {
     const num = String(req.params.orderNumber || "").trim().toUpperCase();
     if (!/^FW-\d{4,10}$/.test(num)) return res.status(400).json({ error: "Número de pedido inválido" });
@@ -2038,7 +2062,10 @@ app.get(
   "/api/orders/by-phone/:phone",
   rateLimit({ max: 15, name: "byphone" }),
   rateLimitByKey(
-    (req) => `${String(req.params.phone || "").trim()}:${getClientIp(req)}`,
+    // M-1: la clave normaliza a dígitos, así "226 2555 555" y "+54 226-2555-555"
+    // caen en el MISMO bucket. Sin esto, un barrido repite el mismo número con
+    // formatos distintos y multiplica el cupo de 8 por la cantidad de variantes.
+    (req) => `${String(req.params.phone || "").replace(/\D/g, "")}:${getClientIp(req)}`,
     { max: 8, windowMs: 10 * 60 * 1000, name: "byphonepk" }
   ),
   async (req, res) => {
@@ -2085,7 +2112,7 @@ app.post("/api/events", rateLimit({ max: 60, name: "events" }), async (req, res)
     if (!EVENT_TYPES.includes(type)) {
       return res.status(400).json({ error: "Tipo de evento inválido" });
     }
-    const cleanBranch = typeof branch === "string" && CATALOG[branch] ? branch : "";
+    const cleanBranch = typeof branch === "string" && (await getCatalog())[branch] ? branch : "";
     // ID anónimo de visitante (uuid/dash/underscore) para contar personas
     const cleanVisitor =
       typeof visitor_id === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(visitor_id)
@@ -2161,7 +2188,10 @@ app.post("/api/coupons/validate", rateLimit({ max: 30, name: "couponvalidate" })
     if (typeof code !== "string" || !code.trim() || !Number.isFinite(n) || n < 0) {
       return res.status(400).json({ error: "Datos inválidos" });
     }
-    if (branch && !CATALOG[branch]) return res.status(400).json({ error: "Sucursal inválida" });
+    if (branch) {
+      const catalog = await getCatalog();
+      if (!catalog[branch]) return res.status(400).json({ error: "Sucursal inválida" });
+    }
     const result = await applyCoupon(db, code, n, branch || "");
     if (result.error) return res.status(400).json({ error: result.error });
     res.json({ ok: true, code: result.code, discount: result.discount, totalAfter: Math.max(n - result.discount, 0) });
@@ -2267,9 +2297,20 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
 
           const wasApproved = row.payment_status === "approved";
           const wasFailure = row.payment_status === "rejected";
-          await db.prepare(
-            "UPDATE orders SET payment_status = ?, status = ?, mp_payment_id = ?, updated_at = ? WHERE id = ?"
-          ).run(status, orderStatus, paymentId, now(), row.id);
+          // B-5: CAS sobre payment_status para no revertir refunded→approved
+          // ante un replay de notificaciones legacy.
+          const changes = await db
+            .prepare(
+              "UPDATE orders SET payment_status = ?, status = ?, mp_payment_id = ?, updated_at = ? WHERE id = ? AND payment_status = ?"
+            )
+            .run(status, orderStatus, paymentId, now(), row.id, row.payment_status)
+            .then((r) => r.changes);
+          if (changes === 0) {
+            console.log(
+              `Webhook legacy: CAS fallo para ${row.order_number} (payment_status cambio concurrentemente)`
+            );
+            return res.sendStatus(200);
+          }
           console.log(
             `Pedido ${row.order_number} actualizado → payment=${status} status=${orderStatus}`
           );
@@ -3399,6 +3440,12 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
     const { customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
     const branch = branchResult.branch;
 
+    // B-7: un pedido manual no puede entrar como pago con Mercado Pago:
+    // no hay order de MP ni cobro real, y el estado quedaría mintiendo.
+    if (paymentMethod === "mercadopago") {
+      return res.status(400).json({ error: "Los pedidos manuales no pueden usar Mercado Pago" });
+    }
+
     const ts = now();
     // INSERT del pedido + número definitivo (derivado del id real) + evento
     // "order_created" en UN solo batch atómico (sin carrera de MAX(id)+1).
@@ -3810,7 +3857,7 @@ app.post("/api/admin/products", requireAdmin, async (req, res) => {
       timestamp,
       timestamp
     );
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     const created = await db.prepare("SELECT * FROM products WHERE id = ?").get(info.lastInsertRowid);
     res.json({
@@ -3854,7 +3901,7 @@ app.put("/api/admin/products/:id", requireAdmin, async (req, res) => {
       now(),
       id
     );
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     const updated = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
     // Limpieza: si el producto tenía una imagen subida (BLOB en Turso) y ahora
@@ -3885,7 +3932,7 @@ app.patch("/api/admin/products/:id/available", requireAdmin, async (req, res) =>
     const { available } = req.body || {};
     const value = available === true || available === 1 ? 1 : 0;
     await db.prepare("UPDATE products SET available = ?, updated_at = ? WHERE id = ?").run(value, now(), id);
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     const updated = await db.prepare("SELECT * FROM products WHERE id = ?").get(id);
     res.json({ ok: true, product: productRowToAdmin(updated) });
@@ -3943,7 +3990,7 @@ app.put("/api/admin/extras/:extraId", requireAdmin, async (req, res) => {
       nowIso: now(),
     });
     if (result.updated === 0) return res.status(404).json({ error: "Adicional no encontrado" });
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     res.json({ ok: true, updated: result.updated });
   } catch (err) {
@@ -3969,7 +4016,7 @@ app.delete("/api/admin/products/:id", requireAdmin, async (req, res) => {
         console.error("DELETE /api/admin/products/:id (limpieza imagen):", delErr.message);
       }
     }
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     res.json({ ok: true });
   } catch (err) {
@@ -4005,7 +4052,7 @@ app.post("/api/admin/products/:id/move", requireAdmin, async (req, res) => {
       now(),
       neighbor.id
     );
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     res.json({ ok: true });
   } catch (err) {
@@ -4052,7 +4099,7 @@ app.post("/api/admin/categories", requireAdmin, async (req, res) => {
     const info = await db
       .prepare("INSERT INTO categories (branch, category_id, name, sort_order) VALUES (?, ?, ?, ?)")
       .run(branch, catId, catName, sortOrder);
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     const created = await db.prepare("SELECT * FROM categories WHERE id = ?").get(info.lastInsertRowid);
     res.json({
@@ -4081,7 +4128,7 @@ app.put("/api/admin/categories/:id", requireAdmin, async (req, res) => {
       row.branch,
       row.category_id
     );
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     const updated = await db.prepare("SELECT * FROM categories WHERE id = ?").get(id);
     res.json({ ok: true, category: toCategory(updated) });
@@ -4105,7 +4152,7 @@ app.delete("/api/admin/categories/:id", requireAdmin, async (req, res) => {
     await db.prepare("DELETE FROM products WHERE branch = ? AND category_id = ?").run(row.branch, row.category_id);
     await db.prepare("DELETE FROM categories WHERE id = ?").run(id);
     await deleteImagesFromProductUrls(doomedImages.map((p) => p.image));
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     res.json({ ok: true });
   } catch (err) {
@@ -4156,7 +4203,7 @@ app.put("/api/admin/groups", requireAdmin, async (req, res) => {
     await db.prepare(
       "UPDATE products SET group_name = ?, updated_at = ? WHERE branch = ? AND category_id = ? AND group_name = ?"
     ).run(newName, now(), branch, categoryId, oldName);
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     res.json({ ok: true, renamed: count });
   } catch (err) {
@@ -4184,7 +4231,7 @@ app.delete("/api/admin/groups", requireAdmin, async (req, res) => {
       .all(branch, categoryId, name);
     await db.prepare("DELETE FROM products WHERE branch = ? AND category_id = ? AND group_name = ?").run(branch, categoryId, name);
     await deleteImagesFromProductUrls(doomedImages.map((p) => p.image));
-    CATALOG = await buildCatalog();
+    await refreshCatalog();
     invalidateMenuCache();
     res.json({ ok: true, deleted: count });
   } catch (err) {

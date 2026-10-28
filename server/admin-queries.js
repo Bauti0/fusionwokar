@@ -179,7 +179,8 @@ export async function listCustomers(db, { scope, branch, search } = {}) {
        total,
        created_at
      FROM orders ${where}
-     ORDER BY created_at DESC`
+     ORDER BY created_at DESC
+     LIMIT 5000`
     )
     .all(...params);
 

@@ -21,7 +21,7 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
   }, []);
 
   return (
-    <div className="drawer" role="dialog" aria-modal="true" aria-label="Tu pedido">
+    <div data-testid="cart-drawer" className="drawer" role="dialog" aria-modal="true" aria-label="Tu pedido">
       <div className="drawer__backdrop" onClick={onBack} />
       <div className="drawer__sheet">
         <div className="drawer__head">
@@ -131,6 +131,7 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
         {items.length > 0 && (
           <div className="drawer__footer">
             <button
+              data-testid="checkout-btn"
               className="btn btn--primary btn--block"
               onClick={() => {
                 track("checkout_started");

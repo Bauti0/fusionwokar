@@ -87,11 +87,20 @@ export async function applyRefunds(db, orderId, { mpRefunds = [], patch, maxAtte
       updated_at: now(),
     };
     const cols = Object.keys(values);
+    // B-1: si el patch toca payment_status, el CAS también lo cubre. Sin esto,
+    // dos aprobaciones concurrentes (ambas leen refunded_amount = 0) matchean
+    // las dos y el segundo escritor dispara un order_created duplicado.
+    const casConds = ["id = ?", "refunded_amount = ?"];
+    const casParams = [orderId, row.refunded_amount || 0];
+    if ("payment_status" in extra) {
+      casConds.push("payment_status = ?");
+      casParams.push(row.payment_status);
+    }
     const changes = await db
       .prepare(
-        `UPDATE orders SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE id = ? AND refunded_amount = ?`
+        `UPDATE orders SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE ${casConds.join(" AND ")}`
       )
-      .run(...cols.map((c) => values[c]), orderId, row.refunded_amount || 0)
+      .run(...cols.map((c) => values[c]), ...casParams)
       .then((r) => r.changes);
 
     // changes === 1: ganamos la carrera. === 0: otro escribió primero → reintento.

@@ -646,6 +646,7 @@ export default function Checkout({
               reintentable (credenciales inválidas de MP) y la salida es
               WhatsApp. */}
           <button
+            data-testid="checkout-submit"
             className="btn btn--primary btn--block"
             onClick={
               serverError?.orderId && serverError.canRetry && onRetryPaymentLink
