@@ -163,10 +163,35 @@ await db.exec(`
     expected_amount INTEGER,
     difference INTEGER,
     notes TEXT NOT NULL DEFAULT '',
+    corrected_at TEXT,
+    deleted_at TEXT,
+    deleted_reason TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_cash_registers_branch ON cash_registers(branch);
+
+  -- Gastos de caja (descientan del efectivo esperado si son en efectivo).
+  -- payment_method: 'cash' | 'transfer' | 'card' | 'other'
+  -- Solo los 'cash' con cash_register_id vinculado a una caja abierta afectan el arqueo.
+  CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    branch TEXT NOT NULL,
+    cash_register_id INTEGER,           -- NULL si no es efectivo o no hay caja abierta
+    amount INTEGER NOT NULL,            -- pesos enteros, > 0
+    concept TEXT NOT NULL,              -- descripción obligatoria
+    category TEXT,                      -- opcional, texto libre
+    payment_method TEXT NOT NULL DEFAULT 'cash',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,           -- username de la sesión (nunca del body)
+    updated_by TEXT,
+    deleted_at TEXT,                    -- borrado lógico
+    deleted_by TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_expenses_branch ON expenses(branch);
+  CREATE INDEX IF NOT EXISTS idx_expenses_cash_register ON expenses(cash_register_id);
+  CREATE INDEX IF NOT EXISTS idx_expenses_deleted ON expenses(deleted_at);
 
   -- Correcciones de cierres de caja: solo superadmin puede leerlas.
   -- Una fila por CAMPO corregido (los de una misma corrección comparten
@@ -294,11 +319,18 @@ await ensureColumn("orders", "refunds_json", "refunds_json TEXT NOT NULL DEFAULT
 // DESPUÉS de agregar las columnas (sino falla en la DB vieja).
 await ensureColumn("orders", "client_request_id", "client_request_id TEXT");
 await ensureColumn("orders", "client_request_fingerprint", "client_request_fingerprint TEXT");
-
-// Timestamp de cuando un admin vio el pedido (para sonar aviso solo en pedidos
-// no vistos). NULL = no visto aún. Persistido en BD para compartir entre admins
-// y sobrevivir a limpiezas de caché.
-await ensureColumn("orders", "seen_at", "seen_at TEXT");
+// seen_at: timestamp de cuándo el admin abrió el detalle del pedido.
+// Backfill ÚNICO al crear la columna: pedidos existentes con status activo reciben su created_at
+// para que NO suenen al desplegar. En arranques posteriores no se toca.
+{
+  const cols = await db.prepare(`PRAGMA table_info(orders)`).all();
+  if (!cols.some((c) => c.name === "seen_at")) {
+    await db.batch([
+      { sql: "ALTER TABLE orders ADD COLUMN seen_at TEXT", args: [] },
+      { sql: `UPDATE orders SET seen_at = created_at WHERE seen_at IS NULL AND status != 'pending_payment'`, args: [] },
+    ], "write");
+  }
+}
 try {
   await db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_client_request
@@ -349,10 +381,38 @@ await db.exec("CREATE INDEX IF NOT EXISTS idx_events_visitor ON events(visitor_i
 // índice nuevo ANTES de dropear el viejo.
 await migrateCashRegisters(db, now());
 
-// Migración de datos: los extras de woks (salsas, palitos chinos, galletas)
-// se agrupan por categoría (subgroup) en el modal de personalización, con
-// subtítulos "SALSAS ADICIONALES" / "PALITOS DESCARTABLES" / "GALLETAS".
-// Idempotente: solo reescribe productos que aún no tienen "subgroup".
+// Tabla de horarios por sucursal (branch_hours)
+await db.exec(`
+  CREATE TABLE IF NOT EXISTS branch_hours (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    branch TEXT NOT NULL,
+    day_of_week INTEGER NOT NULL,  -- 0=domingo .. 6=sábado
+    slot INTEGER NOT NULL,         -- 0,1,2... para varias franjas por día
+    open_time TEXT NOT NULL,       -- 'HH:MM'
+    close_time TEXT NOT NULL,      -- 'HH:MM'
+    closed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT 'unknown',
+    UNIQUE(branch, day_of_week, slot)
+  );
+`);
+
+// Migración: agregar created_at/updated_at/updated_by a branch_hours si la tabla ya existía sin ellas
+async function ensureBranchHoursColumns() {
+  const cols = await db.prepare(`PRAGMA table_info(branch_hours)`).all();
+  if (!cols.some((c) => c.name === "created_at")) {
+    await db.exec(`ALTER TABLE branch_hours ADD COLUMN created_at TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!cols.some((c) => c.name === "updated_at")) {
+    await db.exec(`ALTER TABLE branch_hours ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!cols.some((c) => c.name === "updated_by")) {
+    await db.exec(`ALTER TABLE branch_hours ADD COLUMN updated_by TEXT NOT NULL DEFAULT 'unknown'`);
+  }
+}
+await ensureBranchHoursColumns();
+
 function modernizeExtras(extras) {
   return extras.map((e) => {
     if (typeof e.id === "string" && e.id.startsWith("salsa-")) {
@@ -479,11 +539,42 @@ export function toCategory(row) {
   };
 }
 
+// Siembra la tabla branch_hours a partir de branches.js si está vacía.
+export async function seedBranchHours() {
+  const count = (await db.prepare("SELECT COUNT(*) AS n FROM branch_hours").get()).n;
+  if (count > 0) return;
+
+  // Importar MENUS dinámicamente para evitar ciclo
+  const { MENUS } = await import("../src/data/menus.js");
+
+  const insert = db.prepare(`
+    INSERT INTO branch_hours (branch, day_of_week, slot, open_time, close_time, closed)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const [branchId, menu] of Object.entries(MENUS)) {
+    const b = menu.branch || MENUS[branchId]; // fallback
+    const windows = b?.openWindows || [];
+    for (const w of windows) {
+      const daySet = new Set(w.days);
+      for (let d = 0; d < 7; d++) {
+        if (!daySet.has(d)) continue;
+        let slot = 0;
+        for (const w2 of windows) {
+          if (!w2.days.includes(d)) continue;
+          await insert.run(branchId, d, slot, w2.from, w2.to, 0);
+          slot++;
+        }
+      }
+    }
+  }
+}
+
 // Las proyecciones públicas del pedido viven en public-order.js (puras, sin
 // side-effects) para que los tests las importen sin cargar este módulo, que
 // corre las migraciones contra Turso apenas se importa. Se reexportan acá
 // para no tocar los call sites (index.js las importa desde db.js).
-export { toPublicOrder, toPublicOrderPublic } from "./public-order.js";
+export { toPublicOrder, toPublicOrderPublic, toAdminOrder } from "./public-order.js";
 
 // Formatea el número de pedido a partir del id real que asigna la DB
 // (id AUTOINCREMENT → único por construcción, sin carrera de MAX+1).

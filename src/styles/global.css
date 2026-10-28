@@ -4371,3 +4371,335 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .orders-tabs {
   margin-bottom: 14px;
 }
+/* ============================================================
+   Arqueo de Caja: sección Gastos
+   Espaciado: lo manejan los contenedores con `gap`.
+   Los elementos hijos no llevan márgenes propios.
+   ============================================================ */
+
+/* ---- Aviso: sin caja abierta ---- */
+.cash-register__no-open {
+  text-align: center;
+  padding: 24px 16px;
+  background: var(--color-primary-soft);
+  border: 1px solid rgba(229, 52, 46, 0.25);
+  border-radius: var(--radius);
+  margin: 0 0 16px;
+}
+.cash-register__no-open-icon {
+  width: 48px; height: 48px;
+  color: var(--color-primary);
+  margin: 0 auto 10px;
+  opacity: 0.9;
+}
+.cash-register__no-open-title {
+  margin: 0 0 6px; font-size: 15px; font-weight: 700; color: var(--color-danger-text);
+}
+.cash-register__no-open-hint {
+  margin: 0; font-size: 13px; color: var(--color-text-soft);
+}
+
+/* ---- Ledger (apertura, cobrado, gastos, esperado) ---- */
+.cash-register__ledger {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 0 0 20px;
+}
+.cash-register__row {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 14.5px; padding: 8px 0;
+  color: var(--color-text);
+}
+.cash-register__row:not(:last-child) { border-bottom: 1px solid var(--color-border); }
+.cash-register__row--add { color: var(--color-success-text); }
+.cash-register__row--subtract { color: var(--color-primary); }
+.cash-register__row--highlight {
+  background: var(--color-primary-soft);
+  margin: 8px -16px -16px; padding: 14px 16px;
+  border-radius: 0 0 var(--radius) var(--radius);
+  font-size: 16px; font-weight: 800;
+  animation: cashHighlight 0.9s var(--ease) both;
+}
+@keyframes cashHighlight {
+  0% { background: var(--color-primary); color: #fff; }
+  100% { background: var(--color-primary-soft); color: var(--color-text); }
+}
+.cash-register__row.is-highlighted {
+  animation: cashHighlight 0.9s var(--ease) both;
+}
+.cash-register__since {
+  font-size: 12px; color: var(--color-text-mute); text-align: center; margin-top: 8px;
+}
+
+/* ---- Sección de gastos: un solo ritmo vertical ---- */
+.cash-register__expenses {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0 0 24px;
+}
+.cash-register__expenses-header {
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 12px;
+  margin: 0;
+}
+.cash-register__expenses-header h5 {
+  margin: 0; font-size: 14px; font-weight: 700; color: var(--color-text);
+}
+.cash-register__expenses-total {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: var(--color-text-soft);
+}
+.cash-register__expenses-total-label { font-weight: 600; }
+.cash-register__expenses-total-amount {
+  color: var(--color-primary); font-weight: 800;
+}
+.cash-register__expenses-count {
+  font-size: 12px; color: var(--color-text-mute); white-space: nowrap;
+}
+
+.cash-register__loading {
+  text-align: center; padding: 24px; color: var(--color-text-mute);
+}
+
+/* ---- Estado vacío ---- */
+.cash-register__expenses-empty {
+  text-align: center; padding: 32px 20px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  margin: 0;
+}
+.cash-register__empty-icon {
+  width: 56px; height: 56px;
+  color: var(--color-border-hi);
+  margin: 0 auto 16px;
+}
+.cash-register__empty-title {
+  margin: 0 0 8px; font-size: 15px; font-weight: 700; color: var(--color-text);
+}
+.cash-register__empty-hint {
+  margin: 0; font-size: 13px; color: var(--color-text-soft); line-height: 1.6;
+}
+
+/* ---- Botón "+ Nuevo gasto" ---- */
+.cash-register__add-expense-btn {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  margin: 0;
+  padding: 12px 20px;
+  min-height: 44px;          /* área de toque cómoda en celular */
+  line-height: 1.5;          /* evita que se corte el texto */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.cash-register__add-expense-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.cash-register__add-icon {
+  width: 18px; height: 18px; flex-shrink: 0;
+}
+
+/* ---- Formulario de gasto ---- */
+.cash-register__expense-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin: 0;
+  animation: fadeSlide 0.2s var(--ease) both;
+}
+.cash-register__editing-hint {
+  margin: 0; font-size: 13px; color: var(--color-text-soft);
+}
+.cash-register__editing-hint strong { color: var(--color-text); }
+
+.cash-register__form-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+@media (max-width: 480px) {
+  .cash-register__form-row { grid-template-columns: 1fr; }
+}
+
+.cash-register__field {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.cash-register__label {
+  font-size: 12.5px; font-weight: 700; color: var(--color-text-soft);
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.cash-register__required { color: var(--color-primary); margin-left: 2px; }
+
+.cash-register__amount-input {
+  position: relative;
+}
+.cash-register__currency {
+  position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+  color: var(--color-text-soft); font-weight: 700; font-size: 15px; pointer-events: none;
+}
+.cash-register__amount-input input {
+  width: 100%; border: 2px solid var(--color-border-control);
+  border-radius: var(--radius-sm); padding: 14px 16px 14px 42px;
+  background: var(--color-surface); color: var(--color-text);
+  font-size: 16px; font-weight: 700; letter-spacing: 0.5px;
+  outline: none;
+  transition: border-color .15s var(--ease), background .15s var(--ease), box-shadow .15s var(--ease);
+  -moz-appearance: textfield;
+}
+.cash-register__amount-input input::-webkit-outer-spin-button,
+.cash-register__amount-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.cash-register__amount-input input:focus {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  box-shadow: var(--ring-soft);
+}
+.cash-register__amount-input input::placeholder { color: var(--color-text-mute); }
+
+/* Dropdown de medio de pago: solo dentro de la sección de gastos */
+.cash-register__expenses .dropdown__trigger { min-height: 48px; }
+
+/* Chips de categoría */
+.cash-register__category-chips {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.cash-register__chip {
+  border: 1px solid var(--color-border-control);
+  background: var(--color-surface);
+  color: var(--color-text-soft);
+  border-radius: 999px; padding: 10px 16px;
+  font-size: 13px; font-weight: 600;
+  transition: all .15s var(--ease);
+}
+.cash-register__chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.cash-register__chip.is-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+/* Botones del formulario */
+.cash-register__form-actions {
+  display: flex; flex-direction: column; gap: 12px; margin: 0;
+}
+@media (min-width: 480px) {
+  .cash-register__form-actions { flex-direction: row; }
+}
+.cash-register__form-actions .btn { flex: 1; }
+
+/* ---- Lista de gastos ---- */
+.cash-register__expense-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cash-register__expense-item {
+  display: grid; grid-template-columns: 1fr auto auto;
+  gap: 16px; align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin: 0;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.cash-register__expense-item:hover {
+  border-color: var(--color-border-hi);
+  box-shadow: var(--shadow-sm);
+}
+@media (max-width: 560px) {
+  .cash-register__expense-item { grid-template-columns: 1fr; gap: 10px; }
+}
+
+.cash-register__expense-main { min-width: 0; }
+.cash-register__expense-concept {
+  display: block; font-weight: 700; font-size: 14.5px; color: var(--color-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.cash-register__expense-meta {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 12px; color: var(--color-text-soft);
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .cash-register__expense-meta { order: 3; width: 100%; }
+}
+
+.cash-register__category-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 700; color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border: 1px solid rgba(229, 52, 46, 0.25);
+  border-radius: 999px; padding: 3px 10px 3px 8px;
+  white-space: nowrap;
+}
+
+.cash-register__expense-side {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  text-align: right;
+}
+@media (max-width: 560px) {
+  .cash-register__expense-side { flex-direction: row; justify-content: space-between; align-items: center; width: 100%; }
+}
+
+.cash-register__expense-amount {
+  font-weight: 800; font-size: 15px; white-space: nowrap;
+}
+.cash-register__expense-amount.is-cash { color: var(--color-primary); }
+.cash-register__expense-amount.is-other { color: var(--color-text-soft); }
+
+.cash-register__no-affect {
+  display: inline-block; margin-top: 2px;
+  font-size: 10.5px; font-weight: 700;
+  color: var(--color-text-mute);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px; padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.cash-register__expense-actions {
+  display: flex; gap: 8px;
+}
+.cash-register__action-btn {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-soft);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: all .15s var(--ease);
+}
+.cash-register__action-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.cash-register__action-btn:disabled { opacity: 0.5; }
+.cash-register__action-btn svg { width: 20px; height: 20px; }
+
+/* Botones de icono: solo dentro de la sección de gastos */
+.cash-register__expenses .icon-btn {
+  width: 40px; height: 40px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-soft);
+}
+.cash-register__expenses .icon-btn:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.cash-register__expenses .icon-btn svg { width: 20px; height: 20px; }

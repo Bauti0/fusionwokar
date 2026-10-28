@@ -83,3 +83,13 @@ export function toPublicOrderPublic(row) {
     updatedAt: row.updated_at,
   };
 }
+
+// Proyección EXTENDIDA para panel admin: incluye seenAt (no va al cliente).
+export function toAdminOrder(row) {
+  const base = toPublicOrder(row);
+  if (!base) return null;
+  return {
+    ...base,
+    seenAt: row.seen_at || null,
+  };
+}

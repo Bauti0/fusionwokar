@@ -55,16 +55,15 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
                   )}
                   <div className="cart-item__info">
                     <p className="cart-item__name">{item.name}</p>
-                    {extras.length > 0 && (
+{/* Extras y opciones: los extras usan e.price, las opciones usan o.extraPrice */}
+                    {(item.extras || []).length > 0 && (
                       <p className="cart-item__extras">
-                        {extras.map((e) => `${e.label} (+${formatPrice(e.price)})`).join(", ")}
+                        {(item.extras || []).map((e) => `${e.label} (+${formatPrice(e.price)})`).join(", ")}
                       </p>
                     )}
-                    {options.length > 0 && (
+                    {(item.options || []).length > 0 && (
                       <p className="cart-item__extras">
-                        {options
-                          .map((o) => `${o.label}${o.extraPrice > 0 ? ` (+${formatPrice(o.extraPrice)})` : ""}`)
-                          .join(", ")}
+                        {(item.options || []).map((o) => `${o.label}${o.extraPrice > 0 ? ` (+${formatPrice(o.extraPrice)})` : ""}`).join(", ")}
                       </p>
                     )}
                     {item.notes && <p className="cart-item__extras">Nota: {item.notes}</p>}

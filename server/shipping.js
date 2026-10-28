@@ -92,13 +92,27 @@ function suspendProvider(name, ms = PROVIDER_SUSPEND_MS) {
 // Espaciado mínimo entre llamadas externas (~1.2 s) para ser amables con los
 // servicios gratuitos. Global: una petición externa por vez a lo sumo.
 let lastExternalCall = 0;
+// M-3: la cola era infinita. Un flood de cotizaciones acumulaba promesas
+// pendientes (cada una con su espera de 1.2 s) hasta agotar memoria/event
+// loop, y seguía encolando hacia servicios ya saturados. Con tope, lo que
+// excede responde transient (503) y el cliente reintenta más tarde.
+const MAX_EXTERNAL_QUEUE = 20;
+let externalQueueLength = 0;
 let externalQueue = Promise.resolve();
 function throttled(fn) {
+  if (externalQueueLength >= MAX_EXTERNAL_QUEUE) {
+    return Promise.reject(transient("El servicio de envío está saturado. Volvé a intentar en unos segundos."));
+  }
+  externalQueueLength += 1;
   const run = externalQueue.then(async () => {
-    const wait = Math.max(0, 1200 - (Date.now() - lastExternalCall));
-    if (wait) await sleep(wait);
-    lastExternalCall = Date.now();
-    return fn();
+    try {
+      const wait = Math.max(0, 1200 - (Date.now() - lastExternalCall));
+      if (wait) await sleep(wait);
+      lastExternalCall = Date.now();
+      return await fn();
+    } finally {
+      externalQueueLength -= 1;
+    }
   });
   externalQueue = run.catch(() => {});
   return run;

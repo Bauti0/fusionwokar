@@ -444,6 +444,39 @@ export function adminDeletedCashRegisters() {
   return request("/api/admin/cash-register/deleted");
 }
 
+// ---- gastos de caja (admin) ----
+// GET: lista gastos con filtros (from, to, branch). El server aplica scope.
+export function adminExpenses(params = {}) {
+  const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v)
+  ).toString();
+  return request(`/api/admin/expenses${qs ? `?${qs}` : ""}`);
+}
+
+// POST: crea un gasto. Si payment_method=cash, requiere caja abierta.
+export function adminCreateExpense(payload) {
+  return request("/api/admin/expenses", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// PATCH: edita un gasto. Si la caja vinculada está cerrada, el server recalcula y audita.
+export function adminUpdateExpense(id, payload) {
+  return request(`/api/admin/expenses/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+// DELETE: borra lógicamente un gasto (motivo obligatorio). Si era cash de caja cerrada, recalcula y audita.
+export function adminDeleteExpense(id, reason) {
+  return request(`/api/admin/expenses/${id}`, {
+    method: "DELETE",
+    body: JSON.stringify({ reason }),
+  });
+}
+
 // ---- carga manual de pedidos (admin) ----
 export function adminCreateManualOrder(payload) {
   return request("/api/admin/orders/manual", {
@@ -500,4 +533,16 @@ export function adminSetUserActive(id, active) {
 // Borrar una cuenta de sucursal (definitivo, solo superadmin).
 export function adminDeleteUser(id) {
   return request(`/api/admin/users/${id}`, { method: "DELETE" });
+}
+
+export function adminMarkSeen(id) {
+  return request(`/api/admin/orders/${id}/seen`, { method: "PATCH" });
+}
+
+export function adminGetUnseenIds() {
+  return request("/api/admin/orders/unseen");
+}
+
+export function adminMarkAllSeen(ids) {
+  return request("/api/admin/orders/seen-all", { method: "POST", body: JSON.stringify({ ids }) });
 }

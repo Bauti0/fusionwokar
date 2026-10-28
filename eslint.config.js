@@ -46,7 +46,7 @@ export default [
     // en runtime de Node). No son código del proyecto y el config por archivo
     // de abajo no les asigna `globals.node`, así que si entran al lint el
     // gate se cae con 110 no-undef falsos.
-    ignores: ["dist/**", "node_modules/**", "public/**", ".opencode/**"],
+    ignores: ["dist/**", "node_modules/**", "public/**", ".opencode/**", "test-branch-isolation.js", "test-quick.js"],
   },
 
   js.configs.recommended,

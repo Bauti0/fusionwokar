@@ -10,6 +10,7 @@ import {
   db,
   toPublicOrder,
   toPublicOrderPublic,
+  toAdminOrder,
   formatOrderNumber,
   saveProductImage,
   getProductImage,
@@ -18,6 +19,7 @@ import {
   toCategory,
   seedProducts,
   seedCategories,
+  seedBranchHours,
 } from "./db.js";
 import {
   createOrder,
@@ -33,8 +35,9 @@ import {
   buildOrderItems,
 } from "./mp.js";
 import { MENUS } from "../src/data/menus.js";
+import { BRANCHES } from "../src/data/branches.js";
 import { enhanceHtml } from "./seo.js";
-import { isOpenAtTime, toWallclock, outsideHoursMessage } from "../src/utils/schedule.js";
+import { toWallclock } from "../src/utils/schedule.js";
 import { computeShipping } from "./shipping.js";
 import {
   applyCoupon,
@@ -87,6 +90,7 @@ import {
   isCouponCodeTaken,
   listExtras,
   updateExtra,
+  getUnseenOrderIds,
 } from "./admin-queries.js";
 import { validateConfig } from "./config.js";
 import { orderLogLine } from "./order-log.js";
@@ -95,6 +99,7 @@ import { rowToCashRegister, correctCashRegister, getCashCorrections, deleteCashR
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from "../src/utils/validation.js";
+import { getBranchWindows, isOpenAtTime, validateBranchHours, replaceBranchHours, getBranchHoursForAdmin, outsideHoursMessage } from "./branch-hours.js";
 
 // ============================================================
 // FUSIÓN WOK — API + servidor de producción
@@ -199,6 +204,7 @@ runConfigCheck();
 // escribamos 97 productos en la base antes de descubrirlo.
 await seedProducts(MENUS);
 await seedCategories(MENUS);
+await seedBranchHours();
 
 // ---------- salud de las credenciales de Mercado Pago ----------
 // MP_ACCESS_TOKEN "estar presente" no significa "ser válido": un token revocado,
@@ -883,10 +889,10 @@ async function validateOrderBody(body, { requireEmail = false, requirePhone = tr
     }
     // El pedido programado debe caer dentro de la apertura de la sucursal
     // (ventanas definidas en src/data/branches.js, hora local argentina)
-    if (!isOpenAtTime(branch, toWallclock(iso, "America/Argentina/Buenos_Aires"))) {
+    if (!(await isOpenAtTime(db, branch, toWallclock(iso, "America/Argentina/Buenos_Aires")))) {
       // El texto se arma desde openWindows de la sucursal (ver BUG-04 en
       // src/utils/schedule.js): no hay horarios escritos a mano acá.
-      return { error: outsideHoursMessage(branch) };
+      return { error: await outsideHoursMessage(branch) };
     }
     scheduled = iso.toISOString();
   }
@@ -1432,31 +1438,15 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
     const demo = isDemoMode();
     const isMp = paymentMethod === "mercadopago";
 
-    // Reserva atómica del uso del cupón ANTES de cualquier await/insert:
-    // evita que dos checkouts simultáneos consuman el mismo cupón limitado.
-    // Primero se liberan reservas huérfanas de pedidos nunca pagados para que
-    // el cupo no se queme con pedidos en pending_payment abandonados, y de
-    // paso se cierran los que ya superaron las 24 h (BUG-08). OJO: acá solo se
-    // cancelan los pedidos SIN mp_order_id (CHECKOUT_EXPIRE_OPTIONS): el checkout
-    // no tiene barrido previo que confirme el estado real en MP, y un pendiente
-    // de 24 h puede ser un pago aprobado con el webhook perdido. Esos los
-    // cancela el timer, que barre antes de expirar (PAY-04).
+    // Libera reservas huérfanas y expira pagos abandonados ANTES de validar el cupón.
+    // Así el cupo disponible es real al momento de reservar.
     await releaseStaleCouponReservations(db);
     await expireAbandonedPayments(db, CHECKOUT_EXPIRE_OPTIONS);
-    let couponReserved = false;
-    if (couponCode) {
-      if (!(await reserveCoupon(db, couponCode, branch))) {
-        // El cupón se acaba de agotar, pero puede que lo haya agotado un request
-        // gemelo con la MISMA clave de idempotencia (dos tabs con el mismo
-        // intento). Antes de rechazar se re-consulta la clave: si el pedido ya
-        // está guardado, se lo devolvemos en vez de darle un 400 a un cliente
-        // que solo quiere recuperar lo que ya hizo.
-        if (await replayExistingOrder(req, res, { clientRequestId, fingerprint })) return;
-        warnOrder(ORDER_ROUTE, 400, { branch, orderMode, paymentMethod }, "El cupón ya no tiene usos disponibles");
-        return res.status(400).json({ error: "El cupón ya no tiene usos disponibles" });
-      }
-      couponReserved = true;
-    }
+    // NO reservamos el cupón acá: la reserva se hace DENTRO de la transacción
+    // del INSERT del pedido (ver insertOrderWithIdempotency). Así es atómico:
+    // o se crea el pedido Y se reserva el cupón, o no pasa nada (sin cupón
+    // quemado si falla el pedido).
+    let couponReserved = false; // se pone true dentro del batch si hay cupón
 
     const ts = now();
 
@@ -1493,7 +1483,7 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
           address,
           orderMode,
           paymentMethod,
-          isMp ? "pending" : "approved", // efectivo/transferencia pagan al recibir → se aprueba directo
+          isMp ? "pending" : "approved",
           isMp ? "pending_payment" : "received",
           JSON.stringify(items),
           total,
@@ -1504,14 +1494,26 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
           shipping.cost,
           shipping.blocks,
           shipping.pending ? 1 : 0,
-          // NULL cuando el cliente no mandó clave: el índice único es parcial
-          // sobre IS NOT NULL, así que todos los pedidos sin clave conviven.
           clientRequestId || null,
           fingerprint || null,
           ts,
           ts,
         ],
       },
+      // Reserva atómica del cupón DENTRO de la misma transacción:
+      // si el INSERT falla, la reserva se revierte automáticamente (no cupón quemado).
+      ...(couponCode
+        ? [
+            {
+              sql: `
+                UPDATE coupons SET used_count = used_count + 1, updated_at = ?
+                WHERE code = ? AND (branch = ? OR branch = '') AND active = 1
+                  AND (max_uses = 0 OR used_count < max_uses)
+              `,
+              args: [ts, couponCode, branch],
+            },
+          ]
+        : []),
       {
         // Número definitivo, derivado del id de la fila recién insertada
         sql: "UPDATE orders SET order_number = ? || printf('%05d', id), updated_at = ? WHERE id = last_insert_rowid()",
@@ -1529,13 +1531,14 @@ app.post("/api/orders", ordersRateLimit, async (req, res) => {
     // reserva de cupón huérfana y la fila que otro request ya creó, sin insertar
     // ni reservar nada. Cualquier otro error se propaga al catch general, que
     // responde 500 como antes.
+    // couponReserved: false porque la reserva va DENTRO del batch (atómica).
     const outcome = await insertOrderWithIdempotency(db, {
       stmts,
       clientRequestId,
       fingerprint,
       couponCode,
       branch,
-      couponReserved,
+      couponReserved: false,
     });
     if (outcome.conflict) {
       warnOrder(
@@ -2373,6 +2376,7 @@ app.post(
         envUser: ADMIN_USER,
         envPassword: ADMIN_PASSWORD,
       });
+      console.error('[DEBUG LOGIN] authenticateAdmin result:', admin);
       if (!admin.ok) {
         recordLoginFailure(req);
         return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
@@ -2492,7 +2496,7 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
       limit: req.query.limit,
     });
     res.json({
-      orders: rows.map(toPublicOrder),
+      orders: rows.map(toAdminOrder),
       total,
       page,
       limit,
@@ -2504,6 +2508,63 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
   }
 });
 
+// IDs de pedidos "en curso" sin seen_at (respeta scope, sin filtros de UI).
+// LO USA EL PANEL PARA SABER SI HAY PEDIDOS NUEVOS AUNQUE ESTÉN EN OTRA PÁGINA/FILTRO.
+// Debe ir ANTES de /:id para que Express no lo capture como parámetro.
+app.get("/api/admin/orders/unseen", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const branch = scope?.branch || null;
+    if (scope?.role === "branch_admin" && !branch) return res.json({ ids: [] });
+    const ids = await getUnseenOrderIds(db, branch);
+    res.json({ ids });
+  } catch (err) {
+    console.error("GET /api/admin/orders/unseen:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Marca MÚLTIPLES pedidos como vistos de una vez (respeta scope).
+app.post("/api/admin/orders/seen-all", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const branch = scope?.branch || null;
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "Faltan ids" });
+    const validIds = ids.filter((id) => Number.isInteger(id) && id > 0).slice(0, 200);
+    if (validIds.length === 0) return res.status(400).json({ error: "Ids inválidos" });
+    const placeholders = validIds.map(() => "?").join(",");
+    const params = [now(), ...validIds];
+    if (branch) {
+      params.splice(1, 0, branch);
+      await db.prepare(`UPDATE orders SET seen_at = ? WHERE id IN (${placeholders}) AND branch = ? AND seen_at IS NULL`).run(...params);
+    } else {
+      await db.prepare(`UPDATE orders SET seen_at = ? WHERE id IN (${placeholders}) AND seen_at IS NULL`).run(...params);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /api/admin/orders/seen-all:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// Marca un pedido como "visto" (corta el loop de sonido). Idempotente.
+// Actualiza SOLO seen_at (no updated_at) para no disparar polling innecesario.
+app.patch("/api/admin/orders/:id/seen", requireAdmin, async (req, res) => {
+  try {
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+    const row = await getOrderScoped(db, id, adminScope(req));
+    if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
+    if (row.seen_at) return res.json({ ok: true, already: true });
+    await db.prepare("UPDATE orders SET seen_at = ? WHERE id = ?").run(now(), id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /api/admin/orders/:id/seen:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
 app.get("/api/admin/orders/:id", requireAdmin, async (req, res) => {
   try {
     const id = paramId(req.params.id);
@@ -2511,7 +2572,7 @@ app.get("/api/admin/orders/:id", requireAdmin, async (req, res) => {
     // Pedido ajeno → 404 (no 403): no se confirma que exista.
     const row = await getOrderScoped(db, id, adminScope(req));
     if (!row) return res.status(404).json({ error: "Pedido no encontrado" });
-    res.json({ ...toPublicOrder(row), whatsappLink: orderWhatsAppLink(row, row.status) });
+    res.json({ ...toAdminOrder(row), whatsappLink: orderWhatsAppLink(row, row.status) });
   } catch (err) {
     console.error("GET /api/admin/orders/:id:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2580,7 +2641,7 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (req, res) => {
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
     res.json({
       ok: true,
-      order: toPublicOrder(updated),
+      order: toAdminOrder(updated),
       whatsappLink: orderWhatsAppLink(row, status),
     });
   } catch (err) {
@@ -2615,7 +2676,7 @@ app.post("/api/admin/orders/:id/shipping", requireAdmin, async (req, res) => {
       "UPDATE orders SET shipping = ?, shipping_km = ?, shipping_pending = 0, total = ?, updated_at = ? WHERE id = ?"
     ).run(shipping, km, newTotal, now(), id);
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-    res.json({ ok: true, order: toPublicOrder(updated) });
+    res.json({ ok: true, order: toAdminOrder(updated) });
   } catch (err) {
     console.error("POST /api/admin/orders/:id/shipping:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2689,7 +2750,7 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
         patch: markIfFullyRefunded,
       });
       const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-      return res.json({ ok: true, demo: true, order: toPublicOrder(updated) });
+      return res.json({ ok: true, demo: true, order: toAdminOrder(updated) });
     }
 
     if (!row.mp_order_id) {
@@ -2760,7 +2821,7 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
     await applyRefunds(db, row.id, { mpRefunds, patch: markIfFullyRefunded });
 
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-    res.json({ ok: true, order: toPublicOrder(updated) });
+    res.json({ ok: true, order: toAdminOrder(updated) });
   } catch (err) {
     console.error("POST /api/admin/orders/:id/refund:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -2792,7 +2853,7 @@ app.patch("/api/admin/orders/:id", requireAdmin, async (req, res) => {
     await applyOrderEdit(db, result);
 
     const updated = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
-    res.json({ ok: true, order: toPublicOrder(updated) });
+    res.json({ ok: true, order: toAdminOrder(updated) });
   } catch (err) {
     console.error("PATCH /api/admin/orders/:id:", err.message);
     res.status(500).json({ error: "Error interno" });
@@ -3027,30 +3088,322 @@ app.get("/api/admin/cash-register/:id/corrections", requireAdmin, async (req, re
   }
 });
 
+// ---------- gastos de caja ----------
+// GET /api/admin/expenses?from=&to=&branch=  (branch_admin ignora ?branch=)
+// POST /api/admin/expenses  { amount, concept, category?, payment_method? }
+// PATCH /api/admin/expenses/:id  { amount?, concept?, category?, payment_method? }
+// DELETE /api/admin/expenses/:id  { reason }  (borrado lógico, motivo obligatorio)
+const ALLOWED_PAYMENT_METHODS = ["cash", "transfer", "card", "other"];
+const MAX_EXPENSE_AMOUNT = 10_000_000;
+const MAX_CONCEPT_LENGTH = 200;
+const MAX_CATEGORY_LENGTH = 100;
+const MIN_REASON_LENGTH = 5;
+
+function validateExpenseInput(body, requireCashRegister) {
+  const { amount, concept, category, payment_method } = body || {};
+  if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_EXPENSE_AMOUNT) {
+    return { error: `Monto inválido: debe ser un entero entre 1 y ${MAX_EXPENSE_AMOUNT}` };
+  }
+  const c = String(concept ?? "").trim();
+  if (!c) return { error: "El concepto es obligatorio" };
+  if (c.length > MAX_CONCEPT_LENGTH) return { error: `El concepto no puede superar ${MAX_CONCEPT_LENGTH} caracteres` };
+  if (category !== undefined && category !== null && category !== "") {
+    const cat = String(category).trim();
+    if (cat.length > MAX_CATEGORY_LENGTH) return { error: `La categoría no puede superar ${MAX_CATEGORY_LENGTH} caracteres` };
+  }
+  const pm = payment_method || "cash";
+  if (!ALLOWED_PAYMENT_METHODS.includes(pm)) return { error: "Método de pago no permitido" };
+  if (pm === "cash" && requireCashRegister) {
+    // La validación de caja abierta se hace en el handler, acá solo validamos el input
+  }
+  return { amount, concept: c, category: category?.trim() || null, payment_method: pm };
+}
+
+app.get("/api/admin/expenses", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const { from, to, branch: queryBranch } = req.query;
+    const branch = scope || (scope ? undefined : queryBranch);
+    if (!branch && !scope) return res.status(400).json({ error: "Falta la sucursal" });
+
+    const conds = ["deleted_at IS NULL"];
+    const params = [];
+    if (branch) {
+      conds.push("branch = ?");
+      params.push(branch);
+    }
+    if (from) {
+      conds.push("created_at >= ?");
+      params.push(from);
+    }
+    if (to) {
+      conds.push("created_at <= ?");
+      params.push(to);
+    }
+    const where = `WHERE ${conds.join(" AND ")}`;
+    const rows = await db.prepare(`SELECT * FROM expenses ${where} ORDER BY created_at DESC LIMIT 200`).all(...params);
+    res.json({ expenses: rows });
+  } catch (err) {
+    console.error("GET /api/admin/expenses:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.post("/api/admin/expenses", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const { branch } = req.body || {};
+    const branchId = scope || branch;
+    if (!branchId) return res.status(400).json({ error: "Falta la sucursal" });
+    // Si el branch_admin manda un branch distinto al de su sesión, rechazar
+    if (req.admin?.role === "branch_admin" && branch && branch !== req.admin.branch) {
+      return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    }
+
+    // Validación de input
+    const validation = validateExpenseInput(req.body, true);
+    if (validation.error) return res.status(400).json({ error: validation.error });
+
+    const { amount, concept, category, payment_method } = validation;
+
+    // Si es efectivo, debe haber una caja ABIERTA en esa sucursal
+    let cashRegisterId = null;
+    if (payment_method === "cash") {
+      const open = await db
+        .prepare("SELECT id FROM cash_registers WHERE branch = ? AND closed_at IS NULL AND deleted_at IS NULL")
+        .get(branch);
+      if (!open) return res.status(400).json({ error: "Abrí la caja para cargar gastos en efectivo" });
+      cashRegisterId = open.id;
+    }
+
+    const ts = now();
+    const username = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+    const info = await db
+      .prepare(
+        `INSERT INTO expenses (branch, cash_register_id, amount, concept, category, payment_method, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(branch, cashRegisterId, amount, concept, category, payment_method, ts, ts, username);
+
+    const expense = await db.prepare("SELECT * FROM expenses WHERE id = ?").get(info.lastInsertRowid);
+    res.json({ ok: true, expense });
+  } catch (err) {
+    console.error("POST /api/admin/expenses:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.patch("/api/admin/expenses/:id", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+
+    const row = await db.prepare("SELECT * FROM expenses WHERE id = ? AND deleted_at IS NULL").get(id);
+    if (!row || (scope && row.branch !== scope)) return res.status(404).json({ error: "Gasto no encontrado" });
+
+    // Validación de input (campos opcionales en PATCH)
+    const { amount, concept, category, payment_method } = req.body || {};
+    const updates = [];
+    const args = [];
+
+    if (amount !== undefined) {
+      if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_EXPENSE_AMOUNT) {
+        return res.status(400).json({ error: `Monto inválido: debe ser un entero entre 1 y ${MAX_EXPENSE_AMOUNT}` });
+      }
+      updates.push("amount = ?");
+      args.push(amount);
+    }
+    if (concept !== undefined) {
+      const c = String(concept).trim();
+      if (!c) return res.status(400).json({ error: "El concepto es obligatorio" });
+      if (c.length > MAX_CONCEPT_LENGTH) return res.status(400).json({ error: `El concepto no puede superar ${MAX_CONCEPT_LENGTH} caracteres` });
+      updates.push("concept = ?");
+      args.push(c);
+    }
+    if (category !== undefined) {
+      const cat = category === null || category === "" ? null : String(category).trim();
+      if (cat && cat.length > MAX_CATEGORY_LENGTH) return res.status(400).json({ error: `La categoría no puede superar ${MAX_CATEGORY_LENGTH} caracteres` });
+      updates.push("category = ?");
+      args.push(cat);
+    }
+    if (payment_method !== undefined) {
+      if (!ALLOWED_PAYMENT_METHODS.includes(payment_method)) return res.status(400).json({ error: "Método de pago no permitido" });
+      // Si se cambia a cash, validar caja abierta; si se cambia de cash, cash_register_id se pone NULL
+      if (payment_method === "cash") {
+        const open = await db
+          .prepare("SELECT id FROM cash_registers WHERE branch = ? AND closed_at IS NULL AND deleted_at IS NULL")
+          .get(row.branch);
+        if (!open) return res.status(400).json({ error: "Abrí la caja para cargar gastos en efectivo" });
+        updates.push("cash_register_id = ?");
+        args.push(open.id);
+      } else if (row.payment_method === "cash" && payment_method !== "cash") {
+        updates.push("cash_register_id = ?");
+        args.push(null);
+      }
+      updates.push("payment_method = ?");
+      args.push(payment_method);
+    }
+
+    if (updates.length === 0) return res.json({ ok: true, expense: row, message: "Sin cambios" });
+
+    // Si el gasto ANTES era cash y tenía cash_register_id, y la caja estaba CERRADA:
+    // recalcular expected/difference de esa caja con la DIFERENCIA del monto (o cambio de método)
+    const wasCashWithRegister = row.payment_method === "cash" && row.cash_register_id;
+    const newAmount = amount !== undefined ? amount : row.amount;
+    const newPaymentMethod = payment_method !== undefined ? payment_method : row.payment_method;
+
+    const username = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+    const ts = now();
+    updates.push("updated_at = ?", "updated_by = ?");
+    args.push(ts, username, id);
+
+    await db.prepare(`UPDATE expenses SET ${updates.join(", ")} WHERE id = ?`).run(...args);
+
+    // Recalcular caja cerrada si el gasto original era cash y tenía caja vinculada
+    if (wasCashWithRegister && row.cash_register_id) {
+      const cash = await db.prepare("SELECT * FROM cash_registers WHERE id = ? AND deleted_at IS NULL").get(row.cash_register_id);
+      if (cash && cash.closed_at) {
+        // Si el nuevo método ya no es cash, el delta es -row.amount (quitamos todo el gasto)
+        // Si sigue siendo cash, el delta es newAmount - row.amount
+        const delta = newPaymentMethod === "cash" ? newAmount - row.amount : -row.amount;
+        const stmts = [
+          {
+            sql: `UPDATE cash_registers
+                  SET expected_amount = expected_amount - ?,
+                      difference = closing_counted - (expected_amount - ?),
+                      corrected_at = ?,
+                      updated_at = ?
+                  WHERE id = ?`,
+            args: [delta, delta, ts, ts, row.cash_register_id],
+          },
+          {
+            sql: `INSERT INTO cash_register_corrections
+                  (cash_register_id, admin_user_id, admin_username, admin_role, admin_branch,
+                   field, old_value, new_value, reason, created_at)
+                  VALUES (?, ?, ?, ?, ?, 'expenses', ?, ?, ?, ?)`,
+            args: [
+              row.cash_register_id,
+              req.admin?.userId ?? null,
+              username,
+              req.admin?.role ?? "unknown",
+              req.admin?.branch ?? "",
+              String(cash.expected_amount),
+              String(cash.expected_amount - delta),
+              newPaymentMethod === "cash" ? `Edición de gasto: ${row.concept}` : `Cambio a ${newPaymentMethod}: ${row.concept}`,
+              ts,
+            ],
+          },
+        ];
+        await db.batch(stmts, "write");
+      }
+    }
+
+    const updated = await db.prepare("SELECT * FROM expenses WHERE id = ?").get(id);
+    res.json({ ok: true, expense: updated });
+  } catch (err) {
+    console.error("PATCH /api/admin/expenses/:id:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.delete("/api/admin/expenses/:id", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const id = paramId(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
+
+    const { reason } = req.body || {};
+    const r = String(reason ?? "").trim();
+    if (r.length < MIN_REASON_LENGTH) return res.status(400).json({ error: `Motivo obligatorio (mínimo ${MIN_REASON_LENGTH} caracteres)` });
+
+    const row = await db.prepare("SELECT * FROM expenses WHERE id = ? AND deleted_at IS NULL").get(id);
+    if (!row || (scope && row.branch !== scope)) return res.status(404).json({ error: "Gasto no encontrado" });
+
+    // Si el gasto es de una caja CERRADA y es en efectivo: recalcular expected/difference
+    // y auditar en cash_register_corrections (igual que correctCashRegister)
+    if (row.payment_method === "cash" && row.cash_register_id) {
+      const cash = await db.prepare("SELECT * FROM cash_registers WHERE id = ? AND deleted_at IS NULL").get(row.cash_register_id);
+      if (cash && cash.closed_at) {
+        // Recalcular expected_amount y difference restando este gasto
+        const username = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+        const ts = now();
+
+        // Transacción atómica: UPDATE cash_registers + INSERT cash_register_corrections
+        const stmts = [
+          {
+            sql: `UPDATE cash_registers
+                  SET expected_amount = expected_amount - ?,
+                      difference = closing_counted - (expected_amount - ?),
+                      corrected_at = ?,
+                      updated_at = ?
+                  WHERE id = ?`,
+            args: [row.amount, row.amount, ts, ts, row.cash_register_id],
+          },
+          {
+            sql: `INSERT INTO cash_register_corrections
+                  (cash_register_id, admin_user_id, admin_username, admin_role, admin_branch,
+                   field, old_value, new_value, reason, created_at)
+                  VALUES (?, ?, ?, ?, ?, 'expenses', ?, ?, ?, ?)`,
+            args: [
+              row.cash_register_id,
+              req.admin?.userId ?? null,
+              username,
+              req.admin?.role ?? "unknown",
+              req.admin?.branch ?? "",
+              String(cash.expected_amount),
+              String(cash.expected_amount - row.amount),
+              r,
+              ts,
+            ],
+          },
+        ];
+        await db.batch(stmts, "write");
+      }
+    }
+
+    // Borrado lógico del gasto
+    const ts = now();
+    const username = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+    await db
+      .prepare("UPDATE expenses SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ? WHERE id = ?")
+      .run(ts, username, ts, username, id);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/expenses/:id:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
 // ---------- carga manual de pedidos (WhatsApp / mostrador) ----------
 app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
   try {
-    const { source } = req.body || {};
+    const { source, branch: bodyBranch } = req.body || {};
     if (!["whatsapp", "counter"].includes(source)) {
       return res.status(400).json({ error: "Origen inválido" });
     }
     // La sucursal del pedido manual sale de la SESIÓN, no del body:
     // el branch_admin carga SIEMPRE en la suya (body.branch se ignora);
     // el superadmin elige, pero tiene que existir de verdad.
-    const branchResult = effectiveBranch(req.admin, req.body?.branch);
+    const branchResult = effectiveBranch(req.admin, bodyBranch);
     if (branchResult.error) return res.status(400).json({ error: branchResult.error });
+    // Si el branch_admin manda un branch distinto al de su sesión, rechazar
+    if (req.admin?.role === "branch_admin" && bodyBranch && bodyBranch !== req.admin.branch) {
+      return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    }
     // El teléfono es OPCIONAL solo acá: el checkout público lo sigue
     // exigiendo (requirePhone default true). Si viene, se valida igual.
     const result = await validateOrderBody({ ...req.body, branch: branchResult.branch }, { requirePhone: false });
     if (result.error) return res.status(400).json({ error: result.error });
-    const { branch, customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
+    const { customer, orderMode, paymentMethod, address, items, notes, total, discount, couponCode, scheduledFor, shipping } = result.data;
+    const branch = branchResult.branch;
 
     const ts = now();
     // INSERT del pedido + número definitivo (derivado del id real) + evento
     // "order_created" en UN solo batch atómico (sin carrera de MAX(id)+1).
     const tmpNumber = `tmp-${randomBytes(8).toString("hex")}`;
-    const results = await db.batch(
-      [
+    const batch = [
         {
           sql: `INSERT INTO orders
           (order_number, branch, customer_name, customer_phone, customer_email, customer_first_name, customer_last_name, address, order_mode,
@@ -3082,6 +3435,19 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
             ts,
           ],
         },
+        // Reserva atómica del cupón DENTRO de la transacción.
+        ...(couponCode
+          ? [
+              {
+                sql: `
+                  UPDATE coupons SET used_count = used_count + 1, updated_at = ?
+                  WHERE code = ? AND (branch = ? OR branch = '') AND active = 1
+                    AND (max_uses = 0 OR used_count < max_uses)
+                `,
+                args: [ts, couponCode, branch],
+              },
+            ]
+          : []),
         {
           // Número definitivo, derivado del id de la fila recién insertada
           sql: "UPDATE orders SET order_number = ? || printf('%05d', id), updated_at = ? WHERE id = last_insert_rowid()",
@@ -3091,9 +3457,8 @@ app.post("/api/admin/orders/manual", requireAdmin, async (req, res) => {
           sql: "INSERT INTO events (type, branch, created_at) VALUES (?, ?, ?)",
           args: ["order_created", branch, ts],
         },
-      ],
-      "write"
-    );
+      ];
+      const results = await db.batch(batch, "write");
     const info = results[0];
     const orderId = Number(info.lastInsertRowid);
     const orderNumber = formatOrderNumber(orderId);
@@ -3173,6 +3538,80 @@ app.put("/api/admin/branch-pause", requireAdmin, async (req, res) => {
     res.json({ ok: true, branch, pause: state });
   } catch (err) {
     console.error("PUT /api/admin/branch-pause:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- horarios por sucursal (público: solo lectura) ----------
+// GET /api/branch-hours/:branchId → horarios de una sucursal para el cliente
+// Usa BD con respaldo a branches.js. Nunca falla mostrando todo cerrado.
+// Cache-Control corto: el cliente re-pide cada 2-3 min y al enfocar la pestaña.
+app.get("/api/branch-hours/:branchId", async (req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  const branchId = String(req.params.branchId || "").trim();
+  try {
+    if (!BRANCHES[branchId]) return res.status(404).json({ error: "Sucursal no encontrada" });
+    const hours = await getBranchHoursForAdmin(db, branchId);
+    // Convertir a formato simple para el cliente
+    const days = [];
+    for (let d = 0; d < 7; d++) {
+      const day = hours[d] || { closed: true, slots: [] };
+      days.push({
+        dayOfWeek: d,
+        closed: day.closed,
+        slots: day.slots.map((s) => ({ open: s.open, close: s.close })),
+      });
+    }
+    res.json({ branch: branchId, days });
+  } catch (err) {
+    console.error("GET /api/branch-hours/:branchId:", err.message);
+    // Respaldo: devolver horarios de branches.js para no romper el cliente
+    const b = BRANCHES[branchId];
+    if (b?.openWindows) {
+      const days = [];
+      for (let d = 0; d < 7; d++) {
+        const slots = b.openWindows.filter((w) => w.days.includes(d)).map((w) => ({ open: w.from, close: w.to }));
+        days.push({ dayOfWeek: d, closed: slots.length === 0, slots });
+      }
+      return res.json({ branch: branchId, days, fallback: true });
+    }
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- horarios por sucursal (admin) ----------
+// GET /api/admin/branch-hours → horarios de las sucursales visibles para la sesión
+app.get("/api/admin/branch-hours", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const branches = scope ? [scope] : Object.keys(BRANCHES);
+    const result = {};
+    for (const b of branches) {
+      result[b] = await getBranchHoursForAdmin(db, b);
+    }
+    res.json({ hours: result });
+  } catch (err) {
+    console.error("GET /api/admin/branch-hours:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// PUT /api/admin/branch-hours → reemplazar horarios de una sucursal (todo o nada)
+app.put("/api/admin/branch-hours", requireAdmin, async (req, res) => {
+  try {
+    const scope = adminScope(req);
+    const { branch, hours } = req.body || {};
+    if (!branch || !BRANCHES[branch]) return res.status(400).json({ error: "Sucursal inválida" });
+    // branch_admin solo puede editar su sucursal
+    if (scope && branch !== scope) return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    if (!hours || typeof hours !== "object") return res.status(400).json({ error: "Faltan horarios" });
+
+    const updatedBy = req.admin?.username || (req.admin?.role === "superadmin" ? "superadmin" : "unknown");
+    const result = await replaceBranchHours(db, branch, hours, now(), updatedBy);
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("PUT /api/admin/branch-hours:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });
@@ -3308,12 +3747,22 @@ async function ensureCategoryRow(branch, categoryId, categoryName) {
 app.post("/api/admin/products", requireAdmin, async (req, res) => {
   try {
     const { branch, ...rest } = req.body || {};
-    // La sucursal sale de la SESIÓN: el branch_admin crea SIEMPRE en
-    // la suya (body.branch se ignora); el superadmin elige, pero
-    // tiene que existir de verdad (misma validación que antes).
+    // Branch isolation: branch_admin solo puede crear en SU sucursal
+    const isBranchAdmin = req.admin?.role === "branch_admin";
+    const bodyBranch = branch;
+    const adminBranch = req.admin?.branch;
+    const checkResult = { isBranchAdmin, bodyBranch, adminBranch, different: bodyBranch && bodyBranch !== adminBranch };
+    console.error('[DEBUG-PRODUCTS] CHECK:', checkResult);
+    if (isBranchAdmin && bodyBranch && bodyBranch !== adminBranch) {
+      console.error('[DEBUG-PRODUCTS] REJECTING - branch_admin tried to create in different branch:', { bodyBranch, adminBranch });
+      return res.status(403).json({ error: "No autorizado para esta sucursal", test: "REJECTED-v2", debug: checkResult });
+    }
+    // Always include debug info in response for testing
     const branchResult = effectiveBranch(req.admin, branch);
     if (branchResult.error) return res.status(400).json({ error: branchResult.error });
     const branchId = branchResult.branch;
+    // Add debug info to all responses for testing
+    res.setHeader('X-Debug-Check', JSON.stringify(checkResult));
     // Si no se manda categoryId pero sí categoryName, se genera el slug
     if (!rest.categoryId && rest.categoryName) {
       rest.categoryId = slugify(rest.categoryName);
@@ -3578,12 +4027,16 @@ function catScope(req) {
 
 app.post("/api/admin/categories", requireAdmin, async (req, res) => {
   try {
-    const { name } = req.body || {};
+    const { name, branch } = req.body || {};
     // La sucursal sale de la SESIÓN (igual que POST /products):
     // branch_admin → SIEMPRE la suya; superadmin → la del body.
-    const branchResult = effectiveBranch(req.admin, req.body?.branch);
+    const branchResult = effectiveBranch(req.admin, branch);
     if (branchResult.error) return res.status(400).json({ error: branchResult.error });
-    const branch = branchResult.branch;
+    // Si el branch_admin manda un branch distinto al de su sesión, rechazar
+    if (req.admin?.role === "branch_admin" && branch && branch !== req.admin.branch) {
+      return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    }
+    const branchId = branchResult.branch;
     const catName = String(name || "").trim();
     if (!catName || catName.length > 120) return res.status(400).json({ error: "Nombre de categoría inválido" });
     let catId = slugify(catName);
@@ -3782,9 +4235,13 @@ app.get("/api/admin/coupons", requireAdmin, async (req, res) => {
 
 app.post("/api/admin/coupons", requireAdmin, async (req, res) => {
   try {
-    const { code, type, value, minTotal, maxUses, active, expiresAt } = req.body || {};
-    const branch = couponBranchFor(req);
-    if (branch === null) return res.status(400).json({ error: "Sucursal inválida" });
+    const { code, type, value, minTotal, maxUses, active, expiresAt, branch } = req.body || {};
+    const branchResult = couponBranchFor(req);
+    if (branchResult === null) return res.status(400).json({ error: "Sucursal inválida" });
+    // Si el branch_admin manda un branch distinto al de su sesión, rechazar
+    if (req.admin?.role === "branch_admin" && branch && branch !== req.admin.branch) {
+      return res.status(403).json({ error: "No autorizado para esta sucursal" });
+    }
     const cleanCode = String(code || "").trim().toUpperCase();
     if (!/^[A-Z0-9_-]{2,30}$/.test(cleanCode)) return res.status(400).json({ error: "Código de cupón inválido" });
     if (!["percent", "fixed"].includes(type)) return res.status(400).json({ error: "Tipo de cupón inválido" });
@@ -4212,3 +4669,14 @@ app.listen(PORT, () => {
   console.log(`🌱 Fusión Wok API corriendo en http://localhost:${PORT}`);
   console.log(`   Modo demo: ${isDemoMode() ? "SÍ (sin credenciales reales)" : "NO (Mercado Pago real)"}`);
 });
+
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
+
+// Keep process alive
+setInterval(() => {}, 1000);
