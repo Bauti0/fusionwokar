@@ -45,6 +45,9 @@ import AdminCustomers from "./AdminCustomers.jsx";
 import AdminSales from "./AdminSales.jsx";
 import AdminNewOrder from "./AdminNewOrder.jsx";
 import AdminUsers from "./AdminUsers.jsx";
+import ErrorBoundary from "./ui/ErrorBoundary.jsx";
+import { SectionFallback } from "./ui/ErrorFallbacks.jsx";
+import { useCrashTest } from "../hooks/useCrashTest.js";
 
 // ============================================================
 // AdminPanel — gestión de pedidos
@@ -215,6 +218,18 @@ export default function AdminPanel({ me, onLogout }) {
   const [pauseTarget, setPauseTarget] = useState(null);
   const [pauseBusyId, setPauseBusyId] = useState("");
   const dialogRef = useDialogA11y({ onClose: () => setSelected(null), isActive: !!selected });
+
+  // Crash test mode (solo DEV): ?crash=orders|stats|products|extras|coupons|customers|sales|users|neworder|admin
+  useCrashTest("orders");
+  useCrashTest("stats");
+  useCrashTest("products");
+  useCrashTest("extras");
+  useCrashTest("coupons");
+  useCrashTest("customers");
+  useCrashTest("sales");
+  useCrashTest("users");
+  useCrashTest("neworder");
+  useCrashTest("admin");
 
   // "Rehacer": abre "Nuevo pedido" precargado con los productos, cantidades,
   // modo de entrega y datos del cliente del pedido original. No copia pago,
@@ -767,40 +782,96 @@ export default function AdminPanel({ me, onLogout }) {
 
         <div className="container admin__body">
 
-        {section === "stats" && <AdminStats me={me} />}
+        {section === "stats" && (
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las estadísticas" />}
+            resetKeys={['section']}
+          >
+            <AdminStats me={me} />
+          </ErrorBoundary>
+        )}
 
-        {section === "products" && <AdminProducts me={me} />}
+        {section === "products" && (
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los productos" />}
+            resetKeys={['section']}
+          >
+            <AdminProducts me={me} />
+          </ErrorBoundary>
+        )}
 
-        {section === "extras" && <AdminExtras me={me} />}
+        {section === "extras" && (
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los adicionales" />}
+            resetKeys={['section']}
+          >
+            <AdminExtras me={me} />
+          </ErrorBoundary>
+        )}
 
-        {section === "coupons" && <AdminCoupons me={me} />}
+        {section === "coupons" && (
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los cupones" />}
+            resetKeys={['section']}
+          >
+            <AdminCoupons me={me} />
+          </ErrorBoundary>
+        )}
 
-        {section === "customers" && <AdminCustomers me={me} />}
+        {section === "customers" && (
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los clientes" />}
+            resetKeys={['section']}
+          >
+            <AdminCustomers me={me} />
+          </ErrorBoundary>
+        )}
 
-        {section === "sales" && <AdminSales me={me} />}
+        {section === "sales" && (
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las ventas" />}
+            resetKeys={['section']}
+          >
+            <AdminSales me={me} />
+          </ErrorBoundary>
+        )}
 
         {section === "users" && me?.role === "superadmin" && (
-          <AdminUsers me={me} onLogout={onLogout} />
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las cuentas" />}
+            resetKeys={['section']}
+          >
+            <AdminUsers me={me} onLogout={onLogout} />
+          </ErrorBoundary>
         )}
 
         {section === "new-order" && (
-          <AdminNewOrder
-            onBack={() => {
-              setRepeatOrder(null);
-              setSection("orders");
-            }}
-            onCreated={() => {
-              setRepeatOrder(null);
-              load({ showSpinner: false });
-            }}
-            initialBranch={branch}
-            fixedBranch={isBranchAdmin ? me.branch : ""}
-            repeatOrder={repeatOrder}
-          />
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="el nuevo pedido" />}
+            resetKeys={['section', 'repeatOrder?.id']}
+          >
+            <AdminNewOrder
+              onBack={() => {
+                setRepeatOrder(null);
+                setSection("orders");
+              }}
+              onCreated={() => {
+                setRepeatOrder(null);
+                load({ showSpinner: false });
+              }}
+              initialBranch={branch}
+              fixedBranch={isBranchAdmin ? me.branch : ""}
+              repeatOrder={repeatOrder}
+            />
+          </ErrorBoundary>
         )}
 
         {section === "orders" && (
-        <>
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="la lista de pedidos" />}
+            resetKeys={['section', 'branch', 'status', 'payment', 'search', 'includePending']}
+          >
+            <>
         <div className="admin-orders-head">
           {today && (
           <div className="admin-day">
@@ -1115,6 +1186,7 @@ const renderOrder = (o) => {
           </button>
         )}
         </>
+        </ErrorBoundary>
         )}
       </div>
       </div>

@@ -14,6 +14,9 @@ import MenuSkeleton from "./MenuSkeleton.jsx";
 import CartBar from "./CartBar.jsx";
 import Toast from "./Toast.jsx";
 import { Link } from "react-router-dom";
+import ErrorBoundary from "./ui/ErrorBoundary.jsx";
+import { SectionFallback } from "./ui/ErrorFallbacks.jsx";
+import { useCrashTest } from "../hooks/useCrashTest.js";
 
 // Vistas que solo se necesitan en ciertos pasos del flujo (carrito, pago…):
 // se cargan bajo demanda para no inflar el bundle inicial de la tienda.
@@ -140,6 +143,15 @@ export default function StoreApp() {
   // además tras el éxito y tras cualquier rechazo 4xx (el frontend los trata
   // como "empezá de cero") y al repetir un pedido desde Mis pedidos.
   const orderAttemptRef = useRef(null);
+
+  // Crash test mode (solo DEV): ?crash=cart|checkout|menu|myorders|success|payment|paymentresult
+  useCrashTest("cart");
+  useCrashTest("checkout");
+  useCrashTest("menu");
+  useCrashTest("myorders");
+  useCrashTest("success");
+  useCrashTest("payment");
+  useCrashTest("paymentresult");
 
   const branch = BRANCHES[branchId];
   // El menú viene de la API (BD, editable desde el panel). Si falla, se usa
@@ -665,46 +677,66 @@ export default function StoreApp() {
 
       {view === VIEWS.menu && (
         <>
-          <Menu menu={menu} branch={branch} pause={pause} orderMode={orderMode} onAdd={handleAdd} qtys={cartQtys} />
+          <ErrorBoundary
+            fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="el menú" />}
+            resetKeys={[branchId, menu?.updatedAt]}
+          >
+            <Menu menu={menu} branch={branch} pause={pause} orderMode={orderMode} onAdd={handleAdd} qtys={cartQtys} />
+          </ErrorBoundary>
           <CartBar count={cart.count} total={cart.total} onView={() => setCartOpen(true)} />
         </>
       )}
 
       {cartOpen && (
-        <CartView
-          cart={cart}
-          branch={branch}
-          onBack={() => setCartOpen(false)}
-          onCheckout={() => {
-            setCartOpen(false);
-            setView(VIEWS.checkout);
-          }}
-        />
+        <ErrorBoundary
+          fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="el carrito" />}
+          resetKeys={[cartOpen, cart.items.length]}
+        >
+          <CartView
+            cart={cart}
+            branch={branch}
+            onBack={() => setCartOpen(false)}
+            onCheckout={() => {
+              setCartOpen(false);
+              setView(VIEWS.checkout);
+            }}
+          />
+        </ErrorBoundary>
       )}
 
       {view === VIEWS.checkout && (
-        <Checkout
-          branch={branch}
-          cart={cart}
-          customer={customer}
-          orderMode={orderMode}
-          setOrderMode={setOrderMode}
-          onConfirm={handleConfirmCheckout}
-          serverError={checkoutError}
-          onClearServerError={() => setCheckoutError(null)}
-          onRetryPaymentLink={handleRetryPaymentLink}
-          retryingLink={retryingLink}
-          pause={pause}
-        />
+        <ErrorBoundary
+          fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="el checkout" />}
+          resetKeys={[view, branchId]}
+        >
+          <Checkout
+            branch={branch}
+            cart={cart}
+            customer={customer}
+            orderMode={orderMode}
+            setOrderMode={setOrderMode}
+            onConfirm={handleConfirmCheckout}
+            serverError={checkoutError}
+            onClearServerError={() => setCheckoutError(null)}
+            onRetryPaymentLink={handleRetryPaymentLink}
+            retryingLink={retryingLink}
+            pause={pause}
+          />
+        </ErrorBoundary>
       )}
 
       {view === VIEWS.myOrders && (
-        <MyOrders
-          cart={cart}
-          branch={branch}
-          onBack={() => setView(branch ? VIEWS.menu : VIEWS.landing)}
-          onRepeat={handleRepeat}
-        />
+        <ErrorBoundary
+          fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="tus pedidos" />}
+          resetKeys={[view, branchId]}
+        >
+          <MyOrders
+            cart={cart}
+            branch={branch}
+            onBack={() => setView(branch ? VIEWS.menu : VIEWS.landing)}
+            onRepeat={handleRepeat}
+          />
+        </ErrorBoundary>
       )}
 
       {view === VIEWS.success && (
