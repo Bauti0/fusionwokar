@@ -199,6 +199,7 @@ export async function listCustomers(db, { scope, branch, search } = {}) {
 // ============================================================
 
 // Efectivo aprobado (no cancelado) de una sucursal desde una fecha.
+// Lo esperado de la caja = apertura + esto.
 async function cashIncomeSince(db, branch, sinceIso) {
   const row = await db
     .prepare(
@@ -207,19 +208,6 @@ async function cashIncomeSince(db, branch, sinceIso) {
        AND status != 'cancelled' AND created_at >= ?`
     )
     .get(branch, sinceIso);
-  return Number(row.s) || 0;
-}
-
-// Gastos en efectivo vinculados a una caja desde su apertura.
-// Solo cuenta gastos con payment_method = 'cash' y sin deleted_at.
-async function cashExpensesSince(db, cashRegisterId, sinceIso) {
-  const row = await db
-    .prepare(
-      `SELECT COALESCE(SUM(amount), 0) AS s FROM expenses
-     WHERE cash_register_id = ? AND payment_method = 'cash' AND deleted_at IS NULL
-       AND created_at >= ?`
-    )
-    .get(cashRegisterId, sinceIso);
   return Number(row.s) || 0;
 }
 
@@ -244,9 +232,7 @@ export async function getCashRegisterState(db, scope, requestedBranch) {
 
   let expectedNow = null;
   if (open) {
-    const income = await cashIncomeSince(db, branch, open.opened_at);
-    const expenses = await cashExpensesSince(db, open.id, open.opened_at);
-    expectedNow = open.opening_amount + income - expenses;
+    expectedNow = open.opening_amount + (await cashIncomeSince(db, branch, open.opened_at));
   }
   return { open, history, expectedNow };
 }
@@ -296,9 +282,7 @@ export async function closeCashRegister(db, id, { counted, notes, scope, nowIso 
   const monto = Number(counted);
   if (!Number.isFinite(monto) || monto < 0) return { error: "Monto contado inválido", status: 400 };
 
-  const income = await cashIncomeSince(db, row.branch, row.opened_at);
-  const expenses = await cashExpensesSince(db, row.id, row.opened_at);
-  const expected = row.opening_amount + income - expenses;
+  const expected = row.opening_amount + (await cashIncomeSince(db, row.branch, row.opened_at));
   const difference = Math.round(monto) - expected;
 
   await db.prepare(
