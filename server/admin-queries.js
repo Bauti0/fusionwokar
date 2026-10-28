@@ -488,16 +488,21 @@ export async function getScopedCategory(db, id, scope) {
 // ============================================================
 // Cupones del panel (antes inline en GET /api/admin/coupons).
 //
-// Con scope de branch_admin ve SOLO los cupones de su sucursal:
-// ni los de la otra ni los globales (branch '', que crea el dueño
-// y valen en ambas). El superadmin (scope null) sigue viendo todo.
+// Con scope de branch_admin ve los cupones de su sucursal + los
+// globales (branch '', que crea el dueño y valen en ambas).
+// El superadmin (scope null) sigue viendo todo.
 //
 // El used_count es POR FILA: el de un cupón local refleja solo los
 // usos de su sucursal, sin cálculo extra en el endpoint.
 // ============================================================
 export async function listCoupons(db, { scope } = {}) {
-  const where = scope ? "WHERE branch = ?" : "";
-  const params = scope ? [scope] : [];
+  let where = "";
+  let params = [];
+  if (scope) {
+    // branch_admin: su sucursal + globales (branch = '')
+    where = "WHERE branch = ? OR branch = ''";
+    params = [scope];
+  }
   return db.prepare(`SELECT * FROM coupons ${where} ORDER BY id DESC`).all(...params);
 }
 

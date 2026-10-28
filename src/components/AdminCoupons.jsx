@@ -39,8 +39,8 @@ function typeLabel(type, value) {
 }
 
 // Etiqueta de la sucursal del cupón para el badge de la lista.
-function branchLabel(branch) {
-  if (!branch) return "🌐 Global";
+function branchLabel(branch, isGlobal) {
+  if (isGlobal) return "🌐 Global";
   return BRANCH_LIST.find((b) => b.id === branch)?.name || branch;
 }
 
@@ -139,32 +139,48 @@ export default function AdminCoupons({ me }) {
         <div className="admin-empty">Todavía no hay cupones. Creá uno para ofrecer descuentos.</div>
       ) : (
         <div className="coupons-list">
-          {coupons.map((c) => (
-            <div className={`coupon-card ${c.active ? "" : "is-hidden"}`} key={c.id}>
-              <div className="coupon-card__main">
-                <strong className="coupon-card__code">{c.code}</strong>
-                <span className="badge badge--branch">{branchLabel(c.branch)}</span>
-                <span className="coupon-card__value">{typeLabel(c.type, c.value)}</span>
+          {coupons.map((c) => {
+            const isGlobal = c.isGlobal === true;
+            const canEdit = !isBranchAdmin || !isGlobal; // branch_admin no edita globales
+            const canDelete = !isBranchAdmin || !isGlobal; // branch_admin no borra globales
+            const canToggle = !isBranchAdmin || !isGlobal; // branch_admin no activa/desactiva globales
+            return (
+              <div className={`coupon-card ${c.active ? "" : "is-hidden"} ${isGlobal ? "is-global" : ""}`} key={c.id}>
+                <div className="coupon-card__main">
+                  <strong className="coupon-card__code">{c.code}</strong>
+                  <span className="badge badge--branch">{branchLabel(c.branch, isGlobal)}</span>
+                  <span className="coupon-card__value">{typeLabel(c.type, c.value)}</span>
+                </div>
+                <div className="coupon-card__meta">
+                  {c.minTotal > 0 && <span>Mínimo {formatPrice(c.minTotal)}</span>}
+                  {c.maxUses > 0 && <span>{c.usedCount}/{c.maxUses} usos</span>}
+                  {c.expiresAt && <span>Vence {new Date(c.expiresAt).toLocaleDateString("es-AR")}</span>}
+                  {!c.expiresAt && <span>Sin vencimiento</span>}
+                  {isGlobal && <span className="coupon-global-badge">Global</span>}
+                </div>
+                <div className="coupon-card__actions">
+                  {canEdit && (
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      onClick={() => { setForm({ code: c.code, type: c.type, value: c.value, minTotal: c.minTotal || "", maxUses: c.maxUses || "", expiresAt: c.expiresAt || "" }); setEditing(c.id); setCreating(true); setError(""); }}
+                      aria-label={`Editar cupón ${c.code}`}
+                    ><IconEdit style={{ width: 13, height: 13 }} /></button>
+                  )}
+                  {canToggle && (
+                    <button className="btn btn--ghost btn--sm" onClick={() => handleToggle(c)}>
+                      {c.active ? "🙈 Desactivar" : "👁️ Activar"}
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button className="btn btn--danger btn--sm" onClick={() => handleDelete(c)} aria-label={`Eliminar cupón ${c.code}`}><IconTrash style={{ width: 13, height: 13 }} /></button>
+                  )}
+                  {isGlobal && isBranchAdmin && (
+                    <span className="coupon-readonly-hint" title="Los cupones globales los gestiona el superadmin">🔒 Solo lectura</span>
+                  )}
+                </div>
               </div>
-              <div className="coupon-card__meta">
-                {c.minTotal > 0 && <span>Mínimo {formatPrice(c.minTotal)}</span>}
-                {c.maxUses > 0 && <span>{c.usedCount}/{c.maxUses} usos</span>}
-                {c.expiresAt && <span>Vence {new Date(c.expiresAt).toLocaleDateString("es-AR")}</span>}
-                {!c.expiresAt && <span>Sin vencimiento</span>}
-              </div>
-              <div className="coupon-card__actions">
-                <button
-                  className="btn btn--ghost btn--sm"
-                  onClick={() => { setForm({ code: c.code, type: c.type, value: c.value, minTotal: c.minTotal || "", maxUses: c.maxUses || "", expiresAt: c.expiresAt || "" }); setEditing(c.id); setCreating(true); setError(""); }}
-                  aria-label={`Editar cupón ${c.code}`}
-                ><IconEdit style={{ width: 13, height: 13 }} /></button>
-                <button className="btn btn--ghost btn--sm" onClick={() => handleToggle(c)}>
-                  {c.active ? "🙈 Desactivar" : "👁️ Activar"}
-                </button>
-                <button className="btn btn--danger btn--sm" onClick={() => handleDelete(c)} aria-label={`Eliminar cupón ${c.code}`}><IconTrash style={{ width: 13, height: 13 }} /></button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
