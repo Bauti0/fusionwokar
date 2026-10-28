@@ -4273,6 +4273,7 @@ app.delete("/api/admin/groups", requireAdmin, async (req, res) => {
 
 // ---------- cupones (admin) ----------
 function couponRowToAdmin(row) {
+  const isGlobal = row.branch === "";
   return {
     id: row.id,
     code: row.code,
@@ -4285,6 +4286,7 @@ function couponRowToAdmin(row) {
     expiresAt: row.expires_at || "",
     createdAt: row.created_at,
     branch: row.branch || "",
+    isGlobal,
   };
 }
 
