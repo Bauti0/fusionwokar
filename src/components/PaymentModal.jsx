@@ -97,18 +97,9 @@ export default function PaymentModal({ orderId, orderNumber, demo, checkoutUrl, 
     }
   }
 
-  // Redirección al checkout de Mercado Pago. Se dispara sola a los 2 s: el
-  // flujo estándar de Checkout Pro es que el cliente pague en el entorno de
-  // MP y vuelva. El botón queda por si el navegador bloquea la navegación.
-  useEffect(() => {
-    if (demo || !checkoutUrl) return;
-    const t = setTimeout(() => {
-      if (mounted.current) goToCheckout();
-    }, 2000);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo, checkoutUrl]);
-
+  // Redirección al checkout de Mercado Pago. El botón es la única forma:
+  // el flujo estándar de Checkout Pro es que el cliente pague en el entorno de
+  // MP y vuelva. Sin redirect automático el cliente decide cuándo ir.
   function goToCheckout() {
     if (redirecting) return;
     setRedirecting(true);
@@ -138,6 +129,13 @@ export default function PaymentModal({ orderId, orderNumber, demo, checkoutUrl, 
         </p>
 
         <div className="payment-body">
+          {!demo && phase === "polling" && (
+            <div className="payment-polling" role="status" aria-live="polite">
+              <span className="spinner" aria-hidden="true"></span>
+              <span>Consultando estado del pago…</span>
+            </div>
+          )}
+
           {demo && (
             <div className="demo-mode">
               <div className="demo-mode__badge">MODO DEMO</div>
@@ -166,8 +164,8 @@ export default function PaymentModal({ orderId, orderNumber, demo, checkoutUrl, 
               {checkoutUrl ? (
                 <>
                   <p>
-                    Te llevamos al checkout de <strong>Mercado Pago</strong> para
-                    completar el pago. Volvés acá automáticamente cuando termines.
+                    Tocá el botón para ir al checkout de <strong>Mercado Pago</strong> y
+                    completar el pago. Volvés acá cuando termines.
                   </p>
                   <button
                     className="btn btn--primary btn--block"
@@ -187,7 +185,7 @@ export default function PaymentModal({ orderId, orderNumber, demo, checkoutUrl, 
           )}
         </div>
 
-        {pollError && (
+            {pollError && (
           <div className="payment-slow" role="alert">
             <p>
               {pollError} Si ya completaste el pago, no te preocupes: se confirma

@@ -46,34 +46,7 @@ const VIEWS = {
 //
 // `retryable` viene del server: con credenciales inválidas reintentar no sirve
 // nunca (solo WhatsApp), con una caída de MP sí.
-function describeOrderError(err) {
-  switch (err.code) {
-    case "shipping_unavailable":
-      return {
-        message: err.message,
-        canRetry: true,
-        note: "Para cobrar con Mercado Pago necesitamos saber el costo de envío.",
-      };
-    case "mp_unauthorized":
-      return {
-        message:
-          "El pago con Mercado Pago no está disponible en este momento. Tu pedido quedó " +
-          "registrado: escribinos por WhatsApp con el número y lo coordinamos.",
-        canRetry: false,
-        note: "No hace falta que reintentes: el problema es de nuestro lado, no tuyo.",
-      };
-    case "mp_unavailable":
-    case "mp_link_missing":
-      return {
-        message:
-          "No pudimos generar el link de pago de Mercado Pago. Podés reintentar en un " +
-          "momento o escribirnos por WhatsApp con el número de tu pedido.",
-        canRetry: true,
-      };
-    default:
-      return { message: err.message || "No se pudo iniciar el pago.", canRetry: true };
-  }
-}
+import { describeOrderError } from "../utils/orderErrors.js";
 
 // Cierra la ventana vacía que BUG-05 abre en el click cuando al final no se
 // va a usar: el server rechazó el pedido (4xx) o no se pudo confirmar que lo

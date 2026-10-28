@@ -106,13 +106,16 @@ export function waLinkForUnpaidOrder(branch, { orderNumber, reason = "" } = {}) 
 }
 
 // Decisión del flujo efectivo/transferencia cuando POST /api/orders falló.
-// Es pura (test/direct-order-fallback.test.js) para poder fijar los TRES
+// Es pura (test/direct-order-fallback.test.js) para poder fijar los CUATRO
 // comportamientos por separado:
 //
 // - Rechazo del server (4xx con `error`, ej. "Producto no disponible"): el
 //   pedido NO existe. No se abre WhatsApp (nada que mandar: el local no lo
 //   puede cargar porque está rechazado), se muestra el mensaje EXACTO del
 //   server en el checkout y el carrito queda intacto.
+// - 423 (orders_paused): la sucursal está pausada por el local. El pedido NO
+//   existe. No se abre WhatsApp, se muestra el mensaje del server (incluye
+//   hasta cuándo y mensaje opcional) y una note para volver al menú.
 // - Falla de red, timeout o 5xx: el server no confirmó nada, PERO puede que
 //   haya creado el pedido igual y se haya perdido la respuesta. WhatsApp no se
 //   abre solo: se le ofrecen al cliente las dos salidas (reintentar o avisar),
@@ -128,8 +131,24 @@ export function decideDirectOrderOutcome(err) {
   // manda los mensajes con punto final y sin este recorte quedan dos puntos.
   const reason = raw.replace(/\.\s*$/, "");
 
-  // 4xx: la validación del server corre ANTES del INSERT (server/index.js),
-  // así que ningún rechazo tiene orderNumber: no hay pedido que rescatar.
+  // 423 (Locked): sucursal pausada por el local. La validación corre ANTES del
+  // INSERT, así que no hay pedido creado. El body trae `pause` con until/message.
+  if (status === 423) {
+    return {
+      kind: "paused",
+      openWhatsApp: false,
+      notRegistered: false,
+      registerInHistory: false,
+      // El mensaje textual del server (incluye hasta cuándo / mensaje del local).
+      message: raw,
+      note: "La sucursal está pausada. Podés volver al menú e intentar más tarde.",
+      pause: err?.pause || null,
+    };
+  }
+
+  // 4xx genérico (400, 409, 422, etc.): la validación del server corre ANTES del
+  // INSERT (server/index.js), así que ningún rechazo tiene orderNumber: no hay
+  // pedido que rescatar.
   if (status >= 400 && status < 500) {
     return {
       kind: "rejected",

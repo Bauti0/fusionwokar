@@ -4350,6 +4350,25 @@ body:has(.admin-login) { background: var(--color-secondary); }
   animation: spin 1s linear infinite;
 }
 
+/* Spinner del polling de pago (PaymentModal) */
+.payment-polling {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--color-text-soft);
+  font-size: 14px;
+  padding: 16px 0;
+}
+.payment-polling .spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
 /* Skeleton container */
 .skeleton-container {
   background: var(--color-surface);
