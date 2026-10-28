@@ -1,9 +1,9 @@
 // ============================================================
 // useCrashTest — Modo de prueba SOLO DEV para verificar Error Boundaries
-// Lee ?crash=<nombre> del URL y lanza un error en el componente que lo use.
+// Lee ?crash=<nombre> del URL y lanza un error SINCRÓNICO durante el render
+// para que el ErrorBoundary lo atrape.
 // En producción (import.meta.env.DEV === false) no hace nada (tree-shaking).
 // ============================================================
-import { useEffect } from "react";
 
 const CRASH_TARGETS = {
   // StoreApp sections
@@ -37,31 +37,17 @@ function getCrashParam() {
   return params.get("crash")?.toLowerCase();
 }
 
-// Hook para usar dentro de componentes funcionales
-export function useCrashTest(target) {
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const crash = getCrashParam();
-    if (crash && CRASH_TARGETS[crash] === target) {
-      setTimeout(() => {
-        throw new Error(`[CrashTest] Forzado: ${target}`);
-      }, 0);
-    }
-  }, [target]);
-}
-
 // ============================================================
-// Check functions — Llamar JUSTO ANTES de renderizar el ErrorBoundary
-// para que el error se tire DENTRO del boundary y lo atrape.
+// Check functions — Llamar DENTRO del render, ANTES del ErrorBoundary
+// Lanza error SINCRÓNICO para que el ErrorBoundary lo atrape.
 // ============================================================
 
 function check(target) {
   if (!import.meta.env.DEV) return;
   const crash = getCrashParam();
   if (crash && CRASH_TARGETS[crash] === target) {
-    setTimeout(() => {
-      throw new Error(`[CrashTest] Forzado: ${target}`);
-    }, 0);
+    // Lanzar SINCRÓNICAMENTE durante el render para que el ErrorBoundary lo atrape
+    throw new Error(`[CrashTest] Forzado: ${target}`);
   }
 }
 
@@ -92,3 +78,12 @@ export function checkCrashCustomers() { check("customers"); }
 export function checkCrashSales() { check("sales"); }
 export function checkCrashUsers() { check("users"); }
 export function checkCrashNewOrder() { check("neworder"); }
+
+// Hook para usar dentro de componentes funcionales (si se necesita)
+export function useCrashTest(target) {
+  if (!import.meta.env.DEV) return;
+  const crash = getCrashParam();
+  if (crash && CRASH_TARGETS[crash] === target) {
+    throw new Error(`[CrashTest] Forzado: ${target}`);
+  }
+}
