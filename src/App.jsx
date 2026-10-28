@@ -5,7 +5,7 @@ import { adminMe } from "./api.js";
 import { track } from "./utils/tracking.js";
 import ErrorBoundary from "./components/ui/ErrorBoundary.jsx";
 import { RouteFallback, AdminRouteFallback } from "./components/ui/ErrorFallbacks.jsx";
-import { checkCrashTrack, checkCrashAdmin } from "./hooks/useCrashTest.js";
+import { checkCrashStore, checkCrashTrack, checkCrashAdmin } from "./hooks/useCrashTest.js";
 
 // ============================================================
 // FUSIÓN WOK — Router
@@ -34,6 +34,7 @@ function PageFallback() {
 
 // Wrappers con ErrorBoundary por ruta
 function StoreRoute() {
+  checkCrashStore();
   return (
     <ErrorBoundary
       fallback={(err, reset) => <RouteFallback error={err} reset={reset} routeName="la tienda" />}
