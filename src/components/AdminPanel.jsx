@@ -29,7 +29,7 @@ import {
 import { formatPrice } from "../utils/format.js";
 import { previewOrderEdit, formatAuditEdits } from "../utils/orderEdit.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
-import { startNewOrderLoop, stopNewOrderLoop, playConfirmBeep, unlockAudio, isAudioRunning } from "../utils/notifySound.js";
+import { startNewOrderLoop, stopNewOrderLoop, playConfirmBeep, unlockAudio, loadAudioEnabled, saveAudioEnabled, shouldPlayAlert, shouldShowUnlockBanner } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 import { IconEmptySearch, IconRepeat, IconPlus, IconLocation, IconVolume2, IconVolumeX, IconAlertCircle } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
@@ -106,10 +106,6 @@ function isActiveOrder(o) {
 // al hacer el build; el "?" es el fallback cuando no se pudo leer el hash
 // (build sin la carpeta .git) y en ese caso no se dibuja nada.
 const BUILD_COMMIT = typeof __APP_COMMIT__ === "undefined" ? "?" : __APP_COMMIT__;
-
-const AUDIO_KEY = "fw.admin.audioEnabled";
-function loadAudioEnabled() { try { return JSON.parse(localStorage.getItem(AUDIO_KEY) || "false"); } catch { return false; } }
-function saveAudioEnabled(v) { try { localStorage.setItem(AUDIO_KEY, JSON.stringify(v)); } catch {} }
 
 function LiveClock() {
   const [now, setNow] = useState(() => new Date());
@@ -203,7 +199,13 @@ export default function AdminPanel({ me, onLogout }) {
   // Clave del identificador recién copiado ("order" / "payment"), para el
   // "✓ Copiado" del botón. Vacío = ninguno copiado.
   const [copiedId, setCopiedId] = useState("");
-  const [audioEnabled, setAudioEnabled] = useState(() => loadAudioEnabled());
+  // Clave "fw.admin.audioEnabled.v2": default true, la v1 se ignora y se borra
+  // (ver loadAudioEnabled). window.localStorage porque el panel vive en browser.
+  const [audioEnabled, setAudioEnabled] = useState(() => loadAudioEnabled(window.localStorage));
+  // true cuando el AudioContext quedó "running" (desbloqueo por gesto del
+  // usuario o directo al montar si el navegador ya lo permite). Es estado y
+  // no isAudioRunning() porque el cambio de estado del contexto no re-renderiza.
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   // Tab activa del modal de detalle: "pedido" | "productos" | "pago" | "ajustes".
   // Se reinicia al abrir cada pedido para no heredar la tab de otro.
   const [detailTab, setDetailTab] = useState("pedido");
@@ -349,8 +351,12 @@ export default function AdminPanel({ me, onLogout }) {
     };
   }, [selected?.id, me?.role, auditTick]);
 
-// unlockAudio al montar (primer click/tecla del usuario en la página)
-  useEffect(() => unlockAudio(), []);
+  // Desbloqueo del AudioContext: al montar NO se crea (evita el warning de
+  // autoplay); solo se desbloquea si el ctx ya existe de antes. Si no, en el
+  // primer gesto del usuario (click/keydown/pointerup/touchend) se crea y
+  // reanuda. onUnlocked corre una sola vez y el hook quita sus listeners;
+  // el cleanup del effect los quita al desmontar.
+  useEffect(() => unlockAudio(() => setAudioUnlocked(true)), []);
 
   // Poll de unseenIds: al montar, cada 5s, y después de cada cambio de estado
   const [unseenErrorCount, setUnseenErrorCount] = useState(0);
@@ -378,11 +384,37 @@ export default function AdminPanel({ me, onLogout }) {
     return () => clearInterval(t);
   }, [loadUnseen]);
 
-  // Loop controlado SOLO por estado: audioEnabled + unseenIds.size > 0
+  // Loop controlado SOLO por estado: silencio del header + desbloqueo +
+  // pedidos sin ver. shouldPlayAlert concentra la decisión (y está testada.
+  // El intervalo de repetición (1.2 s) vive en startNewOrderLoop.
   useEffect(() => {
-    if (audioEnabled && unseenIds.size > 0) startNewOrderLoop();
+    const alerta = shouldPlayAlert({
+      unseenCount: unseenIds.size,
+      muted: !audioEnabled,
+      unlocked: audioUnlocked,
+    });
+    if (alerta) startNewOrderLoop();
     else stopNewOrderLoop();
-  }, [audioEnabled, unseenIds]);
+  }, [audioEnabled, audioUnlocked, unseenIds]);
+
+  // Respaldo visual cuando el sonido todavía no puede sonar (sin gesto del
+  // usuario): el título de la pestaña parpadea. El cleanup del effect restaura
+  // el título original en los tres casos: audio desbloqueado, pedidos vistos
+  // (unseen vuelve a 0) y desmontaje del panel. Sin duplicados al re-renderizar
+  // porque cada corrida limpia su propio intervalo.
+  useEffect(() => {
+    if (!(unseenIds.size > 0 && !audioUnlocked)) return;
+    const original = document.title;
+    let visible = false;
+    const t = setInterval(() => {
+      visible = !visible;
+      document.title = visible ? `🔔 (${unseenIds.size}) Pedidos nuevos` : original;
+    }, 1500);
+    return () => {
+      clearInterval(t);
+      document.title = original;
+    };
+  }, [unseenIds, audioUnlocked]);
 
   // Limpieza al desmontar
   useEffect(() => () => stopNewOrderLoop(), []);
@@ -653,20 +685,16 @@ export default function AdminPanel({ me, onLogout }) {
             <Link className="btn btn--ghost btn--sm" to="/">
               Ver tienda
             </Link>
-            {/* Botón activar/desactivar sonido: visible siempre en header */}
+            {/* Toggle de silencio del header: el effect del loop arranca/para
+                el aviso según el estado resultante; el beep confirma el click */}
             <button
               type="button"
               className={`btn btn--ghost btn--sm ${audioEnabled ? "is-active" : ""}`}
               onClick={() => {
                 const next = !audioEnabled;
                 setAudioEnabled(next);
-                saveAudioEnabled(next);
-                if (next) {
-                  playConfirmBeep();
-                  if (unseenIds.size > 0) startNewOrderLoop();
-                } else {
-                  stopNewOrderLoop();
-                }
+                saveAudioEnabled(window.localStorage, next);
+                if (next) playConfirmBeep();
               }}
               aria-label={audioEnabled ? "Desactivar sonido de pedidos" : "Activar sonido de pedidos"}
               title={audioEnabled ? "Sonido activado · Click para desactivar" : "Click para activar sonido de pedidos"}
@@ -680,14 +708,22 @@ export default function AdminPanel({ me, onLogout }) {
         </div>
       </header>
 
-      {/* Aviso visible si hay pedidos sin ver y (audio off O AudioContext no running) */}
-      {unseenIds.size > 0 && (!audioEnabled || !isAudioRunning()) && (
+      {/* Aviso informativo si hay pedidos sin ver y el sonido NO va a sonar
+          (bloqueado por autoplay o silenciado en el header). Sin botón: el
+          desbloqueo es transparente, en el primer gesto del usuario. */}
+      {shouldShowUnlockBanner({
+        unseenCount: unseenIds.size,
+        muted: !audioEnabled,
+        unlocked: audioUnlocked,
+      }) && (
         <div className="admin__unseen-banner" role="alert" aria-live="polite">
           <IconAlertCircle style={{ width: 20, height: 20 }} />
-          <span>Hay {unseenIds.size} pedido{unseenIds.size > 1 ? "s" : ""} nuevo{unseenIds.size > 1 ? "s" : ""} sin ver</span>
-          <button type="button" className="btn btn--primary btn--sm" onClick={() => { setAudioEnabled(true); saveAudioEnabled(true); playConfirmBeep(); startNewOrderLoop(); }}>
-            Activar sonido
-          </button>
+          <span>
+            Hay {unseenIds.size} pedido{unseenIds.size > 1 ? "s" : ""} nuevo{unseenIds.size > 1 ? "s" : ""} sin ver
+            {!audioUnlocked && audioEnabled
+              ? " · Tocá cualquier parte de la pantalla para activar el sonido"
+              : ""}
+          </span>
         </div>
       )}
 
