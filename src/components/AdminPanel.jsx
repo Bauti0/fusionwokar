@@ -716,12 +716,12 @@ export default function AdminPanel({ me, onLogout }) {
         muted: !audioEnabled,
         unlocked: audioUnlocked,
       }) && (
-        <div className="admin__unseen-banner" role="alert" aria-live="polite">
+        <div className="admin__unseen-banner" role="status">
           <IconAlertCircle style={{ width: 20, height: 20 }} />
           <span>
-            Hay {unseenIds.size} pedido{unseenIds.size > 1 ? "s" : ""} nuevo{unseenIds.size > 1 ? "s" : ""} sin ver
+            <strong>Hay {unseenIds.size} pedido{unseenIds.size > 1 ? "s" : ""} nuevo{unseenIds.size > 1 ? "s" : ""} sin ver</strong>
             {!audioUnlocked && audioEnabled
-              ? " · Tocá cualquier parte de la pantalla para activar el sonido"
+              ? <span className="admin__unseen-banner__hint"> · Tocá cualquier parte de la pantalla para activar el sonido</span>
               : ""}
           </span>
         </div>
@@ -729,7 +729,7 @@ export default function AdminPanel({ me, onLogout }) {
 
       {/* Banner de error si el polling de unseen falla 3 veces seguidas */}
       {unseenErrorCount >= 3 && (
-        <div className="admin__unseen-banner admin__unseen-banner--error" role="alert" aria-live="polite">
+        <div className="admin__unseen-banner admin__unseen-banner--error" role="alert">
           <IconAlertCircle style={{ width: 20, height: 20 }} />
           <span>No se pudo verificar pedidos nuevos</span>
           <button type="button" className="btn btn--ghost btn--sm" onClick={() => { setUnseenErrorCount(0); loadUnseen(); }}>

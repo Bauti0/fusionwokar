@@ -2920,6 +2920,119 @@ body:has(.admin-login) { background: var(--color-secondary); }
   font-size: 13px; font-weight: 700; font-style: italic;
   display: inline-flex; align-items: center; justify-content: center;
 }
+
+/* ============================================================
+   Banner de pedidos sin ver / error (panel admin)
+   Tres estados visuales:
+   (a) normal, sonido activo: "Hay N pedidos sin ver"
+   (b) normal, sonido bloqueado/silenciado: (a) + "Tocá la pantalla..."
+   (c) --error de red: "No se pudo verificar pedidos nuevos" + botón Reintentar
+   Ambos usan fondo surface (#1a1a1a) y se diferencian por acento lateral e ícono.
+   Ancho = contenido del panel (calc(100% - 32px) con max-width 900/1280px).
+   ============================================================ */
+.admin__unseen-banner,
+.admin__unseen-banner--error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: calc(100% - 32px);
+  max-width: 900px;
+  margin: 12px auto;
+  padding: 12px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.admin__unseen-banner {
+  border-left: 3px solid var(--color-primary);
+}
+
+.admin__unseen-banner--error {
+  border-left: 3px solid var(--color-warn-text);
+}
+
+.admin__unseen-banner > svg,
+.admin__unseen-banner--error > svg {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+}
+
+.admin__unseen-banner > svg {
+  color: var(--color-primary);
+}
+
+.admin__unseen-banner--error > svg {
+  color: var(--color-warn-text);
+}
+
+.admin__unseen-banner > span,
+.admin__unseen-banner--error > span {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  line-height: 1.45;
+}
+
+.admin__unseen-banner > span {
+  color: var(--color-text);
+}
+
+.admin__unseen-banner--error > span {
+  color: var(--color-warn-text);
+}
+
+/* Conteo en negrita (strong) y aviso de sonido en texto suave */
+.admin__unseen-banner strong {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.admin__unseen-banner__hint {
+  font-weight: 400;
+  color: var(--color-text-soft);
+}
+
+/* Botón Reintentar dentro del banner de error: mínimo 44px de alto en móvil */
+.admin__unseen-banner--error .btn {
+  min-height: 44px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  flex-shrink: 0;
+  margin-top: -2px; /* compensa padding vertical del banner */
+}
+
+/* Animaciones: entrada + pulso sutil en ícono (solo variante normal).
+   Respetan prefers-reduced-motion. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes bannerIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes iconPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+  .admin__unseen-banner,
+  .admin__unseen-banner--error {
+    animation: bannerIn .3s var(--ease) both;
+  }
+  .admin__unseen-banner > svg {
+    animation: iconPulse 2s ease-in-out infinite;
+  }
+}
+
+/* Desktop: mismo max-width que .admin-layout (1280px) */
+@media (min-width: 1024px) {
+  .admin__unseen-banner,
+  .admin__unseen-banner--error {
+    max-width: 1280px;
+  }
+}
+
 .admin-extras__group { margin-bottom: 16px; }
 .admin-extras__group .admin-cat { padding: 6px 14px 10px; }
 .admin-extras__row {
