@@ -10,10 +10,12 @@ import {
   statusEmoji,
   statusIndex,
   paymentLabel,
+  TRACK_POLL_INTERVAL_MS,
 } from "../constants.js";
 import { formatPrice } from "../utils/format.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import { getDeliveryInfo, getStoredPhoneForVerify, updatedAgoLabel } from "../utils/tracking.js";
+import { computeBackoffInterval } from "../utils/tracking-backoff.js";
 import TrackHeader from "./TrackHeader.jsx";
 import { IconPhone, IconArrowLeft, IconClockOutline } from "./ui/icons.jsx";
 
@@ -43,7 +45,6 @@ export default function TrackOrder() {
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState("");
   const [showVerifyInput, setShowVerifyInput] = useState(false);
-  const timer = useRef(null);
   const verifyAttempted = useRef(false);
   const verifyInputRef = useRef(null);
   // V-18 "pedido vivo": momento del último poll EXITOSO + tick para
@@ -60,14 +61,14 @@ export default function TrackOrder() {
       setNotFound(false);
       setLoadError(false);
       setLastUpdated(Date.now());
-      if (isTerminal(o)) clearTimer();
+      if (isTerminal(o)) return; // no seguir pollando en estados terminales
     } catch (err) {
       // Solo un 404 real (pedido inexistente) muestra el estado "no encontrado".
       // Errores transitorios (servidor caído, límite de rate, red) NO deben
       // borrar el pedido que ya teníamos cargado: se reintenta en el próximo poll.
       if (err.message === "Pedido no encontrado") {
         setNotFound(true);
-        clearTimer();
+        return;
       } else {
         // Fallo y sin pedido cargado → pantalla de error con Reintentar.
         // (El bug que dejaba la pantalla colgada en "Cargando pedido...").
@@ -77,13 +78,6 @@ export default function TrackOrder() {
       }
     }
   }, [orderNumber]);
-
-  function clearTimer() {
-    if (timer.current) {
-      clearInterval(timer.current);
-      timer.current = null;
-    }
-  }
 
   // Auto-verificación silenciosa al cargar un pedido de delivery
   useEffect(() => {
@@ -128,20 +122,96 @@ export default function TrackOrder() {
     }
   }, [orderNumber]);
 
-  useEffect(() => {
-    load();
-    timer.current = setInterval(load, 10000);
-    return clearTimer;
-  }, [load]);
+  // Backoff state: intervalo actual (ms). consecutiveErrorsRef se usa en el cálculo.
+  const backoffRef = useRef(TRACK_POLL_INTERVAL_MS);
+  const consecutiveErrorsRef = useRef(0);
+  // Guard para evitar polls concurrentes (p.ej. visibilitychange + timeout disparados juntos)
+  const pollingRef = useRef(false);
 
-  // Tick del label "Actualizado hace..." al mismo ritmo del poll (10s).
-  // No tiquea con la pestaña oculta (document.hidden): al volver, el
-  // próximo setOrder del poll dispara un render y el label se corrige.
+  // Poll con backoff exponencial y pausa en hidden
+  // - Éxito: resetea intervalo a base y errores a 0
+  // - 429/5xx/red: duplica intervalo usando consecutiveErrorsRef (tope 60s)
+  // - Hidden: no agenda siguiente tick; al volver a visible → fetch inmediato + intervalo base
+  useEffect(() => {
+    let mounted = true;
+    let timeoutId = null;
+
+    const scheduleNext = (intervalMs) => {
+      if (!mounted) return;
+      timeoutId = setTimeout(() => {
+        if (!mounted) return;
+        if (document.hidden) {
+          // Si se ocultó mientras esperaba, no hacemos fetch; reagendamos al volver
+          return;
+        }
+        runPoll();
+      }, intervalMs);
+    };
+
+    const runPoll = async () => {
+      if (!mounted) return;
+      // Evitar polls concurrentes
+      if (pollingRef.current) return;
+      pollingRef.current = true;
+      try {
+        const o = await getOrderByNumber(orderNumber);
+        if (!mounted) return;
+        setOrder(o);
+        setNotFound(false);
+        setLoadError(false);
+        setLastUpdated(Date.now());
+        // Éxito: reset backoff
+        backoffRef.current = TRACK_POLL_INTERVAL_MS;
+        consecutiveErrorsRef.current = 0;
+        if (isTerminal(o)) return; // no seguir pollando en estados terminales
+        scheduleNext(TRACK_POLL_INTERVAL_MS);
+      } catch (err) {
+        if (!mounted) return;
+        // Solo 404 real detiene el tracking
+        if (err.message === "Pedido no encontrado") {
+          setNotFound(true);
+          return;
+        }
+        // Error transitorio (429, 5xx, red): backoff exponencial usando computeBackoffInterval
+        consecutiveErrorsRef.current += 1;
+        const nextInterval = computeBackoffInterval(TRACK_POLL_INTERVAL_MS, consecutiveErrorsRef.current);
+        backoffRef.current = nextInterval;
+        setLoadError(true);
+        scheduleNext(backoffRef.current);
+      } finally {
+        pollingRef.current = false;
+      }
+    };
+
+    // Visibilidad: al volver a visible, fetch inmediato + intervalo base (reset backoff)
+    const onVisibilityChange = () => {
+      if (!mounted) return;
+      if (!document.hidden) {
+        // Volvió a ser visible: reset backoff y fetch inmediato
+        backoffRef.current = TRACK_POLL_INTERVAL_MS;
+        consecutiveErrorsRef.current = 0;
+        runPoll();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    runPoll(); // primera carga inmediata
+
+    return () => {
+      mounted = false;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [load, orderNumber]);
+
+  // Tick del label "Actualizado hace..." al ritmo base (no en hidden)
+  // No tiquea con la pestaña oculta: al volver, el próximo setOrder del poll
+  // dispara un render y el label se corrige.
   useEffect(() => {
     const id = setInterval(() => {
       if (document.hidden) return;
       setTick((t) => t + 1);
-    }, 10000);
+    }, TRACK_POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, []);
 

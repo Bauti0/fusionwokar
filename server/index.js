@@ -94,6 +94,7 @@ import {
 } from "./admin-queries.js";
 import { validateConfig } from "./config.js";
 import { orderLogLine } from "./order-log.js";
+import { TRACK_RATE_LIMIT_PER_MIN } from "../src/constants.js";
 import { applyOrderEdit, computeOrderEdits, getAuditLogs } from "./order-edit.js";
 import { rowToCashRegister, correctCashRegister, getCashCorrections, deleteCashRegister, getDeletedCashRegisters } from "./cash-register.js";
 import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
@@ -2067,20 +2068,59 @@ app.get("/api/orders/:id", rateLimit({ max: 60, windowMs: 60000, name: "orderget
 });
 
 // Tracking del cliente por número de pedido (FW-00001)
-// M-4: el número de pedido es lineal ("FW-000123") y probarlo es trivial,
-// por eso el límite es bajo. Era 5/min, pero el poll de TrackOrder (10s,
-// 6/min + recargas) quedaba afuera y el tracking moría con 429 en bucle.
-// 10/min sigue frenando barridos masivos sin matar la UI.
-// Cada 429 loguea una línea con el número intentado (orderLogLine, whitelist
-// sin PII): si aparece alguien barriendo números, queda rastro para decidir
-// si conviene bajar el límite o atarlo a otra cosa.
+// M-4: el número de pedido es lineal ("FW-000123") y probarlo es trivial.
+// Límite holgado (60/min por IP, constante compartida): permite 3 pestañas
+// simultáneas (poll 10s = 6/min c/u → 18/min = 30% del límite) con margen
+// para recargas manuales. Los datos sensibles (dirección) están en /details
+// con sus propios límites.
 const TRACK_NUMBER_ROUTE = "GET /api/orders/number/:orderNumber";
+
+// Log throttling: máx 1 línea por minuto por IP + contador agregado.
+// Evita inundación de logs ante barridos de números (FW-00001...FW-99999).
+const trackLogBuckets = new Map(); // ip -> { count, windowStart, lastLogged }
+const MAX_TRACK_LOG_BUCKETS = 5000;
+function cleanupTrackLogBuckets(now) {
+  // Borrar entradas con ventana vencida (> 2 min sin actividad)
+  for (const [ip, bucket] of trackLogBuckets.entries()) {
+    if (now - bucket.windowStart > 120000) trackLogBuckets.delete(ip);
+  }
+  // Si sigue superando el tope, borrar la más vieja por windowStart
+  if (trackLogBuckets.size > MAX_TRACK_LOG_BUCKETS) {
+    let oldestIp = null;
+    let oldestStart = Infinity;
+    for (const [ip, bucket] of trackLogBuckets.entries()) {
+      if (bucket.windowStart < oldestStart) {
+        oldestStart = bucket.windowStart;
+        oldestIp = ip;
+      }
+    }
+    if (oldestIp) trackLogBuckets.delete(oldestIp);
+  }
+}
+function logTrackingRateLimit(req) {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  // Cleanup perezoso: al insertar clave nueva, si Map > 5000, limpiar
+  if (!trackLogBuckets.has(ip) && trackLogBuckets.size >= MAX_TRACK_LOG_BUCKETS) {
+    cleanupTrackLogBuckets(now);
+  }
+  const bucket = trackLogBuckets.get(ip);
+  if (!bucket || now - bucket.windowStart >= 60000) {
+    // Nueva ventana: loguear y resetear contador
+    trackLogBuckets.set(ip, { count: 1, windowStart: now, lastLogged: now });
+    warnOrder(TRACK_NUMBER_ROUTE, 429, { orderNumber: req.params.orderNumber }, RATE_LIMIT_ERROR);
+  } else {
+    // Misma ventana: solo incrementar contador, no loguear
+    bucket.count += 1;
+    bucket.lastLogged = now;
+  }
+}
+
 const trackingRateLimit = rateLimit({
-  max: 10,
+  max: TRACK_RATE_LIMIT_PER_MIN,
   windowMs: 60000,
   name: "ordernum",
-  onLimit: (req) =>
-    warnOrder(TRACK_NUMBER_ROUTE, 429, { orderNumber: req.params.orderNumber }, RATE_LIMIT_ERROR),
+  onLimit: (req) => logTrackingRateLimit(req),
 });
 app.get("/api/orders/number/:orderNumber", trackingRateLimit, async (req, res) => {
   try {

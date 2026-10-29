@@ -40,3 +40,12 @@ export function paymentLabel(id) {
 export function statusIndex(id) {
   return ORDER_STATUSES.findIndex((s) => s.id === id);
 }
+
+// ============================================================
+// Tracking público — constantes compartidas frontend/backend
+// ============================================================
+// Poll de 10s = 6 req/min por pestaña. Límite de 60/min por IP permite
+// 3 pestañas simultáneas (18 req/min = 30% del límite) con amplio margen
+// para recargas manuales y variaciones de red.
+export const TRACK_POLL_INTERVAL_MS = 10000;
+export const TRACK_RATE_LIMIT_PER_MIN = 60;
