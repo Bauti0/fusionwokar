@@ -262,6 +262,10 @@ export function adminStats(params = {}) {
   return request(`/api/admin/stats${qs ? `?${qs}` : ""}`);
 }
 
+export function adminDashboard() {
+  return request("/api/admin/dashboard");
+}
+
 // ---- productos / menú (admin) ----
 export function adminProducts() {
   return request("/api/admin/products");

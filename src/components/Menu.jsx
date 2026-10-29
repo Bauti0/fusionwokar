@@ -49,7 +49,7 @@ function mergeGroupRuns(groups) {
   return runs;
 }
 
-const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, qtys = {} }) {
+const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, qtys = {}, usingFallbackMenu = false }) {
   const [query, setQuery] = useState("");
   const [customizing, setCustomizing] = useState(null);
   const [activeCat, setActiveCat] = useState(() => menu.categories[0]?.id || "");
@@ -169,6 +169,17 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
           )}
         </div>
       </div>
+
+      {usingFallbackMenu && (
+        <div className="menu__fallback-banner" role="status" aria-live="polite">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{width: 16, height: 16, flexShrink: 0}}>
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+            <circle cx="12" cy="12" r="10" />
+          </svg>
+          <span>No pudimos actualizar el menú; los precios pueden diferir.</span>
+        </div>
+      )}
 
       <div className="menu__sticky">
         <div className="menu__search">

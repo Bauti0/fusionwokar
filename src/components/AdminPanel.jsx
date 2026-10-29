@@ -38,6 +38,7 @@ import ConfirmModal from "./ui/ConfirmModal.jsx";
 import PauseModal from "./ui/PauseModal.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import AdminStats from "./AdminStats.jsx";
+import AdminDashboard from "./AdminDashboard.jsx";
 import AdminProducts from "./AdminProducts.jsx";
 import AdminExtras from "./AdminExtras.jsx";
 import AdminCoupons from "./AdminCoupons.jsx";
@@ -47,7 +48,7 @@ import AdminNewOrder from "./AdminNewOrder.jsx";
 import AdminUsers from "./AdminUsers.jsx";
 import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import { SectionFallback } from "./ui/ErrorFallbacks.jsx";
-import { checkCrashOrders, checkCrashStats, checkCrashProducts, checkCrashExtras, checkCrashCoupons, checkCrashCustomers, checkCrashSales, checkCrashUsers, checkCrashNewOrder } from "../hooks/useCrashTest.js";
+import { checkCrashOrders, checkCrashStats, checkCrashProducts, checkCrashExtras, checkCrashCoupons, checkCrashCustomers, checkCrashSales, checkCrashUsers, checkCrashNewOrder, checkCrashDashboard } from "../hooks/useCrashTest.js";
 
 // ============================================================
 // AdminPanel — gestión de pedidos
@@ -752,6 +753,13 @@ export default function AdminPanel({ me, onLogout }) {
             {unseenIds.size > 0 && <span className="admin-nav__badge">{unseenIds.size}</span>}
           </button>
           <span className="admin-nav__group">Análisis</span>
+          <button
+            data-testid="nav-dashboard"
+            className={`admin-nav__btn ${section === "dashboard" ? "is-active" : ""}`}
+            onClick={() => setSection("dashboard")}
+          >
+            📋 Resumen
+          </button>
           <button
             data-testid="nav-stats"
             className={`admin-nav__btn ${section === "stats" ? "is-active" : ""}`}

@@ -674,3 +674,176 @@ export async function getStats(db, { fromIso, toIso, scope } = {}) {
     topRevenue,
   };
 }
+
+// ============================================================
+// Resumen del día para el panel admin (GET /api/admin/dashboard).
+//
+// Un único request que trae lo que el dueño quiere ver al abrir:
+// - Venta neta de hoy (confirmados − devueltos)
+// - Cantidad de pedidos confirmados
+// - Ticket promedio (neta / pedidos)
+// - Pedidos por estado (recibido, en elaboración, listo, en camino, entregado, cancelado)
+// - Medios de pago (efectivo, transferencia, mercadopago) con monto neto
+// - Producto más vendido de hoy (por cantidad)
+// - Si superadmin: desglose por sucursal (neto y pedidos por local)
+//
+// Criterio "hoy": día calendario en America/Argentina/Buenos_Aires
+// (misma zona que arDay). Cancelados y rechazados NO cuentan.
+// Reusa refundedQuery + netAmount de reports.js.
+// ============================================================
+export async function getDashboard(db, { scope } = {}) {
+  // "Hoy" en Argentina: medianoche AR de hoy → now (UTC)
+  // arDay usa Intl.DateTimeFormat con timeZone America/Argentina/Buenos_Aires
+  const todayAr = arDay(new Date().toISOString());
+  const fromIso = `${todayAr}T00:00:00-03:00`;
+  const toIso = new Date().toISOString();
+
+  const branchCond = scope ? " AND branch = ?" : "";
+  const branchArgs = scope ? [scope] : [];
+
+  // 1) Pedidos confirmados de hoy (payment_status=approved, status!=cancelled)
+  const confirmedSql = `
+    SELECT branch, total, status, payment_method, items
+    FROM orders
+    WHERE payment_status = 'approved' AND status != 'cancelled'
+      AND created_at >= ? AND created_at <= ?${branchCond}
+  `;
+  const confirmedArgs = [fromIso, toIso, ...branchArgs];
+
+  // 2) Pedidos por estado (todos los estados, incluidos cancelados/rechazados
+  //    para que el dueño vea el panorama completo; scope respeta sucursal)
+  const byStatusSql = `
+    SELECT status, COUNT(*) AS n
+    FROM orders
+    WHERE created_at >= ? AND created_at <= ?${branchCond}
+    GROUP BY status
+  `;
+  const byStatusArgs = [fromIso, toIso, ...branchArgs];
+
+  // 3) Devoluciones de hoy (atribuidas por fecha del pedido, igual que getStats)
+  const rq = refundedQuery({ fromIso, toIso, branch: scope });
+
+  const stmts = [
+    { sql: confirmedSql, args: confirmedArgs },
+    { sql: byStatusSql, args: byStatusArgs },
+    rq,
+  ];
+
+  // 4) Eventos de analytics SOLO para superadmin (decisión 3 del dueño)
+  if (!scope) {
+    stmts.push(
+      {
+        sql: "SELECT type, COUNT(*) AS n FROM events WHERE created_at >= ? AND created_at <= ? GROUP BY type",
+        args: [fromIso, toIso],
+      },
+      {
+        sql: "SELECT COUNT(DISTINCT visitor_id) AS n FROM events WHERE type = 'page_view' AND visitor_id IS NOT NULL AND created_at >= ? AND created_at <= ?",
+        args: [fromIso, toIso],
+      }
+    );
+  }
+
+  const results = await db.batch(stmts, "read");
+  const confirmed = results[0].rows;
+  const byStatusRows = results[1].rows;
+  const devueltoRows = results[2].rows;
+
+  // ---- Ventas / ticket / pedidos ----
+  let ventaBruta = 0;
+  const byPayment = new Map(); // payment_method -> { method, count, total }
+  const productAgg = new Map(); // name -> { name, qty, revenue }
+
+  for (const o of confirmed) {
+    ventaBruta += o.total;
+    const m = byPayment.get(o.payment_method) || { method: o.payment_method, count: 0, total: 0 };
+    m.count += 1;
+    m.total += o.total;
+    byPayment.set(o.payment_method, m);
+
+    // Productos más vendidos (del mismo set confirmado)
+    let items;
+    try { items = JSON.parse(o.items); } catch { items = []; }
+    for (const it of items) {
+      const extrasTotal = (it.extras || []).reduce((a, e) => a + (e.price || 0), 0);
+      const lineRevenue = (it.unitPrice + extrasTotal) * it.qty;
+      const key = it.name || it.productId;
+      const entry = productAgg.get(key) || { name: key, qty: 0, revenue: 0 };
+      entry.qty += it.qty;
+      entry.revenue += lineRevenue;
+      productAgg.set(key, entry);
+    }
+  }
+
+  const pedidos = confirmed.length;
+  const devuelto = sumRefunded(devueltoRows);
+  const ventaNeta = netAmount(ventaBruta, devuelto);
+  const ticketPromedio = pedidos > 0 ? Math.round(ventaNeta / pedidos) : 0;
+
+  // Producto más vendido (por cantidad)
+  const topSelling = [...productAgg.values()].sort((a, b) => b.qty - a.qty);
+  const productoMasVendido = topSelling[0] || null;
+
+  // Pedidos por estado
+  const pedidosPorEstado = {};
+  for (const r of byStatusRows) {
+    pedidosPorEstado[r.status] = r.n;
+  }
+
+  // Medios de pago (netos: restamos devoluciones proporcionalmente si hace falta,
+  // pero como lo devuelto se atribuye por pedido y los confirmados ya filtran
+  // approved, el total neto por método se aproxima restando del bruto)
+  // Para mantener consistencia con getStats/getSalesReport, mostramos el BRUTO
+  // por método y la neta total arriba; el dueño ve "bruto por método / neta total".
+  const mediosPago = [...byPayment.values()].sort((a, b) => b.total - a.total);
+
+  // Superadmin: desglose por sucursal
+  let porSucursal = null;
+  if (!scope) {
+    const devueltoPorLocal = refundedByBranch(devueltoRows);
+    let ventaTandilBruta = 0;
+    let ventaNecocheaBruta = 0;
+    let pedidosTandil = 0;
+    let pedidosNecochea = 0;
+
+    for (const o of confirmed) {
+      if (o.branch === "tandil") {
+        ventaTandilBruta += o.total;
+        pedidosTandil += 1;
+      } else if (o.branch === "necochea") {
+        ventaNecocheaBruta += o.total;
+        pedidosNecochea += 1;
+      }
+    }
+
+    const devueltoTandil = devueltoPorLocal.byBranch.get("tandil") || 0;
+    const devueltoNecochea = devueltoPorLocal.byBranch.get("necochea") || 0;
+
+    porSucursal = {
+      tandil: {
+        ventaNeta: netAmount(ventaTandilBruta, devueltoTandil),
+        pedidos: pedidosTandil,
+        ventaBruta: ventaTandilBruta,
+        devuelto: devueltoTandil,
+      },
+      necochea: {
+        ventaNeta: netAmount(ventaNecocheaBruta, devueltoNecochea),
+        pedidos: pedidosNecochea,
+        ventaBruta: ventaNecocheaBruta,
+        devuelto: devueltoNecochea,
+      },
+    };
+  }
+
+  return {
+    period: { from: fromIso, to: toIso, day: todayAr },
+    ventaNeta,
+    ventaBruta,
+    devuelto,
+    ticketPromedio,
+    pedidos,
+    pedidosPorEstado,
+    mediosPago,
+    productoMasVendido,
+    porSucursal,
+  };
+}

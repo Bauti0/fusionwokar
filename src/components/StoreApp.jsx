@@ -5,7 +5,7 @@ import { getMenu as getStaticMenu } from "../data/menus.js";
 import useCart from "../hooks/useCart.js";
 import { buildWhatsAppOrderUrl, decideDirectOrderOutcome } from "../utils/whatsapp.js";
 import { orderAttemptSignature, clientRequestIdFor, isOrderRejected } from "../utils/orders.js";
-import { createOrder, getMenu as fetchMenu, getOrderByNumber, retryPaymentLink } from "../api.js";
+import { createOrder, getMenu as fetchMenu, getOrderByNumber, retryPaymentLink, getPause } from "../api.js";
 import { track } from "../utils/tracking.js";
 import Landing from "./Landing.jsx";
 import Header from "./Header.jsx";
@@ -125,28 +125,73 @@ export default function StoreApp() {
   // la devuelve el server. Es el mismo estado que viaja en el menú
   // (GET /api/menu incluye pause) y el que actualiza un 423 del checkout.
   const [pause, setPause] = useState(null);
+  // Indica si se está usando el menú estático de respaldo (fallback).
+  // Sirve para mostrar un aviso discreto: los precios pueden diferir del menú real.
+  const [usingFallbackMenu, setUsingFallbackMenu] = useState(false);
   useEffect(() => {
     let alive = true;
+    let attempt = 0;
+    const maxAttempts = 3;
+    const baseDelay = 1000; // 1s, 2s, 4s
+
     if (!branchId) {
       setMenu(null);
       setPause(null);
+      setUsingFallbackMenu(false);
       return;
     }
+
     setMenu(null);
     setPause(null);
-    fetchMenu(branchId)
-      .then((m) => {
-        if (!alive) return;
-        setMenu(m);
-        setPause(m.pause || null);
-      })
-      .catch(() => {
-        if (!alive) return;
-        // Menú estático de respaldo: sin estado de pausa conocido, no se
-        // muestra ningún aviso (no se bloquea nada que el server no bloquee).
-        setMenu(getStaticMenu(branchId));
-        setPause(null);
-      });
+    setUsingFallbackMenu(false);
+
+    async function loadMenuWithRetry() {
+      while (attempt < maxAttempts && alive) {
+        try {
+          const m = await fetchMenu(branchId);
+          if (!alive) return;
+          setMenu(m);
+          setPause(m.pause || null);
+          setUsingFallbackMenu(false);
+          return; // éxito, salimos
+        } catch (err) {
+          attempt++;
+          if (!alive) return;
+          if (attempt >= maxAttempts) break; // se acabaron los intentos
+
+          // Backoff exponencial: 1s, 2s, 4s...
+          const delay = baseDelay * Math.pow(2, attempt - 1);
+          await new Promise((r) => setTimeout(r, delay));
+
+          // Si la pestaña está oculta, pausamos los reintentos hasta que vuelva a ser visible
+          if (typeof document !== "undefined" && document.hidden) {
+            await new Promise((resolve) => {
+              const onVisible = () => {
+                document.removeEventListener("visibilitychange", onVisible);
+                resolve();
+              };
+              document.addEventListener("visibilitychange", onVisible);
+            });
+            if (!alive) return;
+          }
+        }
+      }
+
+      // Todos los intentos fallaron → menú estático + fetch de pausa aparte
+      if (!alive) return;
+      setMenu(getStaticMenu(branchId));
+      setUsingFallbackMenu(true);
+
+      try {
+        const pauseData = await getPause();
+        if (alive) setPause(pauseData.branches?.[branchId] || null);
+      } catch {
+        if (alive) setPause(null);
+      }
+    }
+
+    loadMenuWithRetry();
+
     return () => {
       alive = false;
     };
@@ -646,7 +691,7 @@ export default function StoreApp() {
             fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="el menú" />}
             resetKeys={[branchId, menu?.updatedAt]}
           >
-            <Menu menu={menu} branch={branch} pause={pause} orderMode={orderMode} onAdd={handleAdd} qtys={cartQtys} />
+            <Menu menu={menu} branch={branch} pause={pause} orderMode={orderMode} onAdd={handleAdd} qtys={cartQtys} usingFallbackMenu={usingFallbackMenu} />
           </ErrorBoundary>
           <CartBar count={cart.count} total={cart.total} onView={() => setCartOpen(true)} />
         </>

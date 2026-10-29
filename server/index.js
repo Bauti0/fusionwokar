@@ -91,6 +91,7 @@ import {
   listExtras,
   updateExtra,
   getUnseenOrderIds,
+  getDashboard,
 } from "./admin-queries.js";
 import { validateConfig } from "./config.js";
 import { orderLogLine } from "./order-log.js";
@@ -124,6 +125,7 @@ import { getBranchWindows, isOpenAtTime, validateBranchHours, replaceBranchHours
 //   GET   /api/admin/orders                 → listado con filtros y paginación
 //   GET   /api/admin/orders/:id             → detalle
 //   GET   /api/admin/stats                  → estadísticas y embudo (período)
+//   GET   /api/admin/dashboard              → resumen del día (neto, pedidos, ticket, estados, pagos, top producto)
 //   PATCH /api/admin/orders/:id/status      → cambiar estado (devuelve link wa.me)
 //   POST  /api/admin/orders/:id/refund      → devolver dinero (total o parcial)
 //   GET   /api/admin/products               → productos (edición de menú)
@@ -3115,6 +3117,18 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
     res.json(await getStats(db, { fromIso, toIso, scope: adminScope(req) }));
   } catch (err) {
     console.error("GET /api/admin/stats:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- resumen del día (dashboard del dueño) ----------
+app.get("/api/admin/dashboard", requireAdmin, async (req, res) => {
+  try {
+    // Un único request sin parámetros de fecha: siempre "hoy" en Argentina.
+    // El scope lo resuelve adminScope(req) (branch_admin → su sucursal, superadmin → null).
+    res.json(await getDashboard(db, { scope: adminScope(req) }));
+  } catch (err) {
+    console.error("GET /api/admin/dashboard:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });
