@@ -109,6 +109,15 @@ export function getOrderByNumber(orderNumber) {
   return pollRequest(`/api/orders/number/${encodeURIComponent(orderNumber)}`);
 }
 
+// Verificación de teléfono para ver dirección de delivery (privacidad)
+// POST /api/orders/number/:orderNumber/details  { phone }
+export function verifyOrderPhone(orderNumber, phone) {
+  return request(`/api/orders/number/${encodeURIComponent(orderNumber)}/details`, {
+    method: "POST",
+    body: JSON.stringify({ phone }),
+  });
+}
+
 // Pedidos del cliente por teléfono ("Mis pedidos")
 export function getOrdersByPhone(phone) {
   return request(`/api/orders/by-phone/${encodeURIComponent(phone)}`);

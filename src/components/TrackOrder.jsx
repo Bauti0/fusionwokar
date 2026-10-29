@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { getOrderByNumber } from "../api.js";
+import { getOrderByNumber, verifyOrderPhone } from "../api.js";
 import { BRANCHES } from "../data/branches.js";
 import {
   ORDER_STATUSES,
@@ -13,6 +13,7 @@ import {
 } from "../constants.js";
 import { formatPrice } from "../utils/format.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
+import { getDeliveryInfo, getStoredPhoneForVerify } from "../utils/tracking.js";
 import TrackHeader from "./TrackHeader.jsx";
 import { IconPhone, IconArrowLeft, IconClockOutline } from "./ui/icons.jsx";
 
@@ -31,7 +32,12 @@ export default function TrackOrder() {
   const { orderNumber } = useParams();
   const [order, setOrder] = useState(null);
   const [notFound, setNotFound] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState("");
+  const [showVerifyInput, setShowVerifyInput] = useState(false);
   const timer = useRef(null);
+  const verifyAttempted = useRef(false);
+  const verifyInputRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
@@ -56,6 +62,49 @@ export default function TrackOrder() {
       timer.current = null;
     }
   }
+
+  // Auto-verificación silenciosa al cargar un pedido de delivery
+  useEffect(() => {
+    if (!order || order.orderMode !== "delivery" || verifyAttempted.current) return;
+    if (order.verifiedAddress !== undefined) return; // ya verificado (éxito o fallo)
+
+    const storedPhone = getStoredPhoneForVerify();
+    if (!storedPhone) return;
+
+    verifyAttempted.current = true;
+    setVerifying(true);
+    verifyOrderPhone(orderNumber, storedPhone)
+      .then((res) => {
+        if (res.address !== undefined) {
+          setOrder((prev) => prev ? { ...prev, verifiedAddress: res.address || "" } : null);
+        }
+      })
+      .catch(() => {
+        // Fallo silencioso: no mostrar error, dejar el link manual
+        setOrder((prev) => prev ? { ...prev, verifiedAddress: "" } : null);
+      })
+      .finally(() => setVerifying(false));
+  }, [order, orderNumber]);
+
+  // Verificación manual con teléfono ingresado
+  const handleVerify = useCallback(async (phone) => {
+    if (!phone.trim()) return;
+    setVerifying(true);
+    setVerifyError("");
+    try {
+      const res = await verifyOrderPhone(orderNumber, phone);
+      if (res.address !== undefined) {
+        setOrder((prev) => prev ? { ...prev, verifiedAddress: res.address || "" } : null);
+        setShowVerifyInput(false);
+      } else {
+        setVerifyError("No pudimos verificar ese teléfono");
+      }
+    } catch {
+      setVerifyError("No pudimos verificar ese teléfono");
+    } finally {
+      setVerifying(false);
+    }
+  }, [orderNumber]);
 
   useEffect(() => {
     load();
@@ -113,6 +162,8 @@ export default function TrackOrder() {
     : ["ready", "out_for_delivery", "completed"].includes(order.status)
       ? "success"
       : "warn";
+
+  const deliveryInfo = getDeliveryInfo(order, branch);
 
   return (
     <div className="app">
@@ -239,14 +290,62 @@ export default function TrackOrder() {
             <div className="track-delivery__lines">
               <p className="track-delivery__line">
                 <span className="track-delivery__label">Modalidad:</span>
-                <span className="track-delivery__value">
-                  {order.orderMode === "delivery" ? "🛵 Delivery" : "🥡 Retiro en el local"}
-                </span>
+                <span className="track-delivery__value">{deliveryInfo.modalityLabel}</span>
               </p>
-              <p className="track-delivery__line">
-                <span className="track-delivery__label">Dirección:</span>
-                <span className="track-delivery__value">{branch?.address}</span>
-              </p>
+              {deliveryInfo.showAddress && (
+                <p className="track-delivery__line">
+                  <span className="track-delivery__label">Dirección:</span>
+                  <span className="track-delivery__value">{deliveryInfo.address}</span>
+                </p>
+              )}
+              {deliveryInfo.showVerifyLink && !deliveryInfo.showAddress && (
+                <>
+                  {!showVerifyInput && (
+                    <p className="track-delivery__line track-delivery__verify-link">
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--small"
+                        onClick={() => setShowVerifyInput(true)}
+                        disabled={verifying}
+                      >
+                        Ver dirección de entrega
+                      </button>
+                    </p>
+                  )}
+                  {showVerifyInput && (
+                    <div className="track-delivery__verify-form">
+                      {verifyError && <p className="track-delivery__error">{verifyError}</p>}
+                      <div className="field">
+                        <input
+                          ref={verifyInputRef}
+                          type="tel"
+                          inputMode="tel"
+                          autoComplete="tel"
+                          placeholder="Tu celular (ej: 2262 555555)"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              handleVerify(e.target.value);
+                              e.target.blur();
+                            }
+                          }}
+                          disabled={verifying}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn--primary btn--small"
+                        onClick={() => {
+                          if (verifyInputRef.current) handleVerify(verifyInputRef.current.value);
+                        }}
+                        disabled={verifying}
+                      >
+                        Verificar
+                      </button>
+                      {verifying && <span className="hint">Verificando…</span>}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </section>
 

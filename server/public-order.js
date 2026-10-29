@@ -93,3 +93,98 @@ export function toAdminOrder(row) {
     seenAt: row.seen_at || null,
   };
 }
+
+// ============================================================
+// Utilidades puras para verificación de teléfono (testing sin DB)
+// ============================================================
+
+function normalizePhone(phone) {
+  return String(phone || "").replace(/\D/g, "");
+}
+
+// Respuesta genérica SIEMPRE igual para cualquier fallo
+export const GENERIC_FAILURE_RESPONSE = { address: "" };
+export const GENERIC_FAILURE_STATUS = 200;
+
+// Verifica si el orderNumber tiene formato válido
+export function isValidOrderNumberFormat(num) {
+  return /^FW-\d{4,10}$/.test(String(num || "").trim().toUpperCase());
+}
+
+// Lógica de decisión pura: dado row e inputPhone, decide la respuesta
+// No toca BD, no loguea, no usa rate limit.
+export function decideVerifiedDeliveryResponse(row, phoneInput) {
+  const inputPhone = normalizePhone(phoneInput);
+  // Formato inválido → fallo genérico
+  if (!isValidPhone(phoneInput)) return GENERIC_FAILURE_RESPONSE;
+  // Sin row (no existe) → fallo genérico
+  if (!row) return GENERIC_FAILURE_RESPONSE;
+  // No es delivery → fallo genérico
+  if (row.order_mode !== "delivery") return GENERIC_FAILURE_RESPONSE;
+  const storedPhone = normalizePhone(row.customer_phone);
+  // Pedido sin teléfono en BD → fallo genérico
+  if (!storedPhone) return GENERIC_FAILURE_RESPONSE;
+  // Input vacío → fallo genérico
+  if (!inputPhone) return GENERIC_FAILURE_RESPONSE;
+  // Mismatch → fallo genérico
+  if (storedPhone !== inputPhone) return GENERIC_FAILURE_RESPONSE;
+  // Éxito: devuelve dirección (puede ser "" si delivery sin dirección)
+  const address = row.address || "";
+  return { address };
+}
+
+// Re-export isValidPhone para tests (desde validation.js no se puede importar en tests sin db)
+export function isValidPhone(value) {
+  const v = String(value || "").trim();
+  if (!/^\+?[0-9\s()-]+$/.test(v)) return false;
+  const digits = v.replace(/\D/g, "");
+  return digits.length >= 8 && digits.length <= 15;
+}
+
+// ============================================================
+// Rate limiter por pedido: cuenta SOLO fallos, resetea en acierto
+// ============================================================
+const orderDetailsBuckets = new Map();
+
+export function checkOrderRateLimit(orderNumber) {
+  const key = `order:${String(orderNumber || "").trim().toUpperCase()}`;
+  const now = Date.now();
+  const bucket = orderDetailsBuckets.get(key);
+  if (!bucket || bucket.reset < now) {
+    orderDetailsBuckets.set(key, { failures: 0, reset: now + 15 * 60 * 1000 });
+    return { allowed: true, bucket: orderDetailsBuckets.get(key) };
+  }
+  if (bucket.failures >= 5) {
+    return { allowed: false, bucket };
+  }
+  return { allowed: true, bucket };
+}
+
+export function recordOrderFailure(orderNumber) {
+  const key = `order:${String(orderNumber || "").trim().toUpperCase()}`;
+  const now = Date.now();
+  let bucket = orderDetailsBuckets.get(key);
+  if (!bucket || bucket.reset < now) {
+    bucket = { failures: 0, reset: now + 15 * 60 * 1000 };
+    orderDetailsBuckets.set(key, bucket);
+  }
+  bucket.failures += 1;
+}
+
+export function recordOrderSuccess(orderNumber) {
+  const key = `order:${String(orderNumber || "").trim().toUpperCase()}`;
+  orderDetailsBuckets.delete(key); // reset completo en acierto
+}
+
+// Función para tests: inspeccionar estado del bucket
+export function _getOrderBucketForTest(orderNumber) {
+  const key = `order:${String(orderNumber || "").trim().toUpperCase()}`;
+  return orderDetailsBuckets.get(key) || null;
+}
+
+// Función para tests: limpiar buckets
+export function _clearOrderBucketsForTest() {
+  orderDetailsBuckets.clear();
+}
+
+

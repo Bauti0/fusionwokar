@@ -637,9 +637,9 @@ function isSecureRequest(req) {
 // se le respondió al cliente) puede referenciarlo sin duplicar el literal.
 const RATE_LIMIT_ERROR = "Demasiadas solicitudes, intentá más tarde";
 const rateBuckets = new Map();
-// onLimit: callback opcional para dejar rastro cuando se rechaza (solo logs:
-// no cambia ni el cuerpo ni el código de la respuesta). Lo usan los
-// endpoints de pedido, que antes contestaban 429 sin dejar NADA en Render.
+// onLimit: callback opcional para personalizar respuesta cuando se rechaza.
+// Si no se pasa, responde 429 { error: RATE_LIMIT_ERROR }.
+// Si se pasa, onLimit(req, res) debe enviar la respuesta (no llama next()).
 function rateLimit({ windowMs = 60000, max = 30, name = "api", onLimit = null } = {}) {
   return (req, res, next) => {
     const ip = req.ip || req.socket.remoteAddress || "unknown";
@@ -652,7 +652,7 @@ function rateLimit({ windowMs = 60000, max = 30, name = "api", onLimit = null } 
     }
     bucket.count += 1;
     if (bucket.count > max) {
-      if (onLimit) onLimit(req);
+      if (onLimit) return onLimit(req, res);
       return res.status(429).json({ error: RATE_LIMIT_ERROR });
     }
     return next();
@@ -662,7 +662,7 @@ function rateLimit({ windowMs = 60000, max = 30, name = "api", onLimit = null } 
 // Rate limit con clave custom (p. ej. teléfono+IP) para casos como by-phone,
 // donde varios clientes pueden compartir IP (NAT) o uno solo usar varias.
 const keyedBuckets = new Map();
-function rateLimitByKey(keyFn, { windowMs = 10 * 60 * 1000, max = 8, name = "keyed" } = {}) {
+function rateLimitByKey(keyFn, { windowMs = 10 * 60 * 1000, max = 8, name = "keyed", onLimit = null } = {}) {
   return (req, res, next) => {
     const key = `${name}:${keyFn(req)}`;
     const nowTime = Date.now();
@@ -673,6 +673,7 @@ function rateLimitByKey(keyFn, { windowMs = 10 * 60 * 1000, max = 8, name = "key
     }
     bucket.count += 1;
     if (bucket.count > max) {
+      if (onLimit) return onLimit(req, res);
       return res.status(429).json({ error: RATE_LIMIT_ERROR });
     }
     return next();
@@ -2082,6 +2083,79 @@ app.get("/api/orders/number/:orderNumber", rateLimit({ max: 5, windowMs: 60000, 
     res.status(500).json({ error: "Error interno" });
   }
 });
+
+// Verificación de teléfono para ver dirección de delivery (privacidad)
+// POST /api/orders/number/:orderNumber/details  { phone }
+// Rate limit: 1) by-phone style (tel+IP) igual que by-phone  2) por pedido (orderNumber) 5 fallos/15 min
+// Respuesta genérica IDÉNTICA (200 + { address: "" }) para TODOS los fallos:
+// no existe, orderNumber inválido, teléfono inválido, mismatch, retiro, sin teléfono,
+// límite por pedido, límite tel+IP, error interno.
+// Solo acierto: 200 + { address: "<dirección>" }
+import {
+  decideVerifiedDeliveryResponse,
+  checkOrderRateLimit,
+  recordOrderFailure,
+  recordOrderSuccess,
+  isValidOrderNumberFormat,
+  GENERIC_FAILURE_RESPONSE,
+  GENERIC_FAILURE_STATUS,
+} from "./public-order.js";
+
+app.post(
+  "/api/orders/number/:orderNumber/details",
+  rateLimit({
+    max: 15,
+    name: "byphone",
+    onLimit: (req, res) => res.status(GENERIC_FAILURE_STATUS).json(GENERIC_FAILURE_RESPONSE),
+  }), // límite general por IP
+  rateLimitByKey(
+    // M-1: tel+IP (mismo esquema que by-phone)
+    (req) => `${String(req.body?.phone || "").replace(/\D/g, "")}:${getClientIp(req)}`,
+    {
+      max: 8,
+      windowMs: 10 * 60 * 1000,
+      name: "byphonepk",
+      onLimit: (req, res) => res.status(GENERIC_FAILURE_STATUS).json(GENERIC_FAILURE_RESPONSE),
+    }
+  ),
+  async (req, res) => {
+    try {
+      const num = String(req.params.orderNumber || "").trim().toUpperCase();
+      const phoneInput = String(req.body?.phone || "");
+
+      // Validación de formato ANTES de tocar cualquier limitador
+      if (!isValidOrderNumberFormat(num)) {
+        return res.status(GENERIC_FAILURE_STATUS).json(GENERIC_FAILURE_RESPONSE);
+      }
+      if (!isValidPhone(phoneInput)) {
+        return res.status(GENERIC_FAILURE_STATUS).json(GENERIC_FAILURE_RESPONSE);
+      }
+
+      // Rate limit por pedido: si supera 5 fallos en 15 min → fallo genérico SIN consultar BD
+      const rl = checkOrderRateLimit(num);
+      if (!rl.allowed) {
+        return res.status(GENERIC_FAILURE_STATUS).json(GENERIC_FAILURE_RESPONSE);
+      }
+
+      const row = await db.prepare("SELECT * FROM orders WHERE order_number = ?").get(num);
+      const response = decideVerifiedDeliveryResponse(row, phoneInput);
+
+      if (response.address !== "") {
+        // Éxito: resetea contador y devuelve dirección
+        recordOrderSuccess(num);
+        return res.json(response);
+      } else {
+        // Cualquier fallo: incrementa contador y devuelve genérico
+        recordOrderFailure(num);
+        return res.status(GENERIC_FAILURE_STATUS).json(GENERIC_FAILURE_RESPONSE);
+      }
+    } catch (err) {
+      // Error interno: fallo genérico, no filtra info
+      console.error("POST /api/orders/number/:orderNumber/details:", err.message);
+      return res.status(GENERIC_FAILURE_STATUS).json(GENERIC_FAILURE_RESPONSE);
+    }
+  }
+);
 
 // "Mis pedidos": lista los pedidos de un cliente por su teléfono.
 // Solo se devuelven datos mínimos (sin exponer pedidos de otras personas).
