@@ -219,6 +219,7 @@ export default function Landing({ onStart, initialBranch, customer }) {
                 <input
                   id="landing-name"
                   type="text"
+                  autoComplete="name"
                   placeholder="Tu nombre"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -231,6 +232,7 @@ export default function Landing({ onStart, initialBranch, customer }) {
                   id="landing-phone"
                   type="tel"
                   inputMode="tel"
+                  autoComplete="tel"
                   placeholder={phonePlaceholderFor(branchId)}
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}

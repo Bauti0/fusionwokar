@@ -6,6 +6,7 @@ import { validateCheckoutForm } from "../utils/checkoutValidation.js";
 import { closedLabel, pauseNotice } from "../utils/schedule.js";
 import { phonePlaceholderFor } from "../data/branches.js";
 import { shouldCacheQuoteError } from "../utils/shippingCache.js";
+import { getTotalLabel, isSubmitDisabled } from "../utils/checkoutHelpers.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 
@@ -103,6 +104,10 @@ export default function Checkout({
   const [quoteTick, setQuoteTick] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Candado síncrono para evitar doble submit (Enter + click, doble toque).
+  // El estado `busy` de React no cambia hasta el siguiente render; este ref
+  // se chequea y activa ANTES de cualquier await.
+  const submittingRef = useRef(false);
   // UX-01: el mensaje de error (form-error) se renderiza al final de la
   // página, lejos del botón que el cliente toca. Con estos refs la vista
   // hace scroll suave hasta el campo inválido (o hasta el mensaje cuando no
@@ -257,6 +262,10 @@ export default function Checkout({
   }
 
   async function handleConfirm() {
+    // Candado síncrono: evita que Enter + click o doble toque pasen los dos.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+
     // Un intento nuevo borra el error del anterior: si sigue visible, el
     // cliente no puede distinguir si el botón funcionó.
     onClearServerError?.();
@@ -279,6 +288,7 @@ export default function Checkout({
       scheduledAt,
     });
     if (invalid) {
+      submittingRef.current = false;
       pendingFieldRef.current = invalid.field;
       setError(invalid.message);
       return;
@@ -319,6 +329,7 @@ export default function Checkout({
       setError(err.message || "No se pudo confirmar el pedido.");
     } finally {
       setBusy(false);
+      submittingRef.current = false;
     }
   }
 
@@ -328,14 +339,16 @@ export default function Checkout({
         <h2 className="page__title">Confirmá tu pedido</h2>
         <p className="page__sub">{branch.name} · {branch.address}</p>
 
-        <div className="checkout-section">
-          <h3>
-            <span className="num">1</span> Modalidad
-          </h3>
-          <div className="segment">
+        <form onSubmit={(e) => { e.preventDefault(); handleConfirm(); }}>
+          <div className="checkout-section">
+            <h3>
+              <span className="num">1</span> Modalidad
+            </h3>
+            <div className="segment">
             <button
               type="button"
               className={orderMode === "delivery" ? "is-active" : ""}
+              aria-pressed={orderMode === "delivery"}
               onClick={() => setOrderMode("delivery")}
             >
               🛵 Delivery
@@ -343,6 +356,7 @@ export default function Checkout({
             <button
               type="button"
               className={orderMode === "pickup" ? "is-active" : ""}
+              aria-pressed={orderMode === "pickup"}
               onClick={() => setOrderMode("pickup")}
             >
               🥡 Para retirar
@@ -400,6 +414,7 @@ export default function Checkout({
               <input
                 id="checkout-address"
                 type="text"
+                autoComplete="address-line1"
                 placeholder="Calle, número, referencia…"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
@@ -428,6 +443,7 @@ export default function Checkout({
             <button
               type="button"
               className={scheduleMode === "asap" ? "is-active" : ""}
+              aria-pressed={scheduleMode === "asap"}
               onClick={() => setScheduleMode("asap")}
             >
               ⚡ Lo antes posible
@@ -435,6 +451,7 @@ export default function Checkout({
             <button
               type="button"
               className={scheduleMode === "scheduled" ? "is-active" : ""}
+              aria-pressed={scheduleMode === "scheduled"}
               onClick={() => setScheduleMode("scheduled")}
             >
               🕒 Programarlo
@@ -475,6 +492,15 @@ export default function Checkout({
                 placeholder="Tenés un cupón? Escribí el código"
                 value={couponCode}
                 onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (e.target.value.trim() && !couponBusy) applyCoupon();
+                  }
+                }}
               />
               <button
                 type="button"
@@ -579,7 +605,20 @@ export default function Checkout({
             </div>
           )}
           <div className="summary__row summary__row--total">
-            <span>Total ({count} items)</span>
+            <span>
+              {(() => {
+                const { main, sub } = getTotalLabel({ count, shippingUnavailable, isMp });
+                return sub ? (
+                  <>
+                    {main}
+                    <br />
+                    <small>{sub}</small>
+                  </>
+                ) : (
+                  main
+                );
+              })()}
+            </span>
             <span>{formatPrice(finalTotal)}</span>
           </div>
         </div>
@@ -645,15 +684,11 @@ export default function Checkout({
               del pedido existente, o queda deshabilitado si el fallo no es
               reintentable (credenciales inválidas de MP) y la salida es
               WhatsApp. */}
-          <button
+            <button
+            type="submit"
             data-testid="checkout-submit"
             className="btn btn--primary btn--block"
-            onClick={
-              serverError?.orderId && serverError.canRetry && onRetryPaymentLink
-                ? onRetryPaymentLink
-                : handleConfirm
-            }
-            disabled={busy || retryingLink || paused || (!!serverError?.orderId && !serverError.canRetry)}
+            disabled={isSubmitDisabled({ busy, retryingLink, paused, serverError })}
           >
             {busy || retryingLink
               ? "Procesando…"
@@ -671,6 +706,7 @@ export default function Checkout({
             // Reenviar el checkout crearía otro pedido (el anterior ya está
             // guardado sin pago). La salida real es cambiar de medio de pago.
             <button
+              type="button"
               className="btn btn--ghost btn--block"
               onClick={() => {
                 onClearServerError?.();
@@ -687,7 +723,8 @@ export default function Checkout({
             </p>
           )}
         </div>
-      </div>
+      </form>
     </div>
-  );
+  </div>
+);
 }
