@@ -7,6 +7,7 @@ import { closedLabel, pauseNotice } from "../utils/schedule.js";
 import { phonePlaceholderFor } from "../data/branches.js";
 import { shouldCacheQuoteError } from "../utils/shippingCache.js";
 import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/checkoutHelpers.js";
+import { normalizeAddressKey } from "../utils/normalizeAddressKey.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 
@@ -19,7 +20,7 @@ const PAYMENT_METHODS = [
 // Caché cliente de cotizaciones: la misma dirección no se vuelve a consultar
 // (el servicio de mapas tiene cuota diaria).
 const QUOTE_CACHE_TTL = 10 * 60 * 1000;
-const quoteCache = new Map(); // dirección (minúsc.) → { res | err, at }
+const quoteCache = new Map(); // clave normalizada → { res | err, at }
 
 // UX-01: mapeo del campo inválido (la clave lógica que devuelve
 // validateCheckoutForm) al elemento del DOM al que hay que hacer scroll y
@@ -94,14 +95,13 @@ export default function Checkout({
   const [coupon, setCoupon] = useState(null); // { code, discount, totalAfter }
   const [couponError, setCouponError] = useState("");
   const [couponBusy, setCouponBusy] = useState(false);
-  const [shipping, setShipping] = useState(null); // { km, cost }
+  const [shipping, setShipping] = useState(null); // { blocks, cost }
   const [shippingError, setShippingError] = useState("");
   const [shippingBusy, setShippingBusy] = useState(false);
+  const [shippingCalculating, setShippingCalculating] = useState(false);
   const shippingBusyRef = useRef(false);
-  const pendingQuoteRef = useRef(false);
   const addressRef = useRef("");
   addressRef.current = address;
-  const [quoteTick, setQuoteTick] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // Candado síncrono para evitar doble submit (Enter + click, doble toque).
@@ -143,74 +143,90 @@ export default function Checkout({
   const paused = !!pause?.paused && (pause.until == null || pause.until > Date.now());
 
   // Cotización de envío con debounce (no satura la API). Espera una dirección
-  // con un mínimo de texto y nunca encola una segunda consulta mientras una va
-  // en curso. Si el servicio falla, conserva la última cotización válida.
+  // con un mínimo de texto. La caché se consulta ANTES del debounce para
+  // respuesta instantánea. AbortController cancela la consulta en vuelo si
+  // cambia la dirección/sucursal/modalidad. Un timer de 8 s muestra
+  // "Estamos calculando…" sin bloquear el formulario. AbortError se ignora.
   useEffect(() => {
     if (!wantsDelivery || !isTandil) {
       setShipping(null);
       setShippingError("");
       setShippingBusy(false);
+      setShippingCalculating(false);
       return;
     }
     const addr = address.trim();
-    // Cuando la dirección cambia se limpia la cotización anterior: mostrarla
-    // mientras se cotiza la nueva podía dejar un total de la dirección previa.
-    setShipping(null);
     if (addr.length < 8) {
       setShippingError("");
       setShippingBusy(false);
+      setShippingCalculating(false);
       return;
     }
-    if (shippingBusyRef.current) {
-      // Ya hay una consulta en vuelo: al terminar se re-evalúa la dirección
-      // actual (la respuesta vieja se descarta y se encola la nueva).
-      pendingQuoteRef.current = true;
+
+    // 1) Caché instantánea (antes del debounce)
+    const key = normalizeAddressKey(addr);
+    const hit = quoteCache.get(key);
+    if (hit && Date.now() - hit.at < QUOTE_CACHE_TTL) {
+      if (hit.err) setShippingError(hit.err);
+      else setShipping(hit.res);
+      setShippingError(hit.err || "");
+      setShippingBusy(false);
+      setShippingCalculating(false);
       return;
     }
-    setShippingBusy(true);
-    setShippingError("");
-    const t = setTimeout(async () => {
+
+    // 2) Debounce + fetch con AbortController
+    let debounceTimer;
+    let calculatingTimer;
+    const controller = new AbortController();
+
+    const startFetch = async () => {
       shippingBusyRef.current = true;
-      const key = addr.toLowerCase();
-      const hit = quoteCache.get(key);
-      if (hit && Date.now() - hit.at < QUOTE_CACHE_TTL) {
-        if (hit.err) {
-          if (addressRef.current.trim() === addr) setShippingError(hit.err);
-        } else if (addressRef.current.trim() === addr) {
-          setShipping(hit.res);
-          setShippingError("");
-        }
-        shippingBusyRef.current = false;
-        setShippingBusy(false);
-        if (addressRef.current.trim() !== addr) setQuoteTick((n) => n + 1);
-        return;
-      }
+      setShippingBusy(true);
+      setShippingError("");
+
+      // Timer de 8 s para mensaje "calculando…"
+      calculatingTimer = setTimeout(() => {
+        if (!controller.signal.aborted) setShippingCalculating(true);
+      }, 8000);
+
       try {
-        const res = await shippingQuote(branch.id, addr);
+        const res = await shippingQuote(branch.id, addr, { signal: controller.signal });
         const data = { blocks: res.blocks, cost: res.cost };
         quoteCache.set(key, { res: data, at: Date.now() });
-        // Solo aplicar si la dirección no cambió mientras se cotizaba: si cambió,
-        // se ignora (y el tick de más abajo re-dispara la consulta para la nueva).
-        if (addressRef.current.trim() === addr) {
+        // Solo aplicar si NO fue abortado y la dirección sigue siendo la actual
+        if (!controller.signal.aborted && addressRef.current.trim() === addr) {
           setShipping(data);
           setShippingError("");
         }
       } catch (err) {
+        // AbortError: consulta cancelada por cambio de dirección → no hacer nada
+        if (err.name === "AbortError" || err.name === "CancellationError") return;
         const msg = err.message || "";
-        // Cachear el error depende del código del ApiError (transient / unknown /
-        // zone), no del texto del mensaje: ver utils/shippingCache.js.
         if (shouldCacheQuoteError(err)) {
           quoteCache.set(key, { err: msg, at: Date.now() });
         }
-        if (addressRef.current.trim() === addr) setShippingError(msg);
+        if (!controller.signal.aborted && addressRef.current.trim() === addr) {
+          setShippingError(msg);
+        }
       } finally {
-        shippingBusyRef.current = false;
-        setShippingBusy(false);
-        if (addressRef.current.trim() !== addr) setQuoteTick((n) => n + 1);
+        clearTimeout(calculatingTimer);
+        if (!controller.signal.aborted) {
+          shippingBusyRef.current = false;
+          setShippingBusy(false);
+          setShippingCalculating(false);
+        }
       }
-    }, 1500);
-    return () => clearTimeout(t);
-  }, [wantsDelivery, isTandil, address, branch.id, quoteTick]);
+    };
+
+    debounceTimer = setTimeout(startFetch, 1500);
+
+    return () => {
+      clearTimeout(debounceTimer);
+      clearTimeout(calculatingTimer);
+      controller.abort();
+    };
+  }, [wantsDelivery, isTandil, address, branch.id]);
 
   // UX-01: el <div class="form-error"> existe recién después del render que
   // muestra el error, así que el scroll se hace acá y no en el momento del
@@ -573,6 +589,11 @@ export default function Checkout({
         </div>
 
         <div className="summary">
+          {shippingCalculating && (
+            <div className="checkout-note" role="status">
+              Estamos calculando el envío, puede tardar unos segundos…
+            </div>
+          )}
           {shippingUnavailable && isMp && (
             <div className="checkout-note checkout-note--error">
               <span>No pudimos calcular el costo de envío: {shippingError}</span>

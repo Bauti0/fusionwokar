@@ -17,6 +17,8 @@
 // Necochea aún NO implementado: devuelve costo 0.
 // ============================================================
 
+import { normalizeAddressKey } from "./utils/normalizeAddressKey.js";
+
 // Franquicia: hasta esta cantidad de cuadras se cobra solo la base
 const FLAT_BLOCKS = Number(process.env.SHIPPING_FLAT_BLOCKS || 20);
 // Costo fijo de la franquicia (base)
@@ -47,11 +49,36 @@ const ORIGIN_QUERY = "Chacabuco 660, Tandil, Buenos Aires, Argentina";
 const GEO_TIMEOUT_MS = 5000; // reducido para que el total no crezca
 const USER_AGENT = "FusionWok/1.0 (+https://fusionwok.net)";
 
-const blockCache = new Map(); // dirección → { blocks, cost, at }
-const transientFailCache = new Map(); // dirección → { at } (fallos transitorios: 15s)
-const definitiveFailCache = new Map(); // dirección → { at, code } (unknown/zone: 90s)
+// Coordenadas del local por variables de entorno (opcionales).
+// Si ambas están definidas y son válidas, se evita geocodificar el origen.
 let originCoords = null;
 let originAt = 0;
+function parseOriginCoords() {
+  const latStr = (process.env.SHIPPING_ORIGIN_LAT || "").trim();
+  const lngStr = (process.env.SHIPPING_ORIGIN_LNG || "").trim();
+  if (!latStr || !lngStr) return null; // ausentes: caso normal, sin aviso
+  const lat = Number(latStr);
+  const lng = Number(lngStr);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    console.warn("SHIPPING_ORIGIN_LAT/LNG: valores no numéricos, se ignoran");
+    return null;
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    console.warn("SHIPPING_ORIGIN_LAT/LNG: fuera de rango lat/lng, se ignoran");
+    return null;
+  }
+  // Heurística Argentina (aprox): lat ∈ [-56, -21], lng ∈ [-74, -53]
+  if (lat < -56 || lat > -21 || lng < -74 || lng > -53) {
+    console.warn("SHIPPING_ORIGIN_LAT/LNG: fuera de heurística Argentina, se ignoran");
+    return null;
+  }
+  return { lat, lng };
+}
+const ENV_ORIGIN = parseOriginCoords();
+
+const blockCache = new Map(); // clave normalizada → { blocks, cost, at }
+const transientFailCache = new Map(); // clave normalizada → { at } (fallos transitorios: 15s)
+const definitiveFailCache = new Map(); // clave normalizada → { at, code } (unknown/zone: 90s)
 
 // TTLs diferenciados
 const TRANSIENT_FAIL_TTL = 15000; // caché negativo corto para transient
@@ -419,6 +446,8 @@ function enrichAddress(address) {
 }
 
 async function getOrigin(opts = {}) {
+  // Si hay coordenadas de entorno válidas, úsalas directo (sin geocodificar ni cachear).
+  if (ENV_ORIGIN) return ENV_ORIGIN;
   if (originCoords && Date.now() - originAt < ORIGIN_TTL) return originCoords;
   const o = await geocode(ORIGIN_QUERY, opts);
   if (!o) throw unknown("No pudimos ubicar la dirección del local.");
@@ -435,7 +464,7 @@ export async function computeShipping(branch, address) {
   if (branch !== "tandil" || !a) {
     return { cost: 0, blocks: 0, supported: branch === "tandil" };
   }
-  const key = a.toLowerCase();
+  const key = normalizeAddressKey(a);
   const started = Date.now();
 
   const cached = blockCache.get(key);

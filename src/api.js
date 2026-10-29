@@ -165,10 +165,12 @@ export function validateCoupon(code, total, branch) {
 // ---- envío (cliente) ----
 // Calcula el costo de envío para una dirección. Solo Tandil responde con
 // costo; Necochea devuelve { supported:false }.
-export function shippingQuote(branch, address) {
+// Acepta { signal } opcional (AbortSignal) para cancelar la consulta en vuelo.
+export function shippingQuote(branch, address, { signal } = {}) {
   return request("/api/shipping/quote", {
     method: "POST",
     body: JSON.stringify({ branch, address }),
+    signal,
   });
 }
 
