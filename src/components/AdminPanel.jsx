@@ -822,6 +822,18 @@ export default function AdminPanel({ me, onLogout }) {
 
         <div className="container admin__body">
 
+        {section === "dashboard" && (
+          <>
+            {checkCrashDashboard()}
+            <ErrorBoundary
+              fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="el resumen del día" />}
+              resetKeys={['section']}
+            >
+              <AdminDashboard me={me} />
+            </ErrorBoundary>
+          </>
+        )}
+
         {section === "stats" && (
           <>
             {checkCrashStats()}
