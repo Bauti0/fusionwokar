@@ -2067,9 +2067,22 @@ app.get("/api/orders/:id", rateLimit({ max: 60, windowMs: 60000, name: "orderget
 });
 
 // Tracking del cliente por número de pedido (FW-00001)
-// M-4: 5/min (antes 10): el número de pedido es lineal ("FW-000123") y
-// probarlo es trivial; con 10/min un barrido seguía siendo factible.
-app.get("/api/orders/number/:orderNumber", rateLimit({ max: 5, windowMs: 60000, name: "ordernum" }), async (req, res) => {
+// M-4: el número de pedido es lineal ("FW-000123") y probarlo es trivial,
+// por eso el límite es bajo. Era 5/min, pero el poll de TrackOrder (10s,
+// 6/min + recargas) quedaba afuera y el tracking moría con 429 en bucle.
+// 10/min sigue frenando barridos masivos sin matar la UI.
+// Cada 429 loguea una línea con el número intentado (orderLogLine, whitelist
+// sin PII): si aparece alguien barriendo números, queda rastro para decidir
+// si conviene bajar el límite o atarlo a otra cosa.
+const TRACK_NUMBER_ROUTE = "GET /api/orders/number/:orderNumber";
+const trackingRateLimit = rateLimit({
+  max: 10,
+  windowMs: 60000,
+  name: "ordernum",
+  onLimit: (req) =>
+    warnOrder(TRACK_NUMBER_ROUTE, 429, { orderNumber: req.params.orderNumber }, RATE_LIMIT_ERROR),
+});
+app.get("/api/orders/number/:orderNumber", trackingRateLimit, async (req, res) => {
   try {
     const num = String(req.params.orderNumber || "").trim().toUpperCase();
     if (!/^FW-\d{4,10}$/.test(num)) return res.status(400).json({ error: "Número de pedido inválido" });

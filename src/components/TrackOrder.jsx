@@ -19,8 +19,11 @@ import { IconPhone, IconArrowLeft, IconClockOutline } from "./ui/icons.jsx";
 
 // ============================================================
 // TrackOrder — seguimiento del pedido por número (FW-00001)
-// Auto-actualiza cada 6 segundos. Muestra la línea de tiempo
+// Auto-actualiza cada 10 segundos. Muestra la línea de tiempo
 // del estado y el estado del pago.
+// El ritmo está atado al rate limit del endpoint (10/min, decisión M-4):
+// un poll más agresivo (el viejo de 6s) agotaba el límite y el endpoint
+// contestaba 429 en bucle, dejando la página en "Cargando pedido..." para siempre.
 // ============================================================
 
 // Estados terminales: no tiene sentido seguir consultando después.
@@ -32,6 +35,11 @@ export default function TrackOrder() {
   const { orderNumber } = useParams();
   const [order, setOrder] = useState(null);
   const [notFound, setNotFound] = useState(false);
+  // Error de carga SIN pedido cargado: primero que te muestra la pantalla
+  // de error con Reintentar en vez de "Cargando pedido..." infinito. Con
+  // un pedido ya cargado no se usa: los fallos transitorios solo hacen
+  // envejecer el label "Actualizado hace..." (V-18).
+  const [loadError, setLoadError] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState("");
   const [showVerifyInput, setShowVerifyInput] = useState(false);
@@ -50,6 +58,7 @@ export default function TrackOrder() {
       const o = await getOrderByNumber(orderNumber);
       setOrder(o);
       setNotFound(false);
+      setLoadError(false);
       setLastUpdated(Date.now());
       if (isTerminal(o)) clearTimer();
     } catch (err) {
@@ -59,6 +68,12 @@ export default function TrackOrder() {
       if (err.message === "Pedido no encontrado") {
         setNotFound(true);
         clearTimer();
+      } else {
+        // Fallo y sin pedido cargado → pantalla de error con Reintentar.
+        // (El bug que dejaba la pantalla colgada en "Cargando pedido...").
+        // Con pedido cargado el flag queda en true pero no se muestra
+        // (la condicion de render exige !order): el label V-18 sigue envejeciendo.
+        setLoadError(true);
       }
     }
   }, [orderNumber]);
@@ -115,18 +130,18 @@ export default function TrackOrder() {
 
   useEffect(() => {
     load();
-    timer.current = setInterval(load, 6000);
+    timer.current = setInterval(load, 10000);
     return clearTimer;
   }, [load]);
 
-  // Tick del label "Actualizado hace..." al mismo ritmo del poll (6s).
+  // Tick del label "Actualizado hace..." al mismo ritmo del poll (10s).
   // No tiquea con la pestaña oculta (document.hidden): al volver, el
   // próximo setOrder del poll dispara un render y el label se corrige.
   useEffect(() => {
     const id = setInterval(() => {
       if (document.hidden) return;
       setTick((t) => t + 1);
-    }, 6000);
+    }, 10000);
     return () => clearInterval(id);
   }, []);
 
@@ -143,6 +158,31 @@ export default function TrackOrder() {
                 No encontramos ningún pedido con el número <strong>{orderNumber}</strong>.
               </p>
               <Link className="btn btn--primary btn--block" to="/">
+                Volver a la tienda
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Primer poll fallido (429, servidor caído, red): pantalla de error con
+  // Reintentar en vez del "Cargando pedido..." infinito que no mostraba nada.
+  if (!order && loadError) {
+    return (
+      <div className="app">
+        <TrackHeader />
+        <div className="page">
+          <div className="container">
+            <div className="success">
+              <div className="success__icon">!</div>
+              <h1>No pudimos cargar el pedido</h1>
+              <p>Hubo un problema de conexión. Reintentamos automáticamente, o probá de nuevo.</p>
+              <button type="button" className="btn btn--primary btn--block" onClick={load}>
+                Reintentar
+              </button>
+              <Link className="btn btn--secondary btn--block" to="/">
                 Volver a la tienda
               </Link>
             </div>
