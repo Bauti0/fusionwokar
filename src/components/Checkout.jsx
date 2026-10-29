@@ -6,7 +6,7 @@ import { validateCheckoutForm } from "../utils/checkoutValidation.js";
 import { closedLabel, pauseNotice } from "../utils/schedule.js";
 import { phonePlaceholderFor } from "../data/branches.js";
 import { shouldCacheQuoteError } from "../utils/shippingCache.js";
-import { getTotalLabel, isSubmitDisabled } from "../utils/checkoutHelpers.js";
+import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/checkoutHelpers.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
 
@@ -293,6 +293,18 @@ export default function Checkout({
       setError(invalid.message);
       return;
     }
+
+    // Bifurcación: si hay un pedido guardado con error reintentable y handler de reintento,
+    // reintentamos el link de pago del pedido EXISTENTE (no creamos uno nuevo).
+    // Regresión: antes el botón principal decidía en onClick; al pasar a type="submit"
+    // con onSubmit único se perdió. decideSubmitAction restaura la decisión.
+    const action = decideSubmitAction({ serverError, hasRetryHandler: !!onRetryPaymentLink });
+    if (action === "retry") {
+      submittingRef.current = false;
+      await onRetryPaymentLink();
+      return;
+    }
+
     setBusy(true);
     setError("");
     try {
@@ -339,7 +351,7 @@ export default function Checkout({
         <h2 className="page__title">Confirmá tu pedido</h2>
         <p className="page__sub">{branch.name} · {branch.address}</p>
 
-        <form onSubmit={(e) => { e.preventDefault(); handleConfirm(); }}>
+        <form onSubmit={(e) => { e.preventDefault(); handleConfirm(); }} noValidate>
           <div className="checkout-section">
             <h3>
               <span className="num">1</span> Modalidad
@@ -403,6 +415,7 @@ export default function Checkout({
               id="checkout-phone"
               type="tel"
               inputMode="tel"
+              autoComplete="tel"
               placeholder={phonePlaceholderFor(branch)}
               value={phone}
               onChange={(e) => setPhone(e.target.value)}

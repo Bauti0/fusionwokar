@@ -25,3 +25,20 @@ export function getTotalLabel({ count, shippingUnavailable, isMp }) {
 export function isSubmitDisabled({ busy, retryingLink, paused, serverError }) {
   return busy || retryingLink || paused || (!!serverError?.orderId && !serverError.canRetry);
 }
+
+/**
+ * Decide qué acción tomar al hacer submit del checkout.
+ * Regresión: antes el botón principal bifurcaba en su onClick:
+ *   serverError?.orderId && serverError.canRetry && onRetryPaymentLink
+ *     ? onRetryPaymentLink  // reintentar link del pedido YA guardado
+ *     : handleConfirm       // crear pedido nuevo
+ * Al pasar a type="submit" con onSubmit único, esa bifurcación se perdió.
+ * Esta función restaura la decisión sin acoplar a React.
+ * @returns "retry" | "create"
+ */
+export function decideSubmitAction({ serverError, hasRetryHandler }) {
+  if (serverError?.orderId && serverError.canRetry && hasRetryHandler) {
+    return "retry";
+  }
+  return "create";
+}
