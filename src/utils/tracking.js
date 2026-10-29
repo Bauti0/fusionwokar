@@ -40,6 +40,19 @@ export function track(type, branch) {
   }
 }
 
+// updatedAgoLabel — texto "pedido vivo" del seguimiento (V-18):
+// evita parecer un contador exacto que salta entre "hace 0s" y "hace 6s"
+// (justamente el ritmo del poll). Menos de 10s → "un momento"; hasta
+// 60s → segundos; después → minutos. Sin timestamp (primer render)
+// devuelve null para no mostrar nada.
+export function updatedAgoLabel(lastUpdated, now) {
+  if (!lastUpdated) return null;
+  const s = Math.floor(Math.max(0, now - lastUpdated) / 1000);
+  if (s < 10) return "Actualizado hace un momento";
+  if (s < 60) return `Actualizado hace ${s} s`;
+  return `Actualizado hace ${Math.floor(s / 60)} min`;
+}
+
 // ============================================================
 // getDeliveryInfo — decide qué mostrar en la sección "Entrega"
 // Con verificación de teléfono para delivery:

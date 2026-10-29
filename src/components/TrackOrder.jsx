@@ -13,7 +13,7 @@ import {
 } from "../constants.js";
 import { formatPrice } from "../utils/format.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
-import { getDeliveryInfo, getStoredPhoneForVerify } from "../utils/tracking.js";
+import { getDeliveryInfo, getStoredPhoneForVerify, updatedAgoLabel } from "../utils/tracking.js";
 import TrackHeader from "./TrackHeader.jsx";
 import { IconPhone, IconArrowLeft, IconClockOutline } from "./ui/icons.jsx";
 
@@ -38,12 +38,19 @@ export default function TrackOrder() {
   const timer = useRef(null);
   const verifyAttempted = useRef(false);
   const verifyInputRef = useRef(null);
+  // V-18 "pedido vivo": momento del último poll EXITOSO + tick para
+  // recalcular el label. El timestamp solo se actualiza con carga
+  // exitosa: si falla el poll, "Actualizado hace..." empieza a
+  // envejecer y refleja que la conexión está fallando.
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [, setTick] = useState(0);
 
   const load = useCallback(async () => {
     try {
       const o = await getOrderByNumber(orderNumber);
       setOrder(o);
       setNotFound(false);
+      setLastUpdated(Date.now());
       if (isTerminal(o)) clearTimer();
     } catch (err) {
       // Solo un 404 real (pedido inexistente) muestra el estado "no encontrado".
@@ -112,6 +119,17 @@ export default function TrackOrder() {
     return clearTimer;
   }, [load]);
 
+  // Tick del label "Actualizado hace..." al mismo ritmo del poll (6s).
+  // No tiquea con la pestaña oculta (document.hidden): al volver, el
+  // próximo setOrder del poll dispara un render y el label se corrige.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.hidden) return;
+      setTick((t) => t + 1);
+    }, 6000);
+    return () => clearInterval(id);
+  }, []);
+
   if (notFound) {
     return (
       <div className="app">
@@ -164,6 +182,8 @@ export default function TrackOrder() {
       : "warn";
 
   const deliveryInfo = getDeliveryInfo(order, branch);
+  // Label "pedido vivo" (V-18). Recalculado en cada render del tick/poll.
+  const updatedLabel = updatedAgoLabel(lastUpdated, Date.now());
 
   return (
     <div className="app">
@@ -197,6 +217,10 @@ export default function TrackOrder() {
               </div>
             </div>
 
+            {/* V-18: al pie de la tarjeta de estado. Solo aparece tras el
+                primer poll exitoso; si el poll falla, envejece sin mentir. */}
+            {updatedLabel && <p className="track-updated">{updatedLabel}</p>}
+
             {cancelled && (
               <div className="track-cancelled">Este pedido fue cancelado.</div>
             )}
@@ -207,7 +231,12 @@ export default function TrackOrder() {
             )}
 
             {!cancelled && !pendingPay && (
-              <div className="track-checklist">
+              // V-18: key = status para que el checklist se remonte y
+              // reanime (fadeSlide, vía CSS) solo al cambiar el estado.
+              // El estado de verificación de dirección (verifiedAddress,
+              // el input y verifyInputRef) vive FUERA: en la sección
+              // .track-delivery, hermana; el remount NO la resetea.
+              <div key={order.status} className="track-checklist">
                 {ORDER_STATUSES.map((s, i) => {
                   const done = i <= current;
                   // El próximo paso pendiente lleva tinte ámbar: dice

@@ -2068,7 +2068,16 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .track-line { margin: 6px 0; font-size: 14.5px; }
 
 /* Checklist vertical de seguimiento (✓ / ○) */
-.track-checklist { margin-top: 16px; display: grid; gap: 10px; }
+.track-checklist { margin-top: 16px; display: grid; gap: 10px; animation: fadeSlide .25s var(--ease) both; }
+
+/* V-18 — indicador "pedido vivo" del seguimiento. Contraste verificado a mano:
+   claro   #66615e / #fff  = 6.11:1 (var(--color-text-soft) / var(--color-bg) actual)
+   oscuro  rgba(255,255,255,.62) / #111 = 7.63:1 → ambos ≥ 4.5:1 */
+.track-updated {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--color-text-soft);
+}
 .track-check {
   display: flex; align-items: center; gap: 12px;
   border: 1px solid var(--color-border-control); border-radius: var(--radius-sm);
