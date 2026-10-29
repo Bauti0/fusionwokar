@@ -3912,6 +3912,33 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .admin .btn--primary:active { box-shadow: none; }
 
+/* ------------------------------------------------------------
+   Arqueo — Estado "sin caja abierta" y "cerrar caja": centrados
+   y aviso con tratamiento ámbar (estado normal, no error).
+   Selectores acotados a .cash-register__open / .cash-register__close
+   para no afectar otros estados vacíos del admin.
+   ------------------------------------------------------------ */
+.admin .cash-register__open,
+.admin .cash-register__close {
+  margin-inline: auto;              /* centra el bloque de 420px máx */
+  gap: 16px;                        /* ritmo vertical regular entre aviso, campo, botón */
+}
+.admin .cash-register__open .cash-register__no-open {
+  background: var(--color-warn-soft);
+  border-color: var(--color-warn-border);
+  padding: 20px 16px;               /* un toque más compacto */
+}
+.admin .cash-register__open .cash-register__no-open-icon {
+  color: var(--color-warn-text);
+}
+.admin .cash-register__open .cash-register__no-open-title {
+  color: var(--color-warn-text);
+}
+/* El hint ya usa var(--color-text-soft) — se mantiene */
+.admin .cash-register__open .btn--block,
+.admin .cash-register__close .btn--block {
+  min-height: 44px;                 /* área de toque cómoda en celular */
+}
 
 /* ============================================================
    PULIDO PÁGINA DEL CLIENTE — agregado al final de la pasada
