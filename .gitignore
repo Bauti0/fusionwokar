@@ -8,7 +8,6 @@ coverage/
 .opencode/
 .superpowers/
 .archify/
-test/
 docs/
 test-results/
 
@@ -31,7 +30,6 @@ Thumbs.db
 *.tmp
 *.bak
 *.md
-*.test.js
 .env
 opencode.json
 skills-lock.json

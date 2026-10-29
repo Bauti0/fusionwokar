@@ -1452,7 +1452,8 @@ body:has(.admin-login) { background: var(--color-secondary); }
 /* Anillo de foco blanco: el --ring global es rojo y el rojo está
    reservado para precio y agregar. Sobre negro el blanco se ve más. */
 .menu__search input:focus { border-color: rgba(255,255,255,.5); box-shadow: 0 0 0 3px rgba(255,255,255,.14); }
-.menu__search input::placeholder { color: rgba(255,255,255,.35); }
+/* Placeholder a 5.4:1: el .35 previo daba 2.9:1, por debajo del 4.5:1 de WCAG. */
+.menu__search input::placeholder { color: rgba(255,255,255,.55); }
 .menu__cats {
   display: flex; gap: 8px; padding: 8px 16px 10px; overflow-x: auto;
   scrollbar-width: none; -webkit-overflow-scrolling: touch;
@@ -1471,7 +1472,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .cat-chip {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px;
   border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05);
-  border-radius: 999px; padding: 7px 13px; font-size: 13.5px; font-weight: 600; color: rgba(255,255,255,.72);
+  border-radius: 999px; min-height: 44px; padding: 10px 14px; font-size: 13.5px; font-weight: 600; color: rgba(255,255,255,.72);
   transition: border-color .18s var(--ease), background .18s var(--ease), color .18s var(--ease);
 }
 .cat-chip:hover { border-color: rgba(255,255,255,.3); background: rgba(255,255,255,.09); color: #fff; }
@@ -1485,7 +1486,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 
 /* Contenido */
 .menu__content { padding: 0 16px 24px; }
-.menu__hint { font-size: 12px; color: rgba(255,255,255,.5); padding: 14px 0 4px; }
+.menu__hint { font-size: 12px; color: rgba(255,255,255,.6); padding: 14px 0 4px; } /* .6: el .5 rozaba el 4.5:1 */
 .menu__results { display: grid; grid-template-columns: 1fr; gap: 10px 18px; align-items: start; }
 .category { padding-top: 4px; }
 /* Sin ícono: era el mismo bowl en las diez categorías, no decía
@@ -1620,7 +1621,9 @@ body:has(.admin-login) { background: var(--color-secondary); }
 /* ============================================================
    Carrito — barra fija
    ============================================================ */
-.cart-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; padding: 0 12px 14px; pointer-events: none; animation: cartRise .3s var(--ease) both; }
+/* La barra está siempre visible: el gesto del home en iPhone no se la come
+   gracias a safe-area-inset-bottom (viewport-fit=cover ya está en el meta). */
+.cart-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; padding: 0 12px calc(14px + env(safe-area-inset-bottom)); pointer-events: none; animation: cartRise .3s var(--ease) both; }
 @keyframes cartRise { from { transform: translateY(120%); } to { transform: translateY(0); } }
 .cart-bar__inner {
   pointer-events: auto; width: 100%; max-width: 560px; margin: 0 auto;
@@ -1662,17 +1665,20 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .cart-item__line { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
 .qty { display: inline-flex; align-items: center; border: 1.5px solid var(--color-border-control); border-radius: 999px; overflow: hidden; background: var(--color-bg); }
 .qty button {
-  width: 32px; height: 32px; border: none; background: var(--color-surface); font-size: 17px; font-weight: 800;
+  width: 44px; height: 44px; border: none; background: var(--color-surface); font-size: 18px; font-weight: 800;
   transition: background .15s var(--ease), color .15s var(--ease);
 }
 .qty button:hover { background: var(--color-secondary); color: #fff; }
-.qty span { min-width: 36px; text-align: center; font-weight: 800; font-size: 14px; }
+.qty span { min-width: 40px; text-align: center; font-weight: 800; font-size: 14px; }
 .cart-item__price { margin-left: auto; font-weight: 800; font-size: 14.5px; text-align: right; }
 .cart-item__remove { border: none; background: none; color: var(--color-danger-text, var(--color-primary)); font-size: 13px; font-weight: 700; padding: 4px 0; }
 .cart-item__remove:hover { text-decoration: underline; }
 .summary { background: var(--color-surface); border-radius: var(--radius); padding: 18px; margin: 20px 0; }
 .summary__row { display: flex; justify-content: space-between; font-size: 14.5px; padding: 4px 0; }
 .summary__row--total { font-weight: 800; font-size: 18px; border-top: 1px solid var(--color-border); margin-top: 8px; padding-top: 12px; }
+/* Nota bajo el total (Lote E pendiente): la aclaración va en línea aparte,
+   chico y atenuada; ~9.8:1 sobre el surface, dentro de AA. */
+.summary__row--total small { display: block; font-size: .75rem; opacity: .7; margin-top: 2px; }
 
 /* Checkout */
 .segment { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
@@ -1762,7 +1768,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .drawer__branch { margin: 3px 0 0; font-size: 12.5px; color: var(--color-text-soft); }
 .drawer__close {
   border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text);
-  width: 38px; height: 38px; border-radius: 50%; font-size: 16px; cursor: pointer; flex-shrink: 0;
+  width: 44px; height: 44px; border-radius: 50%; font-size: 16px; cursor: pointer; flex-shrink: 0;
   transition: border-color .18s var(--ease), color .18s var(--ease);
 }
 .drawer__close:hover { border-color: var(--color-primary); color: var(--color-primary); }
@@ -1858,7 +1864,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 /* Las filas de opción se hunden contra la hoja del modal, igual que en
    claro la crema se hundía contra el blanco. */
 .app .option { background: var(--color-bg); }
-.modal__close { border: none; background: var(--color-surface); width: 36px; height: 36px; border-radius: 50%; font-size: 16px; flex-shrink: 0; transition: background .15s var(--ease), transform .15s var(--ease); }
+.modal__close { border: none; background: var(--color-surface); width: 44px; height: 44px; border-radius: 50%; font-size: 16px; flex-shrink: 0; transition: background .15s var(--ease), transform .15s var(--ease); }
 .modal__close:hover { background: var(--color-border); transform: rotate(90deg); }
 .modal__desc { font-size: 13.5px; color: var(--color-text-soft); margin: 0 0 18px; }
 .option-group { margin-bottom: 18px; }
@@ -2736,7 +2742,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .drawer__branch { margin: 2px 0 0; font-size: 13px; color: var(--color-text-soft); }
 .drawer__close {
   border: 1px solid var(--color-border); background: var(--color-surface);
-  width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+  width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
   font-size: 14px; cursor: pointer; color: var(--color-text);
 }
 .drawer__close:hover { border-color: var(--color-primary); color: var(--color-primary); }
