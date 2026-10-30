@@ -347,6 +347,66 @@ export function IconRefresh(props) {
   );
 }
 
+// Ícono del carrito (estado vacío del carrito; reemplaza el emoji 🛒)
+export function IconCart(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <circle cx="4" cy="20" r="1" />
+      <circle cx="19" cy="20" r="1" />
+      <path d="M2 5h4.4l1.1 2.2L10 3h7l1 2h4a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h1.6Z" />
+    </svg>
+  );
+}
+
+// Ícono de moto/delivery (reemplaza el emoji 🛵)
+export function IconScooter(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <circle cx="5.5" cy="18" r="1.5" />
+      <circle cx="17.5" cy="18" r="1.5" />
+      <path d="M2 18h4l1-4h8l1 4h2a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h2Z" />
+    </svg>
+  );
+}
+
+// Ícono de candado/pago seguro (reemplaza el emoji 🔒)
+export function IconLock(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
+// Ícono de rayo/envío rápido (reemplaza el emoji ⚡)
+export function IconFlash(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <path d="M13 2l3 10h-6l3 10" />
+    </svg>
+  );
+}
+
+// Ícono de caja para llevar (reemplaza el emoji 🥡)
+export function IconBox(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <path d="M3 8h18v12H3z" />
+      <path d="M7 8v4M12 8v4M17 8v4" />
+    </svg>
+  );
+}
+
+// Ícono de chat/WhatsApp (reemplaza el emoji 💬)
+export function IconChat(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 // Ícono de alerta (círculo con exclamación) para el banner de pedidos sin ver
 export function IconAlertCircle(props) {
   return (

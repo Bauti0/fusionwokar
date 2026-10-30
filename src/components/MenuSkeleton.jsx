@@ -18,8 +18,8 @@ export default function MenuSkeleton() {
         <div className="sk-cat-icon skeleton" />
         <div className="sk-cat-title skeleton" />
       </div>
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div className="sk-card" key={i}>
+      {Array.from({ length: 2 }).map((_, i) => (
+        <div className="sk-card" key={`sk-card-${i}`}>
           <div className="sk-card-media skeleton" />
           <div className="sk-card-body">
             <div className="sk-line skeleton" style={{ width: "70%" }} />
@@ -28,6 +28,13 @@ export default function MenuSkeleton() {
           </div>
         </div>
       ))}
+      <div className="sk-card--tall">
+        <div className="sk-card-media skeleton" />
+        <div className="sk-card-body">
+          <div className="sk-line skeleton" style={{ width: "60%" }} />
+          <div className="sk-line skeleton sk-line--sm" style={{ width: "90%" }} />
+        </div>
+      </div>
     </div>
   );
 }

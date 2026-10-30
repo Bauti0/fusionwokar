@@ -9,7 +9,7 @@ import { shouldCacheQuoteError } from "../utils/shippingCache.js";
 import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/checkoutHelpers.js";
 import { normalizeAddressKey } from "../utils/normalizeAddressKey.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
-import { IconMoney, IconBank, IconCard } from "./ui/icons.jsx";
+import { IconMoney, IconBank, IconCard, IconScooter, IconLock, IconCheck, IconFlash, IconBox, IconChat, IconClockOutline } from "./ui/icons.jsx";
 
 const PAYMENT_METHODS = [
   { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "Contado al retirar o al recibir" },
@@ -379,7 +379,7 @@ export default function Checkout({
               aria-pressed={orderMode === "delivery"}
               onClick={() => setOrderMode("delivery")}
             >
-              🛵 Delivery
+              <IconScooter width="20" height="20" /> Delivery
             </button>
             <button
               type="button"
@@ -387,7 +387,7 @@ export default function Checkout({
               aria-pressed={orderMode === "pickup"}
               onClick={() => setOrderMode("pickup")}
             >
-              🥡 Para retirar
+              <IconBox width="20" height="20" /> Para retirar
             </button>
           </div>
           <p className="hours-note">
@@ -475,7 +475,7 @@ export default function Checkout({
               aria-pressed={scheduleMode === "asap"}
               onClick={() => setScheduleMode("asap")}
             >
-              ⚡ Lo antes posible
+              <IconFlash width="20" height="20" /> Lo antes posible
             </button>
             <button
               type="button"
@@ -483,7 +483,7 @@ export default function Checkout({
               aria-pressed={scheduleMode === "scheduled"}
               onClick={() => setScheduleMode("scheduled")}
             >
-              🕒 Programarlo
+              <IconClockOutline width="20" height="20" /> Programarlo
             </button>
           </div>
           {scheduleMode === "scheduled" && (
@@ -598,7 +598,7 @@ export default function Checkout({
             <div className="checkout-note checkout-note--error">
               <span>No pudimos calcular el costo de envío: {shippingError}</span>
               <a className="btn btn--ghost btn--sm" href={contactWaLink} target="_blank" rel="noreferrer">
-                💬 Escribinos por WhatsApp
+                <IconChat width="16" height="16" /> Escribinos por WhatsApp
               </a>
             </div>
           )}
@@ -612,7 +612,7 @@ export default function Checkout({
           {items.map((item) => (
             <div className="summary__row" key={item.key}>
               <span className="summary__item">
-                {item.image && <img className="summary__thumb" src={item.image} alt="" />}
+                {item.image && <img className="summary__thumb" src={item.image} alt="" width="44" height="44" loading="lazy" decoding="async" />}
                 <span>
                   {item.qty}× {item.name}
                 </span>
@@ -693,7 +693,7 @@ export default function Checkout({
                   target="_blank"
                   rel="noreferrer"
                 >
-                  💬 Resolver por WhatsApp
+                  <IconChat width="16" height="16" /> Resolver por WhatsApp
                 </a>
               )}
             </div>
@@ -707,9 +707,9 @@ export default function Checkout({
         )}
 
         <div className="trust-strip" aria-label="Garantías de tu pedido">
-          <span>🔒 Pago seguro</span>
-          <span>✅ Confirmación al instante</span>
-          <span>🛵 Seguimiento en vivo</span>
+          <span><IconLock width="16" height="16" /> Pago seguro</span>
+          <span><IconCheck width="16" height="16" /> Confirmación al instante</span>
+          <span><IconScooter width="16" height="16" /> Seguimiento en vivo</span>
         </div>
 
         <div style={{ display: "grid", gap: 10, marginTop: 16 }}>

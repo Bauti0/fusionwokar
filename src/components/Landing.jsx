@@ -4,7 +4,7 @@ import { SOCIAL } from "../data/social.js";
 import { isValidPhone } from "../utils/validation.js";
 import { isNowOpen, closedLabel, arClockLabel } from "../utils/schedule.js";
 import { getPause } from "../api.js";
-import { IconBowlSteam, IconChopsticks, HeroMotif } from "./ui/icons.jsx";
+import { IconBowlSteam, IconChopsticks, HeroMotif, IconLock, IconCheck, IconScooter } from "./ui/icons.jsx";
 
 // ============================================================
 // Portada / Landing
@@ -253,9 +253,9 @@ export default function Landing({ onStart, initialBranch, customer }) {
           </div>
 
           <p className="landing__trust">
-            <span>🔒 Pagás seguro</span>
-            <span>✅ Confirmás al instante</span>
-            <span>🛵 Seguís tu pedido en vivo</span>
+            <span><IconLock width="14" height="14" /> Pagás seguro</span>
+            <span><IconCheck width="14" height="14" /> Confirmás al instante</span>
+            <span><IconScooter width="14" height="14" /> Seguís tu pedido en vivo</span>
           </p>
 
           <p className="landing__footer">

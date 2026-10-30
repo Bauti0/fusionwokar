@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { formatPrice, lineTotal } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
 import Tooltip from "./ui/Tooltip.jsx";
+import { IconCart } from "./ui/icons.jsx";
 
 // ============================================================
 // Carrito como bottom-sheet: se abre sobre el menú sin sacarte del
@@ -37,7 +38,7 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
         <div className="drawer__body">
           {items.length === 0 ? (
             <div className="empty-state">
-              <div className="big">🛒</div>
+              <IconCart className="empty-state__icon" />
               <p>Tu carrito está vacío.</p>
               <button className="btn btn--primary" onClick={onBack}>
                 Ver el menú
@@ -51,7 +52,7 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
                 return (
                 <div className="cart-item" key={item.key}>
                   {item.image && (
-                    <img className="cart-item__thumb" src={item.image} alt="" />
+                    <img className="cart-item__thumb" src={item.image} alt="" width="44" height="44" loading="lazy" decoding="async" />
                   )}
                   <div className="cart-item__info">
                     <p className="cart-item__name">{item.name}</p>
