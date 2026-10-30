@@ -694,13 +694,9 @@ export async function getStats(db, { fromIso, toIso, scope } = {}) {
 export async function getDashboard(db, { scope } = {}) {
   // "Hoy" en Argentina: medianoche AR de hoy → now (UTC)
   // arDay usa Intl.DateTimeFormat con timeZone America/Argentina/Buenos_Aires
-  // IMPORTANTE: los timestamps en la BD están en UTC (ISO con Z).
-  // El rango de consulta debe usar UTC para que la comparación de strings funcione.
-  const now = new Date();
-  const todayAr = arDay(now.toISOString());
-  // Medianoche de Argentina de HOY en UTC: YYYY-MM-DDT03:00:00.000Z
-  const fromIso = new Date(`${todayAr}T00:00:00-03:00`).toISOString();
-  const toIso = now.toISOString();
+  const todayAr = arDay(new Date().toISOString());
+  const fromIso = `${todayAr}T00:00:00-03:00`;
+  const toIso = new Date().toISOString();
 
   const branchCond = scope ? " AND branch = ?" : "";
   const branchArgs = scope ? [scope] : [];

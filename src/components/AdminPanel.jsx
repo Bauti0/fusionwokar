@@ -48,7 +48,7 @@ import AdminNewOrder from "./AdminNewOrder.jsx";
 import AdminUsers from "./AdminUsers.jsx";
 import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import { SectionFallback } from "./ui/ErrorFallbacks.jsx";
-import { checkCrashOrders, checkCrashStats, checkCrashProducts, checkCrashExtras, checkCrashCoupons, checkCrashCustomers, checkCrashSales, checkCrashUsers, checkCrashNewOrder, checkCrashDashboard } from "../hooks/useCrashTest.js";
+import { checkCrashOrders, checkCrashStats, checkCrashProducts, checkCrashExtras, checkCrashCoupons, checkCrashCustomers, checkCrashSales, checkCrashUsers, checkCrashNewOrder } from "../hooks/useCrashTest.js";
 
 // ============================================================
 // AdminPanel — gestión de pedidos
@@ -821,18 +821,6 @@ export default function AdminPanel({ me, onLogout }) {
         </nav>
 
         <div className="container admin__body">
-
-        {section === "dashboard" && (
-          <>
-            {checkCrashDashboard()}
-            <ErrorBoundary
-              fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="el resumen del día" />}
-              resetKeys={['section']}
-            >
-              <AdminDashboard me={me} />
-            </ErrorBoundary>
-          </>
-        )}
 
         {section === "stats" && (
           <>

@@ -26,7 +26,6 @@ const CRASH_TARGETS = {
   sales: "sales",
   users: "users",
   neworder: "neworder",
-  dashboard: "dashboard",
   track: "track",
   // Route level
   store: "store",
@@ -79,7 +78,6 @@ export function checkCrashCustomers() { check("customers"); }
 export function checkCrashSales() { check("sales"); }
 export function checkCrashUsers() { check("users"); }
 export function checkCrashNewOrder() { check("neworder"); }
-export function checkCrashDashboard() { check("dashboard"); }
 
 // Hook para usar dentro de componentes funcionales (si se necesita)
 export function useCrashTest(target) {
