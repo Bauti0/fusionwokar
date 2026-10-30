@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isOpenAtTime, isOpenAtRaw, nextOpening, toWallclock, outsideHoursMessage } from "../src/utils/schedule.js";
+import { isOpenAtTime, isOpenAtRaw, nextOpening, toWallclock, outsideHoursMessage, arClockLabel } from "../src/utils/schedule.js";
 import { BRANCHES } from "../src/data/branches.js";
 
 // Todas las fechas se construyen con el constructor local
@@ -367,5 +367,23 @@ describe("servidor en UTC / zona Argentina", () => {
   it("domingo 00:30 ARG = domingo 03:30 UTC: está cerrado (franja del sábado)", () => {
     const utc = new Date(Date.UTC(2026, 0, 11, 3, 30, 0)); // 11 ene 03:30 UTC = 11 ene 00:30 ARG (domingo)
     assert.equal(isOpenAtRaw(utc, [{ days: [5], from: "20:00", to: "01:00" }]), false);
+  });
+});
+
+// ---------------------------------------------------------------------
+// V-28: el badge de pedido programado del listado del admin muestra la
+// hora real programada (Argentina, HH:MM) y no solo el emoji 🕒. El
+// formateo lo reusa arClockLabel de schedule.js (no se inventa una nueva).
+// Esta prueba cubre que el formateo devuelve la hora argentina corta con
+// cero a la izquierda, que es lo que acaba leyendo el badge.
+// ---------------------------------------------------------------------
+describe("arClockLabel — hora argentina corta (V-28)", () => {
+  it("formatea una fecha programada en hora argentina HH:MM", () => {
+    // 2026-10-05T20:00:00.000Z = 17:00 en Buenos Aires (UTC-3, todo el año)
+    assert.equal(arClockLabel("2026-10-05T20:00:00.000Z"), "17:00");
+  });
+  it("usa cero a la izquierda en la hora", () => {
+    // 2026-01-15T12:00:00Z = 09:00 en Buenos Aires (UTC-3)
+    assert.equal(arClockLabel("2026-01-15T12:00:00Z"), "09:00");
   });
 });

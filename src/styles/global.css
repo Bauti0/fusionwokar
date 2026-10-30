@@ -3228,6 +3228,20 @@ body:has(.admin-login) { background: var(--color-secondary); }
   .empty-state__icon { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
+/* V-20 — Movimiento reducido para las animaciones que aún no lo respetaban:
+   anillo y vapor de la landing, toast y pulso del punto del admin.
+   Las keyframes se mantienen; bajo "reduce" colapsan a un frame
+   instantáneo (misma receta que el bloque de menú/app de arriba). */
+@media (prefers-reduced-motion: reduce) {
+  .landing__logoRing,
+  .steam-line,
+  .toast,
+  .admin-order__dot {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
 /* ============================================================
    Landing — vidriera partida en pantallas anchas
    En mobile es un "bottom sheet" clásico; en desktop pasa a ser
@@ -3542,7 +3556,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--color-border);
   background: var(--color-bg); font-weight: 700; line-height: 1;
 }
-.qty-stepper--sm button { width: 22px; height: 22px; font-size: 13px; }
+.qty-stepper--sm button { width: 44px; height: 44px; font-size: 13px; }
 
 /* ============================================================
    Admin — pantallas anchas
@@ -3850,6 +3864,31 @@ body:has(.admin-login) { background: var(--color-secondary); }
   border-style: dashed;
   background: transparent;
   color: var(--color-text-soft);
+}
+
+/* ------------------------------------------------------------
+   V-27 — Área táctil de 44px en filtros y tabs del admin.
+   Se amplía el hit-area con ::before (fondo transparente, absoluto:
+   fuera del flujo, sin tocar el layout ni generar scroll horizontal).
+   La medida visual de cada fila se mantiene igual.
+   ------------------------------------------------------------ */
+.period-btn,
+.filter-chip,
+.copy-btn,
+.order-tabs__tab,
+.admin-pause__resume { position: relative; }
+.period-btn::before,
+.filter-chip::before,
+.copy-btn::before,
+.order-tabs__tab::before,
+.admin-pause__resume::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }
 
 /* ------------------------------------------------------------
