@@ -38,7 +38,6 @@ import ConfirmModal from "./ui/ConfirmModal.jsx";
 import PauseModal from "./ui/PauseModal.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import AdminStats from "./AdminStats.jsx";
-import AdminDashboard from "./AdminDashboard.jsx";
 import AdminProducts from "./AdminProducts.jsx";
 import AdminExtras from "./AdminExtras.jsx";
 import AdminCoupons from "./AdminCoupons.jsx";
@@ -752,14 +751,6 @@ export default function AdminPanel({ me, onLogout }) {
             📦 Pedidos
             {unseenIds.size > 0 && <span className="admin-nav__badge">{unseenIds.size}</span>}
           </button>
-          <span className="admin-nav__group">Análisis</span>
-          <button
-            data-testid="nav-dashboard"
-            className={`admin-nav__btn ${section === "dashboard" ? "is-active" : ""}`}
-            onClick={() => setSection("dashboard")}
-          >
-            📋 Resumen
-          </button>
           <button
             data-testid="nav-stats"
             className={`admin-nav__btn ${section === "stats" ? "is-active" : ""}`}
@@ -1180,7 +1171,7 @@ const renderOrder = (o) => {
                           <span className="badge badge--source">🧍 Mostrador</span>
                         )}
                         {o.shipping?.pending && <span className="badge badge--shipping-pending">⚠️ Envío a confirmar</span>}
-                        {o.scheduledFor && <span className="badge" title={`Programado: ${new Date(o.scheduledFor).toLocaleString("es-AR")}`}>🕒</span>}
+                        {o.scheduledFor && <span className="badge" title={`Programado: ${new Date(o.scheduledFor).toLocaleString("es-AR")}`}>🕒 {arClockLabel(o.scheduledFor)}</span>}
                       </div>
                       <div className="admin-order__bottom">
                         <span className={`badge badge--status-${o.status}`}>{statusEmoji(o.status)} {statusLabel(o.status)}</span>
