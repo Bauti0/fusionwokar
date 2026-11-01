@@ -99,7 +99,6 @@ export default function Checkout({
   const [shippingError, setShippingError] = useState("");
   const [shippingBusy, setShippingBusy] = useState(false);
   const [shippingCalculating, setShippingCalculating] = useState(false);
-  const shippingBusyRef = useRef(false);
   const addressRef = useRef("");
   addressRef.current = address;
   const [error, setError] = useState("");
@@ -181,7 +180,7 @@ export default function Checkout({
     const controller = new AbortController();
 
     const startFetch = async () => {
-      shippingBusyRef.current = true;
+      setShippingCalculating(false);
       setShippingBusy(true);
       setShippingError("");
 
@@ -212,7 +211,6 @@ export default function Checkout({
       } finally {
         clearTimeout(calculatingTimer);
         if (!controller.signal.aborted) {
-          shippingBusyRef.current = false;
           setShippingBusy(false);
           setShippingCalculating(false);
         }
