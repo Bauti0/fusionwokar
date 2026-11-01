@@ -369,6 +369,18 @@ export function IconScooter(props) {
   );
 }
 
+// Ícono de camión de reparto/delivery (reconoce al reparto a domicilio)
+export function IconTruck(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <circle cx="5" cy="18" r="2" />
+      <circle cx="17" cy="18" r="2" />
+      <path d="M2 18h12V8l-2-2H4l-2 2z" />
+      <line x1="9" y1="8" x2="9" y2="18" />
+    </svg>
+  );
+}
+
 // Ícono de candado/pago seguro (reemplaza el emoji 🔒)
 export function IconLock(props) {
   return (
@@ -388,12 +400,13 @@ export function IconFlash(props) {
   );
 }
 
-// Ícono de caja para llevar (reemplaza el emoji 🥡)
-export function IconBox(props) {
+// Ícono de caja para llevar / para retirar (solapa y cinta cruzada)
+export function IconPickup(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="M3 8h18v12H3z" />
-      <path d="M7 8v4M12 8v4M17 8v4" />
+      <rect x="4" y="6" width="16" height="14" rx="1" />
+      <path d="M4 6h16v3H4z" />
+      <line x1="12" y1="6" x2="12" y2="20" />
     </svg>
   );
 }

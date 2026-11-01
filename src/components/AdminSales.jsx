@@ -260,7 +260,7 @@ function CashRegister({ branch, me }) {
     }
     setExpensesLoading(true);
     try {
-      const d = await adminExpenses({ from: data.open?.openedAt || data.history[0]?.openedAt, to: new Date().toISOString() });
+      const d = await adminExpenses({ branch, from: data.open?.openedAt || data.history[0]?.openedAt, to: new Date().toISOString() });
       // Filtrar solo los de esta caja
       const filtered = d.expenses?.filter((e) => e.cash_register_id === cashId && !e.deleted_at) || [];
       setExpenses(filtered);
@@ -269,7 +269,7 @@ function CashRegister({ branch, me }) {
     } finally {
       setExpensesLoading(false);
     }
-  }, [data]);
+  }, [data, branch]);
 
   // Disparar animación cuando expectedNow cambia
   useEffect(() => {

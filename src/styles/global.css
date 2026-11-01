@@ -1697,6 +1697,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   border-color: var(--color-primary); background: var(--color-primary-soft); color: var(--color-text);
   box-shadow: 0 0 0 3px rgba(229,52,46,.1); transform: translateY(-1px);
 }
+.checkout__icon { vertical-align: middle; margin-right: 8px; }
 .checkout-section { margin: 24px 0 6px; }
 .checkout-section h3 {
   font-family: var(--font-display); font-size: 14px; text-transform: uppercase;

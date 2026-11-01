@@ -9,7 +9,7 @@ import { shouldCacheQuoteError } from "../utils/shippingCache.js";
 import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/checkoutHelpers.js";
 import { normalizeAddressKey } from "../utils/normalizeAddressKey.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
-import { IconMoney, IconBank, IconCard, IconScooter, IconLock, IconCheck, IconFlash, IconBox, IconChat, IconClockOutline } from "./ui/icons.jsx";
+import { IconMoney, IconBank, IconCard, IconScooter, IconLock, IconCheck, IconFlash, IconPickup, IconChat, IconClockOutline, IconTruck } from "./ui/icons.jsx";
 import FadeImage from "./FadeImage.jsx";
 
 const PAYMENT_METHODS = [
@@ -378,7 +378,7 @@ export default function Checkout({
               aria-pressed={orderMode === "delivery"}
               onClick={() => setOrderMode("delivery")}
             >
-              <IconScooter width="20" height="20" /> Delivery
+              <IconTruck className="checkout__icon" width="20" height="20" /> Delivery
             </button>
             <button
               type="button"
@@ -386,7 +386,7 @@ export default function Checkout({
               aria-pressed={orderMode === "pickup"}
               onClick={() => setOrderMode("pickup")}
             >
-              <IconBox width="20" height="20" /> Para retirar
+              <IconPickup className="checkout__icon" width="20" height="20" /> Para retirar
             </button>
           </div>
           <p className="hours-note">
@@ -474,7 +474,7 @@ export default function Checkout({
               aria-pressed={scheduleMode === "asap"}
               onClick={() => setScheduleMode("asap")}
             >
-              <IconFlash width="20" height="20" /> Lo antes posible
+              <IconFlash className="checkout__icon" width="20" height="20" /> Lo antes posible
             </button>
             <button
               type="button"
@@ -482,7 +482,7 @@ export default function Checkout({
               aria-pressed={scheduleMode === "scheduled"}
               onClick={() => setScheduleMode("scheduled")}
             >
-              <IconClockOutline width="20" height="20" /> Programarlo
+              <IconClockOutline className="checkout__icon" width="20" height="20" /> Programarlo
             </button>
           </div>
           {scheduleMode === "scheduled" && (
