@@ -4,6 +4,7 @@ import { BRANCH_LIST, phonePlaceholderFor } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
+import { useDelayedLoading } from "../utils/skeleton-delay.js";
 
 const PAYMENT_OPTIONS = [
   { value: "efectivo", label: "💰 Efectivo" },
@@ -75,8 +76,14 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
   const [cartCleared, setCartCleared] = useState("");
   const prefillDoneRef = useRef(false);
 
+  const [menuFetchSettled, setMenuFetchSettled] = useState(false);
+
   useEffect(() => {
-    getMenu(branchId).then(setMenu).catch(() => setMenu(null));
+    let active = true;
+    getMenu(branchId)
+      .then((m) => { if (active) { setMenu(m); setMenuFetchSettled(true); } })
+      .catch(() => { if (active) { setMenu(null); setMenuFetchSettled(true); } });
+    return () => { active = false; };
   }, [branchId]);
 
   // El menú viene por categorías > grupos > productos; lo aplanamos
@@ -179,6 +186,11 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
 
   const total = cart.reduce((sum, it) => sum + (it.unitPrice + it.extras.reduce((a, e) => a + e.price, 0)) * it.qty, 0);
 
+  // Skeleton solo mientras se carga el menú de la sucursal (getMenu propio).
+  // Cargas rápidas (< 200 ms) no parpadean; se mantiene visible al menos 300 ms.
+  // Si el fetch falla, menuFetchSettled=true evita el skeleton eterno.
+  const showMenuSkeleton = useDelayedLoading(menu === null && !menuFetchSettled, { showAfter: 200, minVisible: 300 });
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
@@ -258,13 +270,27 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
             onChange={(e) => setSearch(e.target.value)}
           />
           <div className="new-order__product-list">
-            {results.map((p) => (
-              <button type="button" key={p.id} className="new-order__product" onClick={() => handleProductClick(p)}>
-                <span className="new-order__product-name">{p.name}</span>
-                <span className="new-order__product-price">{formatPrice(p.price)}</span>
-              </button>
-            ))}
-            {menu && results.length === 0 && <p className="hint">Sin resultados.</p>}
+            {showMenuSkeleton ? (
+              <>
+                <span className="sr-only">Cargando productos…</span>
+                {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+                  <div key={i} className="new-order__product new-order__product--skeleton">
+                    <div className="skeleton new-order-product-skeleton__name" style={{ width: "60%" }} />
+                    <div className="skeleton sk-line--sm new-order-product-skeleton__price" style={{ width: "30%" }} />
+                  </div>
+                ))}
+              </>
+            ) : (
+              <>
+                {results.map((p) => (
+                  <button type="button" key={p.id} className="new-order__product" onClick={() => handleProductClick(p)}>
+                    <span className="new-order__product-name">{p.name}</span>
+                    <span className="new-order__product-price">{formatPrice(p.price)}</span>
+                  </button>
+                ))}
+                {menu && results.length === 0 && <p className="hint">Sin resultados.</p>}
+              </>
+            )}
           </div>
         </div>
 

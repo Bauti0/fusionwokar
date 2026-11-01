@@ -4733,12 +4733,14 @@ app.use(
   express.static(distAssetsDir, { maxAge: "1y", immutable: true })
 );
 
-// SEO: se lee el HTML del build una vez y se reescribe por request
+// SEO: se lee el HTML del build por request y se reescribe
 // (title, description, canonical, og:image, JSON-LD por ruta/sucursal).
-let indexHtml = null;
+// Se lee del disco en cada request para que, tras un `npm run build`, los
+// nombres de los chunks de Vite (con hash) coincidan con el index.html
+// servido. Antes se cacheaba en memoria y, tras un build, el index.html
+// antiguo seguía referenciando chunks que ya no existían.
 function indexTemplate() {
-  if (indexHtml === null) indexHtml = readFileSync(path.join(distDir, "index.html"), "utf8");
-  return indexHtml;
+  return readFileSync(path.join(distDir, "index.html"), "utf8");
 }
 
 // CSP: solo en páginas HTML (ruta SEO). Scripts permitidos: assets propios

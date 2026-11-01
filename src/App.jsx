@@ -24,10 +24,9 @@ const TrackOrder = lazy(() => import("./components/TrackOrder.jsx"));
 
 function PageFallback() {
   return (
-    <div className="page">
-      <div className="container">
-        <p className="hint">Cargando…</p>
-      </div>
+    <div className="page-fallback" role="status" aria-label="Cargando Fusión Wok">
+      <img src="/assets/logo-wok.jpeg" alt="Fusión Wok" className="page-fallback__logo" />
+      <span className="sr-only">Cargando…</span>
     </div>
   );
 }

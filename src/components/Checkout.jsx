@@ -10,6 +10,7 @@ import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/ch
 import { normalizeAddressKey } from "../utils/normalizeAddressKey.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard, IconScooter, IconLock, IconCheck, IconFlash, IconBox, IconChat, IconClockOutline } from "./ui/icons.jsx";
+import FadeImage from "./FadeImage.jsx";
 
 const PAYMENT_METHODS = [
   { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "Contado al retirar o al recibir" },
@@ -610,7 +611,7 @@ export default function Checkout({
           {items.map((item) => (
             <div className="summary__row" key={item.key}>
               <span className="summary__item">
-                {item.image && <img className="summary__thumb" src={item.image} alt="" width="44" height="44" loading="lazy" decoding="async" />}
+                {item.image && <FadeImage src={item.image} alt="" width="44" height="44" aspectRatio={1} className="summary__thumb" />}
                 <span>
                   {item.qty}× {item.name}
                 </span>

@@ -2,6 +2,7 @@ import { memo, useRef, useState } from "react";
 import { formatPrice } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
 import { IconSparkle } from "./ui/icons.jsx";
+import FadeImage from "./FadeImage.jsx";
 
 // ============================================================
 // Tarjeta de producto
@@ -29,6 +30,7 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   const unavailable = product.available === false;
   const [added, setAdded] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
+
   const timer = useRef(null);
 
   // Si la foto no carga (archivo borrado, ruta rota…) se cae al
@@ -57,7 +59,15 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
     <div className={`product ${hasImage ? "product--with-image" : "product--no-image"} ${unavailable ? "product--unavailable" : ""}`}>
       {hasImage && (
         <div className="product__media">
-          <img src={product.image} alt={product.name} width="160" height="160" loading="lazy" onError={() => setImgFailed(true)} />
+          <FadeImage
+            src={product.image}
+            alt={product.name}
+            width="160"
+            height="160"
+            aspectRatio={1}
+            placeholderOnError={false}
+            onImageError={() => setImgFailed(true)}
+          />
         </div>
       )}
       <div className="product__info">

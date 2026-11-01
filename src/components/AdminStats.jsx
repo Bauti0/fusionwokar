@@ -3,6 +3,7 @@ import { adminStats } from "../api.js";
 import { formatPrice } from "../utils/format.js";
 import { periodRange } from "../utils/dates.js";
 import DateRangePicker from "./ui/DateRangePicker.jsx";
+import { useDelayedLoading } from "../utils/skeleton-delay.js";
 
 // ============================================================
 // AdminStats — estadísticas del panel
@@ -26,7 +27,21 @@ export default function AdminStats({ me }) {
   const [to, setTo] = useState("");
   const [stats, setStats] = useState(null);
   const [error, setError] = useState("");
+  const [statsSettled, setStatsSettled] = useState(false);
   const timer = useRef(null);
+  // stats === null y !statsSettled solo en la primera carga y al cambiar de filtro.
+  // El auto-refresh de 30 s nunca pasa por null: sobreescribe con datos, así que el
+  // skeleton no reaparece en el refresco. Si el primer fetch falla, statsSettled=true
+  // evita el skeleton eterno.
+  const showSkeleton = useDelayedLoading(stats === null && !statsSettled, { showAfter: 200, minVisible: 300 });
+
+  // Al cambiar de período o rango personalizado, resetear stats para que el
+  // skeleton reaparezca ante el nuevo contexto. El auto-refresh no toca estas
+  // dependencias, así que no se dispara ahí.
+  useEffect(() => {
+    setStats(null);
+    setStatsSettled(false);
+  }, [period, from, to]);
 
   const load = useCallback(async () => {
     try {
@@ -39,6 +54,8 @@ export default function AdminStats({ me }) {
       setError("");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setStatsSettled(true);
     }
   }, [period, from, to]);
 
@@ -177,7 +194,29 @@ export default function AdminStats({ me }) {
           </div>
         </>
       ) : (
-        <p className="hint">Cargando estadísticas…</p>
+        showSkeleton ? (
+          <div className="stats-skeleton" aria-busy="true">
+            <span className="sr-only">Cargando estadísticas…</span>
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="stat-card stat-card--skeleton">
+                <div className="skeleton stat-skeleton__icon" style={{ width: "40px", height: "40px", borderRadius: "50%" }} />
+                <div className="skeleton stat-skeleton__label" style={{ width: "55%" }} />
+                <div className="skeleton stat-skeleton__value" style={{ width: "45%" }} />
+                <div className="skeleton sk-line--sm stat-skeleton__note" style={{ width: "70%" }} />
+              </div>
+            ))}
+            <div className="top-products-skeleton">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="skeleton top-product-skeleton" style={{ width: "45%" }} />
+              ))}
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="skeleton top-product-skeleton" style={{ width: "45%" }} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="hint">Cargando estadísticas…</p>
+        )
       )}
     </section>
   );

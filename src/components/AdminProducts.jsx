@@ -22,6 +22,7 @@ import PromptModal from "./ui/PromptModal.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 import Tooltip from "./ui/Tooltip.jsx";
 import { IconPlus, IconEdit, IconTrash } from "./ui/icons.jsx";
+import { useDelayedLoading } from "../utils/skeleton-delay.js";
 
 // ============================================================
 // AdminProducts — edición del menú desde el panel
@@ -350,6 +351,10 @@ export default function AdminProducts({ me }) {
 
   const resultCount = visibleCategories.reduce((acc, cat) => acc + cat.groups.reduce((a, g) => a + g.products.length, 0), 0);
 
+  // Skeleton solo en la primera carga (loading al iniciar). Cargas rápidas
+  // (< 200 ms) no parpadean; se mantiene visible al menos 300 ms.
+  const showProductsSkeleton = useDelayedLoading(loading && !branches.length, { showAfter: 200, minVisible: 300 });
+
   return (
     <div className="admin-products">
       <div className="admin-products__toolbar">
@@ -377,8 +382,22 @@ export default function AdminProducts({ me }) {
 
       {error && <div className="form-error">{error}</div>}
 
-      {loading && !branches.length ? (
-        <p className="hint">Cargando productos…</p>
+      {showProductsSkeleton ? (
+        <div className="admin-products-skeleton" aria-busy="true">
+          <span className="sr-only">Cargando productos…</span>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="admin-product admin-product--skeleton">
+              <div className="skeleton admin-product-skeleton__thumb" style={{ width: "44px", height: "44px", borderRadius: "10px" }} />
+              <div className="skeleton admin-product-skeleton__name" style={{ width: "55%" }} />
+              <div className="skeleton sk-line--sm admin-product-skeleton__price" style={{ width: "30%" }} />
+              <div className="admin-product-skeleton__actions">
+                {[0, 1, 2, 3, 4].map((j) => (
+                  <span key={j} className="skeleton" style={{ width: "34px", height: "34px", borderRadius: "50%" }} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : !branch ? (
         <div className="admin-empty">No hay menú para esta sucursal.</div>
       ) : (

@@ -16,6 +16,7 @@ import { formatPrice } from "../utils/format.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import { getDeliveryInfo, getStoredPhoneForVerify, updatedAgoLabel } from "../utils/tracking.js";
 import { computeBackoffInterval } from "../utils/tracking-backoff.js";
+import { useDelayedLoading } from "../utils/skeleton-delay.js";
 import TrackHeader from "./TrackHeader.jsx";
 import { IconPhone, IconArrowLeft, IconClockOutline } from "./ui/icons.jsx";
 
@@ -53,6 +54,13 @@ export default function TrackOrder() {
   // envejecer y refleja que la conexión está fallando.
   const [lastUpdated, setLastUpdated] = useState(null);
   const [, setTick] = useState(0);
+
+  // Skeleton solo en la primera carga, con retardo anti-parpadeo (200 ms de espera,
+  // 300 ms de visibilidad mínima). Si el primer fetch falla, se muestra el error.
+  // Las variables que usa el skeleton se declaran acá (antes del render) para
+  // no caer en TDZ (updatedLabel se declara después del bloque condicional).
+  const trackLoading = !order && !loadError;
+  const showSkeleton = useDelayedLoading(trackLoading, { showAfter: 200, minVisible: 300 });
 
   const load = useCallback(async () => {
     try {
@@ -262,15 +270,36 @@ export default function TrackOrder() {
     );
   }
 
-  if (!order) {
+  // Skeleton solo en la primera carga: sin order y sin error previo.
+  // Si el primer fetch falla (loadError), se muestra la pantalla de error con Reintentar.
+  // useDelayedLoading evita parpadeo: carga <200 ms no muestra nada.
+  if (trackLoading && !showSkeleton) {
+    return null;
+  }
+
+  if (!order && !loadError) {
     return (
       <div className="app">
         <TrackHeader />
         <div className="page">
           <div className="container">
-            <div className="success">
-              <div className="success__icon">…</div>
-              <h1>Cargando pedido…</h1>
+            <div className="track-card track-card--loading" aria-busy="true">
+              <span className="sr-only">Cargando pedido…</span>
+              <div className="track-card__status">
+                <span className="skeleton track-card__skeleton-mark" style={{ width: "34px", height: "34px", borderRadius: "50%" }} />
+                <div>
+                  <div className="skeleton" style={{ width: "55%" }} />
+                  <div className="skeleton sk-line--sm" style={{ width: "40%" }} />
+                </div>
+              </div>
+              <div className="track-checklist" style={{ marginTop: "16px" }}>
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <div key={i} className="track-check track-check--skeleton">
+                    <span className="skeleton track-check__mark--skeleton" style={{ width: "28px", height: "28px", borderRadius: "50%" }} />
+                    <span className="skeleton" style={{ width: "70%" }} />
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>

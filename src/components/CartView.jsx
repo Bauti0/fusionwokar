@@ -3,6 +3,7 @@ import { formatPrice, lineTotal } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
 import Tooltip from "./ui/Tooltip.jsx";
 import { IconCart } from "./ui/icons.jsx";
+import FadeImage from "./FadeImage.jsx";
 
 // ============================================================
 // Carrito como bottom-sheet: se abre sobre el menú sin sacarte del
@@ -52,7 +53,7 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
                 return (
                 <div className="cart-item" key={item.key}>
                   {item.image && (
-                    <img className="cart-item__thumb" src={item.image} alt="" width="44" height="44" loading="lazy" decoding="async" />
+                    <FadeImage src={item.image} alt="" width="44" height="44" aspectRatio={1} className="cart-item__thumb" />
                   )}
                   <div className="cart-item__info">
                     <p className="cart-item__name">{item.name}</p>
