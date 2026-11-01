@@ -744,12 +744,6 @@ body:has(.admin-login) { background: var(--color-secondary); }
   border-bottom: 1px solid var(--color-border);
   padding: 16px 0 12px;
 }
-.admin-search {
-  border-color: var(--color-border-control) !important;
-  background: var(--color-surface) !important;
-  color: var(--color-text) !important;
-}
-.admin-search:focus { border-color: var(--color-primary) !important; }
 /* Chip de sucursal fija (branch_admin): replica el trigger del Dropdown
    (alto, borde, radio, tipografía) pero NO es un control: sin flecha,
    sin cursor ni hover. Usa las mismas variables que el trigger, así el
@@ -1027,14 +1021,6 @@ body:has(.admin-login) { background: var(--color-secondary); }
   border-bottom: 1px solid var(--color-border);
   padding-bottom: 14px;
   margin-bottom: 14px;
-}
-.admin .admin-products__controls .admin-search {
-  border-color: var(--color-border-control) !important;
-  background: var(--color-surface) !important;
-  color: var(--color-text) !important;
-}
-.admin .admin-products__controls .admin-search:focus {
-  border-color: var(--color-primary) !important;
 }
 .admin .admin-cat {
   background: var(--color-surface);
@@ -1767,8 +1753,6 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .pay-option__icon svg { width: 24px; height: 24px; }
 .pay-option__copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.pay-option__label { font-weight: 700; font-size: 15px; }
-.pay-option__hint { font-weight: 400; font-size: 12px; color: var(--color-text-soft); }
 /* Carrito: bottom-sheet sobre el menú */
 .drawer { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; justify-content: flex-end; }
 .drawer__backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.7); animation: fadeIn .18s var(--ease); }
@@ -1833,7 +1817,6 @@ body:has(.admin-login) { background: var(--color-secondary); }
 /* Historial */
 .order-card { border: 1px solid rgba(255,255,255,0.18); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; box-shadow: var(--shadow-sm); transition: box-shadow .18s var(--ease), transform .18s var(--ease); }
 .order-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
-.order-card__head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 .order-card__date { font-size: 12px; color: var(--color-text-soft); }
 .order-card__total { font-weight: 800; font-size: 16px; }
 .order-card__lines { font-size: 13.5px; color: var(--color-text-soft); margin: 0 0 10px; }
@@ -1861,7 +1844,6 @@ body:has(.admin-login) { background: var(--color-secondary); }
   max-height: 88dvh; overflow-y: auto; padding: 24px 20px 28px; animation: slideUp 0.24s var(--ease);
 }
 @keyframes slideUp { from { transform: translateY(48px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .modal__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 4px; }
 /* Misma razón que la hoja del carrito: sobre negro, un panel en
@@ -2017,7 +1999,6 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .payment-card h3 { font-family: var(--font-display); font-size: 18px; text-transform: uppercase; text-align: center; margin: 0 0 4px; }
 .payment-card__sub { text-align: center; color: var(--color-text-soft); font-size: 13px; margin: 0 0 16px; }
 .payment-body { min-height: 120px; display: flex; align-items: center; justify-content: center; flex-direction: column; }
-.wallet-brick { width: 100%; min-height: 60px; }
 .demo-mode { text-align: center; }
 .demo-mode__badge {
   display: inline-block; background: var(--color-primary); color: #fff;
@@ -2068,23 +2049,13 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .track-card__status { display: flex; align-items: center; gap: 14px; }
 .track-card__emoji { font-size: 34px; }
 .track-card__status strong { display: block; font-size: 18px; }
-.track-card__status small { color: var(--color-text-soft); font-size: 13px; }
-.track-steps { display: flex; justify-content: space-between; margin-top: 18px; gap: 4px; }
-.track-step { flex: 1; text-align: center; position: relative; }
-.track-step__dot {
-  width: 34px; height: 34px; border-radius: 50%; background: var(--color-surface-hi, var(--color-surface));
-  border: 2px solid var(--color-border-hi, var(--color-border)); display: flex; align-items: center; justify-content: center;
-  font-size: 15px; margin: 0 auto 6px;
-}
-.track-step.is-done .track-step__dot { background: var(--color-primary); border-color: var(--color-primary); }
-.track-step__label { font-size: 10.5px; color: var(--color-text-soft); font-weight: 600; line-height: 1.2; display: block; }
+.track-card__status small { color: var(--color-text-soft); font-size: 13px; }.track-step.is-done .track-step__dot { background: var(--color-primary); border-color: var(--color-primary); }
 .track-step.is-done .track-step__label { color: var(--color-danger-text, var(--color-primary)); }
 .track-cancelled {
   background: var(--color-primary-soft, var(--color-surface)); border-radius: var(--radius-sm);
   border: 1px solid rgba(229,52,46,.25); border-left: 3px solid var(--color-primary);
   padding: 12px 14px; margin-top: 14px; font-size: 14px; color: var(--color-text-soft);
 }
-.track-line { margin: 6px 0; font-size: 14.5px; }
 
 /* Checklist vertical de seguimiento (✓ / ○) */
 .track-checklist { margin-top: 16px; display: grid; gap: 10px; animation: fadeSlide .25s var(--ease) both; }
@@ -2116,17 +2087,8 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .track-check.is-done .track-check__label { color: var(--color-success-text, var(--color-success)); }
 
 /* Mis pedidos (TrackHome) */
-.my-orders { display: grid; gap: 10px; }
-.my-order {
-  display: block; text-decoration: none; color: var(--color-text);
-  border: 1px solid var(--color-border-control); border-radius: var(--radius-sm);
-  padding: 14px 16px; background: var(--color-bg);
-  transition: border-color .18s var(--ease), box-shadow .18s var(--ease), transform .18s var(--ease);
-}
-.my-order:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
-.my-order__head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; }
+.my-orders { display: grid; gap: 10px; }.my-order:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .my-order__head strong { font-family: var(--font-display); font-size: 15px; }
-.my-order__meta { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--color-text-soft); }
 .my-order__meta strong { color: var(--color-text); }
 
 /* ============================================================
@@ -4175,14 +4137,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 
 /* La tarjeta entera navega al seguimiento: la pista es un texto con
    flecha, no un botón primario rojo a todo el ancho (dos masas de color
-   seguidas aplastaban la tarjeta). */
-.my-order__cta {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--color-text-soft);
-  transition: color 0.15s var(--ease);
-}
-.my-order:hover .my-order__cta { color: var(--color-text); }
+   seguidas aplastaban la tarjeta). */.my-order:hover .my-order__cta { color: var(--color-text); }
 
 /* Glow de los botones de acción en la tienda: sobre fondo negro el
    box-shadow saturado (rojo/verde) se leía como un halo tóxico. Sombra
