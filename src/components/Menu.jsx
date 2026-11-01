@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import ProductCard from "./ProductCard.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
 import { closedLabel, pauseNotice } from "../utils/schedule.js";
-import { IconSearch, IconClock, IconEmptySearch } from "./ui/icons.jsx";
+import { IconSearch, IconClock, IconEmptySearch, IconPause, IconLocation, IconScooter, IconAlertCircle } from "./ui/icons.jsx";
 
 // ============================================================
 // Vista de menú de una sucursal
@@ -126,27 +126,18 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
             </span>
             {closed && (
               <span className="menu__closed">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 7v5l3 2" />
-                </svg>
+                <IconClock />
                 {closed}
               </span>
             )}
             {paused && (
               <span className="menu__closed">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <rect x="6" y="5" width="4" height="14" rx="1" />
-                  <rect x="14" y="5" width="4" height="14" rx="1" />
-                </svg>
+                <IconPause />
                 Pausado
               </span>
             )}
             <span className="menu__address">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 21s-7-5.1-7-11a7 7 0 1 1 14 0c0 5.9-7 11-7 11z" />
-                <circle cx="12" cy="10" r="2.5" />
-              </svg>
+              <IconLocation />
               {branch.address}
             </span>
           </p>
@@ -158,12 +149,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
           )}
           {branch.deliveryInfo && (
             <p className="menu__delivery">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M3 7h11v8H3z" />
-                <path d="M14 10h4l3 3v2h-7" />
-                <circle cx="7" cy="17" r="1.6" />
-                <circle cx="17" cy="17" r="1.6" />
-              </svg>
+              <IconScooter />
               <span>{branch.deliveryInfo}</span>
             </p>
           )}
@@ -172,11 +158,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
 
       {usingFallbackMenu && (
         <div className="menu__fallback-banner" role="status" aria-live="polite">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{width: 16, height: 16, flexShrink: 0}}>
-            <path d="M12 9v4" />
-            <path d="M12 17h.01" />
-            <circle cx="12" cy="12" r="10" />
-          </svg>
+          <IconAlertCircle size={16} />
           <span>No pudimos actualizar el menú; los precios pueden diferir.</span>
         </div>
       )}

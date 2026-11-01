@@ -4,7 +4,7 @@ import { getOrdersByPhone } from "../api.js";
 import { formatPrice } from "../utils/format.js";
 import { combineOrders } from "../utils/orders.js";
 import { phonePlaceholderFor } from "../data/branches.js";
-import { IconClock, IconRepeat, IconEmptySearch, IconArrowLeft, IconStore } from "./ui/icons.jsx";
+import { IconClock, IconRepeat, IconEmptySearch, IconArrowLeft, IconStore, IconAlertCircle } from "./ui/icons.jsx";
 
 const CACHE_KEY = "fw.myOrdersCache";
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutos
@@ -273,9 +273,7 @@ export default function MyOrders({ cart, branch, onBack, onRepeat }) {
   const ErrorState = () => error ? (
     <div className="error-state">
       <div className="error-state__icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-        </svg>
+        <IconAlertCircle className="error-state__icon" />
       </div>
       <div className="error-state__content">
         <strong>No se pudieron cargar los pedidos</strong>

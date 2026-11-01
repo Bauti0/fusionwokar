@@ -10,7 +10,7 @@ import TicketPrint from "./TicketPrint.jsx";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 import {
   IconPlus, IconCash, IconBank, IconCard, IconCheck, IconX,
-  IconEdit, IconTrash, IconRefresh, IconInfo, IconAlertCircle
+  IconEdit, IconTrash, IconInfo, IconAlertCircle
 } from "./ui/icons.jsx";
 
 const PERIODS = [

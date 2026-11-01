@@ -16,6 +16,7 @@ import Toast from "./Toast.jsx";
 import { Link } from "react-router-dom";
 import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import { SectionFallback } from "./ui/ErrorFallbacks.jsx";
+import { IconChat, IconLocation } from "./ui/icons.jsx";
 import { checkCrashMenu, checkCrashCart, checkCrashCheckout, checkCrashMyOrders, checkCrashSuccess, checkCrashPayment, checkCrashPaymentResult } from "../hooks/useCrashTest.js";
 
 // Vistas que solo se necesitan en ciertos pasos del flujo (carrito, pago…):
@@ -819,7 +820,7 @@ export default function StoreApp() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        💬 Avisar por WhatsApp
+                        <IconChat /> Avisar por WhatsApp
                       </a>
                     )}
                   </>
@@ -836,12 +837,12 @@ export default function StoreApp() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        💬 Abrir WhatsApp
+                        <IconChat /> Abrir WhatsApp
                       </a>
                     )}
                     {lastOrder?.orderNumber && (
                       <Link className="btn btn--primary btn--block" to={`/track/${lastOrder.orderNumber}`}>
-                        📍 Seguir mi pedido
+                        <IconLocation /> Seguir mi pedido
                       </Link>
                     )}
                   </>

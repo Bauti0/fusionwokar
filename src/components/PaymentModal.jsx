@@ -4,6 +4,7 @@ import useDialogA11y from "../hooks/useDialogA11y.js";
 import { BRAND } from "../data/branches.js";
 import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
 import { formatPrice } from "../utils/format.js";
+import { IconCheck, IconCard, IconChat } from "./ui/icons.jsx";
 
 // ============================================================
 // PaymentModal — pago con Mercado Pago dentro del flujo
@@ -145,7 +146,7 @@ export default function PaymentModal({ orderId, orderNumber, demo, checkoutUrl, 
               </p>
               <div className="demo-mode__actions">
                 <button className="btn btn--primary" disabled={phase === "simulating" || phase === "polling"} onClick={() => handleSimulate("approve")}>
-                  {phase === "polling" ? "Procesando…" : "✅ Simular pago aprobado"}
+                  {phase === "polling" ? "Procesando…" : <><IconCheck /> Simular pago aprobado</>}
                 </button>
                 <button className="btn btn--ghost" disabled={phase === "simulating" || phase === "polling"} onClick={() => handleSimulate("reject")}>
                   Simular rechazo
@@ -172,7 +173,7 @@ export default function PaymentModal({ orderId, orderNumber, demo, checkoutUrl, 
                     onClick={goToCheckout}
                     disabled={redirecting}
                   >
-                    {redirecting ? "Abriendo Mercado Pago…" : "💳 Pagar con Mercado Pago"}
+                    {redirecting ? "Abriendo Mercado Pago…" : <><IconCard /> Pagar con Mercado Pago</>}
                   </button>
                 </>
               ) : (
@@ -198,7 +199,7 @@ export default function PaymentModal({ orderId, orderNumber, demo, checkoutUrl, 
               target="_blank"
               rel="noreferrer"
             >
-              💬 Escribinos por WhatsApp
+              <IconChat />{' '}Escribinos por WhatsApp
             </a>
           </div>
         )}

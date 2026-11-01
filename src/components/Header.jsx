@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { BRAND } from "../data/branches.js";
 import Tooltip from "./ui/Tooltip.jsx";
-import { IconClock } from "./ui/icons.jsx";
+import { IconClock, IconCart, IconChevronDown } from "./ui/icons.jsx";
 
 // ============================================================
 // Header de la app (una vez elegida la sucursal)
@@ -32,9 +32,7 @@ export default function Header({ branch, cartCount, onHistory, onCart, onHome, o
             >
               <span className="branch-dot" style={{ background: branch.accentColor }} aria-hidden="true" />
               {branch.name}
-              <svg className="branch-chip__caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M6 9l6 6 6-6" />
-              </svg>
+              <IconChevronDown className="branch-chip__caret" size={16} />
             </button>
           </Tooltip>
         ) : (
@@ -53,11 +51,7 @@ export default function Header({ branch, cartCount, onHistory, onCart, onHome, o
         </Tooltip>
         <Tooltip label="Ver carrito">
           <button className="icon-btn" onClick={onCart} aria-label="Ver carrito">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M6 6h15l-1.6 8.2a2 2 0 0 1-2 1.6H9.4a2 2 0 0 1-2-1.6L5.3 3.6A2 2 0 0 0 3.3 2H2" />
-              <circle cx="10" cy="20" r="1.6" />
-              <circle cx="18" cy="20" r="1.6" />
-            </svg>
+            <IconCart />
             {cartCount > 0 && <span className="badge-count">{cartCount}</span>}
           </button>
         </Tooltip>

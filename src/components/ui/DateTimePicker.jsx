@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import Dropdown from "./Dropdown.jsx";
+import { IconClock } from "./icons.jsx";
 
 // ============================================================
 // DateTimePicker — reemplazo propio de <input type="datetime-local">
@@ -135,19 +136,7 @@ export default function DateTimePicker({
         aria-label={ariaLabel}
       >
         <span className="dropdown__label">{label}</span>
-        <svg
-          className={`dropdown__chevron${open ? " is-open" : ""}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 7v5l3 3" />
-        </svg>
+        <IconClock className={`dropdown__chevron${open ? " is-open" : ""}`} />
       </button>
 
       {open && (

@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { IconChevronDown } from "./icons.jsx";
 
 // ============================================================
 // Dropdown — reemplazo propio del <select> nativo (sin deps)
@@ -106,18 +107,7 @@ export default function Dropdown({
         aria-label={ariaLabel}
       >
         <span className="dropdown__label">{selected ? selected.label : placeholder || "\u00A0"}</span>
-        <svg
-          className={`dropdown__chevron${open ? " is-open" : ""}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
+        <IconChevronDown className={`dropdown__chevron${open ? " is-open" : ""}`} />
       </button>
 
       {open && (

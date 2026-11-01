@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { formatPrice } from "../utils/format.js";
 import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
+import { IconLocation, IconChat } from "./ui/icons.jsx";
 
 // ============================================================
 // PaymentResult — pantalla de aprobado / pendiente / rechazado
@@ -72,7 +73,7 @@ export default function PaymentResult({ order, branch, onHome }) {
           <div style={{ display: "grid", gap: 10 }}>
             {(approved || pending) && (
               <Link className="btn btn--primary btn--block" to={`/track/${order?.orderNumber}`}>
-                📍 Seguir mi pedido
+                <IconLocation /> Seguir mi pedido
               </Link>
             )}
             {pending && (
@@ -85,7 +86,7 @@ export default function PaymentResult({ order, branch, onHome }) {
                 target="_blank"
                 rel="noreferrer"
               >
-                💬 Consultar por WhatsApp
+                <IconChat />{' '}Consultar por WhatsApp
               </a>
             )}
             {rejected && (

@@ -1,4 +1,5 @@
 import { formatPrice } from "../utils/format.js";
+import { IconCart, IconArrowRight } from "./ui/icons.jsx";
 
 // ============================================================
 // Barra fija de carrito (footer)
@@ -10,13 +11,14 @@ export default function CartBar({ count, total, onView }) {
 
   return (
     <div className="cart-bar">
-      <button data-testid="cart-bar-btn" className="cart-bar__inner" onClick={onView}>
+      <button
+        data-testid="cart-bar-btn"
+        className="cart-bar__inner"
+        onClick={onView}
+        aria-label={`Ver carrito (${count} ${count === 1 ? "item" : "items"})`}
+      >
         <span className="cart-bar__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M6 6h15l-1.6 8.2a2 2 0 0 1-2 1.6H9.4a2 2 0 0 1-2-1.6L5.3 3.6A2 2 0 0 0 3.3 2H2" />
-            <circle cx="10" cy="20" r="1.6" />
-            <circle cx="18" cy="20" r="1.6" />
-          </svg>
+          <IconCart />
           {/* key por cantidad: fuerza el re-montaje y reproduce la
               animación pop del badge en cada alta de ítem. */}
           <span className="cart-bar__badge" key={count}>{count}</span>
@@ -27,9 +29,7 @@ export default function CartBar({ count, total, onView }) {
         </span>
         <span className="cart-bar__cta">
           Ver pedido
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M9 6l6 6-6 6" />
-          </svg>
+          <IconArrowRight />
         </span>
       </button>
     </div>
