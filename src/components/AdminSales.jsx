@@ -397,6 +397,7 @@ function CashRegister({ branch, me }) {
         concept: expenseForm.concept.trim(),
         category: expenseForm.category?.trim() || null,
         payment_method: expenseForm.payment_method,
+        branch,
       });
       setExpenseForm({ amount: "", concept: "", category: "", payment_method: "cash" });
       setShowExpenseForm(false);
@@ -707,17 +708,19 @@ function CashRegister({ branch, me }) {
                   <label htmlFor={editingExpense ? "edit-expense-concept" : "expense-concept"} className="cash-register__label">
                     Concepto <span className="cash-register__required">*</span>
                   </label>
-                  <input
-                    id={editingExpense ? "edit-expense-concept" : "expense-concept"}
-                    type="text"
-                    maxLength="200"
-                    placeholder="Ej: Compra insumos, pago proveedor…"
-                    value={editingExpense ? editForm.concept : expenseForm.concept}
-                    onChange={(e) => editingExpense
-                      ? setEditForm({ ...editForm, concept: e.target.value })
-                      : setExpenseForm({ ...expenseForm, concept: e.target.value })}
-                    disabled={busy}
-                  />
+                  <div className="cash-register__concept-input">
+                    <input
+                      id={editingExpense ? "edit-expense-concept" : "expense-concept"}
+                      type="text"
+                      maxLength="200"
+                      placeholder="Ej: Compra insumos, pago proveedor…"
+                      value={editingExpense ? editForm.concept : expenseForm.concept}
+                      onChange={(e) => editingExpense
+                        ? setEditForm({ ...editForm, concept: e.target.value })
+                        : setExpenseForm({ ...expenseForm, concept: e.target.value })}
+                      disabled={busy}
+                    />
+                  </div>
                 </div>
 
                 <div className="cash-register__field cash-register__field--category">

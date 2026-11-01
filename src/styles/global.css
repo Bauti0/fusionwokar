@@ -4765,6 +4765,25 @@ body:has(.admin-login) { background: var(--color-secondary); }
 /* Dropdown de medio de pago: solo dentro de la sección de gastos */
 .cash-register__expenses .dropdown__trigger { min-height: 48px; }
 
+/* Input de concepto: mismo tratamiento visual que el monto */
+.cash-register__concept-input {
+  position: relative;
+}
+.cash-register__concept-input input {
+  width: 100%; border: 2px solid var(--color-border-control);
+  border-radius: var(--radius-sm); padding: 14px 16px;
+  background: var(--color-surface); color: var(--color-text);
+  font-size: 16px; outline: none;
+  transition: border-color .15s var(--ease), background .15s var(--ease), box-shadow .15s var(--ease);
+  -moz-appearance: textfield;
+}
+.cash-register__concept-input input:focus {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  box-shadow: var(--ring-soft);
+}
+.cash-register__concept-input input::placeholder { color: var(--color-text-mute); }
+
 /* Chips de categoría */
 .cash-register__category-chips {
   display: flex; flex-wrap: wrap; gap: 8px;
