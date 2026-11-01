@@ -369,14 +369,11 @@ export function IconScooter(props) {
   );
 }
 
-// Ícono de camión de reparto/delivery (reconoce al reparto a domicilio)
-export function IconTruck(props) {
+// Ícono de reparto a domicilio: scooter (reicon, Outline, 24×24, MIT, dibujado a mano)
+export function IconDelivery(props) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <circle cx="5" cy="18" r="2" />
-      <circle cx="17" cy="18" r="2" />
-      <path d="M2 18h12V8l-2-2H4l-2 2z" />
-      <line x1="9" y1="8" x2="9" y2="18" />
+    <svg viewBox="0 0 24 24" fill="currentColor" fillRule="evenodd" clipRule="evenodd" aria-hidden="true" {...props}>
+      <path d="M13.864 5.783c-.313-.032-.72-.033-1.336-.033H12a.75.75 0 0 1 0-1.5h.565c.57 0 1.054 0 1.454.041c.425.044.819.14 1.19.37c.373.23.634.539.864.9c.202.318.406.72.64 1.189h1.155c.284 0 .545 0 .762.02c.235.02.49.069.738.21c.272.155.497.38.652.652c.141.248.19.503.21.738c.02.217.02.478.02.762v.093c0 .26.001.538-.083.802a1.8 1.8 0 0 1-.25.494c-.162.224-.386.389-.596.542l-.052.039l-.277.204l.487.974a3.75 3.75 0 1 1-4.154 4.47h-5.15a3.751 3.751 0 0 1-7.352-.009A1.75 1.75 0 0 1 1.25 14.92v-.057c0-.335 0-.548.015-.735a4.75 4.75 0 0 1 4.362-4.362c.187-.015.4-.015.735-.015h.69c.898 0 1.648 0 2.242.08c.628.084 1.195.27 1.65.726c.456.455.642 1.022.726 1.65c.08.594.08 1.344.08 2.242v.802h3.575a3.76 3.76 0 0 1 2.548-2.828l-2.438-4.875c-.276-.552-.458-.915-.628-1.18c-.16-.252-.274-.361-.386-.43c-.111-.07-.26-.123-.557-.154M10.25 15.25v-.75c0-.964-.002-1.612-.066-2.095c-.063-.461-.17-.659-.3-.789s-.328-.237-.79-.3c-.482-.064-1.13-.066-2.094-.066h-.6c-.386 0-.535 0-.655.01a3.25 3.25 0 0 0-2.985 2.985a10 10 0 0 0-.01.754c.01.122.129.24.25.25zm-5.872 1.5a2.25 2.25 0 0 0 4.244 0zM16.75 16a2.25 2.25 0 1 1 4.5 0a2.25 2.25 0 0 1-4.5 0m1.56-6.055l.07-.051c.138-.102.216-.16.272-.206l.05-.047a.3.3 0 0 0 .036-.07c-.002.006.004-.005.007-.069c.005-.073.005-.17.005-.341c0-.323 0-.515-.013-.657a.6.6 0 0 0-.022-.13a.25.25 0 0 0-.088-.09a.6.6 0 0 0-.131-.02a8 8 0 0 0-.657-.014h-.375z" />
     </svg>
   );
 }
@@ -401,12 +398,13 @@ export function IconFlash(props) {
 }
 
 // Ícono de caja para llevar / para retirar (solapa y cinta cruzada)
-export function IconPickup(props) {
+export function IconTakeout(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <rect x="4" y="6" width="16" height="14" rx="1" />
-      <path d="M4 6h16v3H4z" />
-      <line x1="12" y1="6" x2="12" y2="20" />
+      <rect x="4" y="8" width="16" height="14" rx="1" />
+      <path d="M4 8h16v-3H4z" />
+      <line x1="12" y1="8" x2="12" y2="22" />
+      <line x1="4" y1="15" x2="20" y2="15" />
     </svg>
   );
 }

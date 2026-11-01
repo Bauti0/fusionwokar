@@ -9,7 +9,7 @@ import { shouldCacheQuoteError } from "../utils/shippingCache.js";
 import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/checkoutHelpers.js";
 import { normalizeAddressKey } from "../utils/normalizeAddressKey.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
-import { IconMoney, IconBank, IconCard, IconScooter, IconLock, IconCheck, IconFlash, IconPickup, IconChat, IconClockOutline, IconTruck } from "./ui/icons.jsx";
+import { IconMoney, IconBank, IconCard, IconScooter, IconLock, IconCheck, IconFlash, IconTakeout, IconChat, IconClockOutline, IconDelivery } from "./ui/icons.jsx";
 import FadeImage from "./FadeImage.jsx";
 
 const PAYMENT_METHODS = [
@@ -378,7 +378,7 @@ export default function Checkout({
               aria-pressed={orderMode === "delivery"}
               onClick={() => setOrderMode("delivery")}
             >
-              <IconTruck className="checkout__icon" width="20" height="20" /> Delivery
+              <IconDelivery className="checkout__icon" width="20" height="20" /> Delivery
             </button>
             <button
               type="button"
@@ -386,7 +386,7 @@ export default function Checkout({
               aria-pressed={orderMode === "pickup"}
               onClick={() => setOrderMode("pickup")}
             >
-              <IconPickup className="checkout__icon" width="20" height="20" /> Para retirar
+              <IconTakeout className="checkout__icon" width="20" height="20" /> Para retirar
             </button>
           </div>
           <p className="hours-note">

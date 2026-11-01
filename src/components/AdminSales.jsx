@@ -695,7 +695,7 @@ function CashRegister({ branch, me }) {
                       onChange={(v) => editingExpense
                         ? setEditForm({ ...editForm, payment_method: v })
                         : setExpenseForm({ ...expenseForm, payment_method: v })}
-                      options={PAYMENT_OPTIONS.map((o) => ({ value: o.value, label: <span><o.icon style={{width:18,height:18,marginRight:8}} /> {o.label}</span> }))}
+                      options={PAYMENT_OPTIONS.map((o) => ({ value: o.value, label: <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{o.icon} <span>{o.label}</span></span> }))}
                       placeholder="Elegí medio de pago"
                       disabled={busy}
                       ariaLabel="Medio de pago"
