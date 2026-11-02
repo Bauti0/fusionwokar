@@ -3,6 +3,7 @@ import { adminCustomers } from "../api.js";
 import { BRANCH_LIST } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
 import Dropdown from "./ui/Dropdown.jsx";
+import { IconLocation, IconChat } from "./ui/icons.jsx";
 
 // ============================================================
 // AdminCustomers — clientes agrupados por teléfono
@@ -79,7 +80,7 @@ export default function AdminCustomers({ me }) {
                 <div className="customer-card__info">
                   <strong className="customer-card__name">{c.name}</strong>
                   <span className="customer-card__phone">{c.phone}</span>
-                  {c.address && <span className="customer-card__address">📍 {c.address}</span>}
+                  {c.address && <span className="customer-card__address"><IconLocation /> {c.address}</span>}
                   <div className="customer-card__meta">
                     <span className="badge">{c.ordersCount} {c.ordersCount === 1 ? "pedido" : "pedidos"}</span>
                     <span className="badge">{formatPrice(c.totalSpent)} gastado</span>
@@ -91,7 +92,7 @@ export default function AdminCustomers({ me }) {
                   </div>
                 </div>
               <a className="btn btn--primary btn--sm" href={waLink(c.phone)} target="_blank" rel="noreferrer">
-                💬 WhatsApp
+                <IconChat /> WhatsApp
               </a>
             </div>
           ))}

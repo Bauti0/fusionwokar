@@ -7,7 +7,6 @@ import {
   STATUS_CANCELLED,
   STATUS_PENDING_PAYMENT,
   statusLabel,
-  statusEmoji,
   statusIndex,
   paymentLabel,
   TRACK_POLL_INTERVAL_MS,
@@ -18,7 +17,7 @@ import { getDeliveryInfo, getStoredPhoneForVerify, updatedAgoLabel } from "../ut
 import { computeBackoffInterval } from "../utils/tracking-backoff.js";
 import { useDelayedLoading } from "../utils/skeleton-delay.js";
 import TrackHeader from "./TrackHeader.jsx";
-import { IconPhone, IconArrowLeft, IconClockOutline } from "./ui/icons.jsx";
+import { IconPhone, IconArrowLeft, IconClockOutline, IconOrderStatus } from "./ui/icons.jsx";
 
 // ============================================================
 // TrackOrder — seguimiento del pedido por número (FW-00001)
@@ -331,7 +330,7 @@ export default function TrackOrder() {
         <div className="container">
           <div className="track-head">
             <h2 className="page__title">
-              {statusEmoji(order.status)} Seguimiento
+              <IconOrderStatus status={order.status} size={24} /> Seguimiento
             </h2>
             <p className="page__sub">
               Pedido <strong>{order.orderNumber}</strong> · {branch?.name}
@@ -340,8 +339,8 @@ export default function TrackOrder() {
 
           <div className="track-card">
             <div className={`track-card__status is-${statusTone}`}>
-              <span className={`track-card__emoji track-status-bubble track-status-bubble--${statusTone}`}>
-                {statusEmoji(order.status)}
+              <span className={`track-status-bubble track-status-bubble--${statusTone}`} aria-hidden="true">
+                <IconOrderStatus status={order.status} size={28} />
               </span>
               <div>
                 <strong>{statusLabel(order.status)}</strong>

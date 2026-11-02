@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatPrice, lineTotal, cartKey } from "../src/utils/format.js";
+import { formatPrice, formatPriceCompact, lineTotal, cartKey } from "../src/utils/format.js";
 
 // Estas funciones son la fórmula de línea del carrito. El servidor calcula lo
 // mismo en server/index.js, pero desde la DB. Estos tests fijan el contrato
@@ -136,5 +136,23 @@ describe("formatPrice", () => {
 
   it("maneja negativos (devoluciones, ajustes)", () => {
     assert.match(formatPrice(-2500), /2\.?500/);
+  });
+});
+
+// Regresión: Intl en es-AR devolvía "$ 22.900" (símbolo + espacio duro) y el
+// precio del botón "Continuar" del carrito se veía partido/desordenado. El
+// carrito usa formatPriceCompact: "$22.900", sin ningún espacio.
+describe("formatPriceCompact (carrito)", () => {
+  it("devuelve $22.900 exacto", () => {
+    assert.equal(formatPriceCompact(22900), "$22.900");
+  });
+
+  it("no contiene espacios normales ni duros", () => {
+    assert.doesNotMatch(formatPriceCompact(1234567), /\s/);
+  });
+
+  it("los negativos conservan el signo sin espacios", () => {
+    assert.doesNotMatch(formatPriceCompact(-2500), /\s/);
+    assert.match(formatPriceCompact(-2500), /2\.500/);
   });
 });

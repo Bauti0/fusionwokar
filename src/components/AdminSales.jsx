@@ -10,7 +10,7 @@ import TicketPrint from "./TicketPrint.jsx";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 import {
   IconPlus, IconCash, IconBank, IconCard, IconCheck, IconX,
-  IconEdit, IconTrash, IconInfo, IconAlertCircle
+  IconEdit, IconTrash, IconInfo, IconAlertCircle, IconMoney, IconReceipt, IconCart
 } from "./ui/icons.jsx";
 
 const PERIODS = [
@@ -20,7 +20,7 @@ const PERIODS = [
   { id: "custom", label: "Personalizado" },
 ];
 
-const PAYMENT_LABELS = { efectivo: "💰 Efectivo", mercadopago: "💳 Mercado Pago", transferencia: "🏦 Transferencia" };
+const PAYMENT_LABELS = { efectivo: <><IconCash /> Efectivo</>, mercadopago: <><IconCard /> Mercado Pago</>, transferencia: <><IconBank /> Transferencia</> };
 
 // ============================================================
 // AdminSales — ventas por período + arqueo de caja
@@ -63,7 +63,7 @@ export default function AdminSales({ me }) {
   return (
     <section className="admin-sales">
       <div className="admin-stats__head">
-        <h3>💵 Ventas</h3>
+        <h3><IconMoney /> Ventas</h3>
         <div className="admin-stats__period">
           {PERIODS.map((p) => (
             <button key={p.id} className={`period-btn ${period === p.id ? "is-active" : ""}`} onClick={() => setPeriod(p.id)}>
@@ -93,7 +93,7 @@ export default function AdminSales({ me }) {
         <>
           <div className="stats-grid">
             <div className="stat-card stat-card--main">
-              <span className="stat-card__icon" aria-hidden="true">💰</span>
+              <span className="stat-card__icon" aria-hidden="true"><IconCash /></span>
               <span className="stat-card__label">Venta generada (neta)</span>
               <strong className="stat-card__value">{formatPrice(sales.net)}</strong>
               <span className="stat-card__note">
@@ -101,12 +101,12 @@ export default function AdminSales({ me }) {
               </span>
             </div>
             <div className="stat-card">
-              <span className="stat-card__icon" aria-hidden="true">🧾</span>
+              <span className="stat-card__icon" aria-hidden="true"><IconReceipt /></span>
               <span className="stat-card__label">Ticket promedio</span>
               <strong className="stat-card__value">{formatPrice(sales.average)}</strong>
             </div>
             <div className="stat-card">
-              <span className="stat-card__icon" aria-hidden="true">📦</span>
+              <span className="stat-card__icon" aria-hidden="true"><IconCart /></span>
               <span className="stat-card__label">Pedidos</span>
               <strong className="stat-card__value">{sales.count}</strong>
             </div>
@@ -548,7 +548,7 @@ function CashRegister({ branch, me }) {
 
   return (
     <div className="cash-register">
-      <h4>🧾 Arqueo de caja</h4>
+      <h4><IconReceipt /> Arqueo de caja</h4>
       {error && <div className="form-error">{error}</div>}
 
       {!data.open ? (
@@ -601,7 +601,7 @@ function CashRegister({ branch, me }) {
           {/* ============ SECCIÓN GASTOS ============ */}
           <div className="cash-register__expenses">
             <div className="cash-register__expenses-header">
-              <h5>💸 Gastos de esta caja</h5>
+              <h5><IconMoney /> Gastos de esta caja</h5>
               {expenses.length > 0 && (
                 <div className="cash-register__expenses-total">
                   <span className="cash-register__expenses-total-label">Total gastos en efectivo:</span>
@@ -908,7 +908,7 @@ function CashRegister({ branch, me }) {
         <div className={`cash-register__result ${result.difference === 0 ? "is-ok" : result.difference > 0 ? "is-over" : "is-under"}`}>
           <strong>
             {result.difference === 0
-              ? "✅ Caja exacta"
+              ? <><IconCheck /> Caja exacta</>
               : result.difference > 0
               ? `Sobran ${formatPrice(result.difference)}`
               : `Faltan ${formatPrice(Math.abs(result.difference))}`}

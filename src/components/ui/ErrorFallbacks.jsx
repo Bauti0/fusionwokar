@@ -2,6 +2,7 @@
 // Fallbacks para los Error Boundaries por nivel
 // ============================================================
 import { useEffect, useState } from "react";
+import { IconAlertCircle } from "./icons.jsx";
 
 // ============================================================
 // Helpers
@@ -76,7 +77,7 @@ export function RouteFallback({ error, reset, errorInfo, routeName }) {
   return (
     <div className="error-route" role="alert">
       <div className="error-route__card">
-        <div className="error-route__icon" aria-hidden="true">⚠️</div>
+        <div className="error-route__icon" aria-hidden="true"><IconAlertCircle /></div>
         <h2>No se pudo cargar {routeName || "esta sección"}</h2>
         <p>Probá recargar o volver a la página anterior.</p>
         {isDev && error && (

@@ -9,6 +9,14 @@ export function formatPrice(value) {
   }).format(value);
 }
 
+// Variante compacta, sin espacio tras el símbolo: "$22.900". Intl devuelve
+// "$ 22.900" con un espacio duro (U+00A0) y en el botón "Continuar" y en las
+// filas angostas del carrito ese hueco se veía como un precio partido.
+// formatPrice queda intacta porque el ticket impreso depende de ese espacio.
+export function formatPriceCompact(value) {
+  return formatPrice(value).replace(/\s+/g, "");
+}
+
 // Precio de una línea del carrito: unitario + extras + opciones, por cantidad.
 // Así el número de la derecha "cierra" con los extras mostrados debajo.
 export function lineTotal(item) {

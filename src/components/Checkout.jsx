@@ -9,7 +9,7 @@ import { shouldCacheQuoteError } from "../utils/shippingCache.js";
 import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/checkoutHelpers.js";
 import { normalizeAddressKey } from "../utils/normalizeAddressKey.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
-import { IconMoney, IconBank, IconCard, IconScooter, IconLock, IconCheck, IconFlash, IconTakeout, IconChat, IconClockOutline, IconDelivery } from "./ui/icons.jsx";
+import { IconMoney, IconBank, IconCard, IconLock, IconCheck, IconFlash, IconTakeout, IconChat, IconClockOutline, IconDelivery, IconClock, IconTag } from "./ui/icons.jsx";
 import FadeImage from "./FadeImage.jsx";
 
 const PAYMENT_METHODS = [
@@ -390,8 +390,11 @@ export default function Checkout({
             </button>
           </div>
           <p className="hours-note">
-            🕒 Horarios {orderMode === "delivery" ? "de entrega" : "de retiro"}:{" "}
-            <strong>{branch.hours[orderMode]}</strong>
+            <IconClock size={16} />
+            <span>
+              Horarios {orderMode === "delivery" ? "de entrega" : "de retiro"}:{" "}
+              <strong>{branch.hours[orderMode]}</strong>
+            </span>
           </p>
           {closedLabel(branch.id) && (
             <p className="hours-note hours-note--warn">{closedLabel(branch.id)}.</p>
@@ -507,7 +510,7 @@ export default function Checkout({
           {coupon ? (
             <div className="coupon-applied">
               <span>
-                🏷️ Cupón <strong>{coupon.code}</strong> aplicado: −{formatPrice(coupon.discount)}
+                <IconTag /> Cupón <strong>{coupon.code}</strong> aplicado: −{formatPrice(coupon.discount)}
               </span>
               <button type="button" className="btn btn--ghost btn--sm" onClick={() => setCoupon(null)}>
                 Quitar
@@ -708,7 +711,7 @@ export default function Checkout({
         <div className="trust-strip" aria-label="Garantías de tu pedido">
           <span><IconLock width="16" height="16" /> Pago seguro</span>
           <span><IconCheck width="16" height="16" /> Confirmación al instante</span>
-          <span><IconScooter width="16" height="16" /> Seguimiento en vivo</span>
+          <IconDelivery width="16" height="16" /> Seguimiento en vivo
         </div>
 
         <div style={{ display: "grid", gap: 10, marginTop: 16 }}>

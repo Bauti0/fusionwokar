@@ -1,7 +1,7 @@
 import { memo, useRef, useState } from "react";
 import { formatPrice } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
-import { IconSparkle } from "./ui/icons.jsx";
+import { IconSparkle, IconFlash } from "./ui/icons.jsx";
 import FadeImage from "./FadeImage.jsx";
 
 // ============================================================
@@ -73,7 +73,7 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
       <div className="product__info">
         {unavailable && <span className="product__unavailable-tag">Agotado</span>}
         {categoryName && <span className="product__cat">{categoryName}</span>}
-        {isTop && <span className="product__top">🔥 Más pedido</span>}
+        {isTop && <span className="product__top"><IconFlash /> Más pedido</span>}
         <h4 className="product__name">{product.name}</h4>
         {product.description && <p className="product__desc">{product.description}</p>}
         <div className="product__foot">

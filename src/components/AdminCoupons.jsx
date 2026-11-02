@@ -11,7 +11,7 @@ import useDialogA11y from "../hooks/useDialogA11y.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
-import { IconPlus, IconEdit, IconTrash } from "./ui/icons.jsx";
+import { IconPlus, IconEdit, IconTrash, IconTag, IconLock } from "./ui/icons.jsx";
 import { BRANCH_LIST } from "../data/branches.js";
 
 // ============================================================
@@ -125,7 +125,7 @@ export default function AdminCoupons({ me }) {
   return (
     <section className="admin-coupons">
       <div className="admin-products__toolbar">
-        <h3>🏷️ Cupones de descuento</h3>
+        <h3><IconTag /> Cupones de descuento</h3>
         <button className="btn btn--primary btn--sm" onClick={() => { setCreating(true); setError(""); }}>
           <IconPlus style={{ width: 13, height: 13 }} /> Crear cupón
         </button>
@@ -175,7 +175,7 @@ export default function AdminCoupons({ me }) {
                     <button className="btn btn--danger btn--sm" onClick={() => handleDelete(c)} aria-label={`Eliminar cupón ${c.code}`}><IconTrash style={{ width: 13, height: 13 }} /></button>
                   )}
                   {isGlobal && isBranchAdmin && (
-                    <span className="coupon-readonly-hint" title="Los cupones globales los gestiona el superadmin">🔒 Solo lectura</span>
+                    <span className="coupon-readonly-hint" title="Los cupones globales los gestiona el superadmin"><IconLock /> Solo lectura</span>
                   )}
                 </div>
               </div>

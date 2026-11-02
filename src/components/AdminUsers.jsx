@@ -11,7 +11,7 @@ import { BRANCHES } from "../data/branches.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
-import { IconPlus } from "./ui/icons.jsx";
+import { IconPlus, IconCheck, IconLock, IconTrash } from "./ui/icons.jsx";
 
 // ============================================================
 // AdminUsers — cuentas de admin por sucursal (solo superadmin)
@@ -146,7 +146,7 @@ export default function AdminUsers({ onLogout }) {
   return (
     <section className="admin-users">
       <div className="admin-products__toolbar">
-        <h3>🔐 Cuentas</h3>
+        <h3><IconLock /> Cuentas</h3>
         <button
           className="btn btn--primary btn--sm"
           onClick={() => {
@@ -178,7 +178,7 @@ export default function AdminUsers({ onLogout }) {
                 <strong className="customer-card__name">{u.username}</strong>
                 <span className="customer-card__phone">{BRANCHES[u.branch]?.name || u.branch}</span>
                 <div className="customer-card__meta">
-                  <span className="badge">{u.active ? "✅ Activa" : "⛔ Desactivada"}</span>
+                  <span className="badge">{u.active ? <><IconCheck /> Activa</> : <><IconLock /> Desactivada</>}</span>
                 </div>
                 <div className="customer-card__submeta">
                   <span>Creada: {new Date(u.createdAt).toLocaleDateString("es-AR")}</span>
@@ -196,15 +196,15 @@ export default function AdminUsers({ onLogout }) {
                     setPassError("");
                   }}
                 >
-                  🔑 Cambiar contraseña
+                  <IconLock /> Cambiar contraseña
                 </button>
                 {u.active ? (
                   <button className="btn btn--danger-outline btn--sm" onClick={() => handleToggle(u)}>
-                    ⛔ Desactivar
+                    <IconLock /> Desactivar
                   </button>
                 ) : (
                   <button className="btn btn--primary btn--sm" onClick={() => handleToggle(u)}>
-                    ✅ Reactivar
+                    <IconCheck /> Reactivar
                   </button>
                 )}
                 {/* Acción destructiva y definitiva: separada del resto
@@ -214,7 +214,7 @@ export default function AdminUsers({ onLogout }) {
                   style={{ marginTop: 10 }}
                   onClick={() => handleDelete(u)}
                 >
-                  🗑️ Borrar
+                  <IconTrash /> Borrar
                 </button>
               </div>
             </div>
@@ -224,7 +224,7 @@ export default function AdminUsers({ onLogout }) {
 
       <div style={{ marginTop: 24 }}>
         <button className="btn btn--ghost btn--block" onClick={handleLogoutAll}>
-          🔒 Cerrar todas las sesiones
+          <IconLock /> Cerrar todas las sesiones
         </button>
         <p className="hint">
           Cierra TODAS las sesiones del panel (máquinas, pestañas y tokens robados),

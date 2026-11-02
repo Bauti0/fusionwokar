@@ -23,7 +23,6 @@ import {
   ORDER_STATUSES,
   STATUS_CANCELLED,
   statusLabel,
-  statusEmoji,
   paymentLabel,
 } from "../constants.js";
 import { formatPrice } from "../utils/format.js";
@@ -31,7 +30,7 @@ import { previewOrderEdit, formatAuditEdits } from "../utils/orderEdit.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import { startNewOrderLoop, stopNewOrderLoop, playConfirmBeep, unlockAudio, loadAudioEnabled, saveAudioEnabled, shouldPlayAlert, shouldShowUnlockBanner } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
-import { IconEmptySearch, IconRepeat, IconPlus, IconLocation, IconVolume2, IconVolumeX, IconAlertCircle } from "./ui/icons.jsx";
+import { IconEmptySearch, IconRepeat, IconPlus, IconLocation, IconVolume2, IconVolumeX, IconAlertCircle, IconCart, IconChart, IconMoney, IconBowlSteam, IconChopsticks, IconTag, IconUser, IconLock, IconBell, IconSearch, IconChat, IconDelivery, IconClock, IconCard, IconCash, IconBank, IconTakeout, IconX, IconReceipt, IconOrderStatus } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
@@ -748,7 +747,7 @@ export default function AdminPanel({ me, onLogout }) {
             className={`admin-nav__btn ${section === "orders" ? "is-active" : ""}`}
             onClick={() => setSection("orders")}
           >
-            📦 Pedidos
+            <IconCart /> Pedidos
             {unseenIds.size > 0 && <span className="admin-nav__badge">{unseenIds.size}</span>}
           </button>
           <button
@@ -756,14 +755,14 @@ export default function AdminPanel({ me, onLogout }) {
             className={`admin-nav__btn ${section === "stats" ? "is-active" : ""}`}
             onClick={() => setSection("stats")}
           >
-            📊 Estadísticas
+            <IconChart /> Estadísticas
           </button>
           <button
             data-testid="nav-sales"
             className={`admin-nav__btn ${section === "sales" ? "is-active" : ""}`}
             onClick={() => setSection("sales")}
           >
-            💵 Ventas
+            <IconMoney /> Ventas
           </button>
           <span className="admin-nav__group">Catálogo</span>
           <button
@@ -771,21 +770,21 @@ export default function AdminPanel({ me, onLogout }) {
             className={`admin-nav__btn ${section === "products" ? "is-active" : ""}`}
             onClick={() => setSection("products")}
           >
-            🍜 Productos
+            <IconBowlSteam /> Productos
           </button>
           <button
             data-testid="nav-extras"
             className={`admin-nav__btn ${section === "extras" ? "is-active" : ""}`}
             onClick={() => setSection("extras")}
           >
-            🥢 Adicionales
+            <IconChopsticks /> Adicionales
           </button>
           <button
             data-testid="nav-coupons"
             className={`admin-nav__btn ${section === "coupons" ? "is-active" : ""}`}
             onClick={() => setSection("coupons")}
           >
-            🏷️ Cupones
+            <IconTag /> Cupones
           </button>
           <span className="admin-nav__group">Administración</span>
           <button
@@ -793,7 +792,7 @@ export default function AdminPanel({ me, onLogout }) {
             className={`admin-nav__btn ${section === "customers" ? "is-active" : ""}`}
             onClick={() => setSection("customers")}
           >
-            👥 Clientes
+            <IconUser /> Clientes
           </button>
           {me?.role === "superadmin" && (
             <button
@@ -801,7 +800,7 @@ export default function AdminPanel({ me, onLogout }) {
               className={`admin-nav__btn ${section === "users" ? "is-active" : ""}`}
               onClick={() => setSection("users")}
             >
-              🔐 Cuentas
+              <IconLock /> Cuentas
             </button>
           )}
           {/* Commit con el que se compiló la app (lo inyecta vite.config.js
@@ -1074,7 +1073,7 @@ export default function AdminPanel({ me, onLogout }) {
             <div className="admin-filters__chips">
               {search && (
                 <button type="button" className="filter-chip" onClick={() => setSearch("")}>
-                  🔍 {search.length > 22 ? `${search.slice(0, 22)}…` : search}
+                  <IconSearch /> {search.length > 22 ? `${search.slice(0, 22)}…` : search}
                   <span className="filter-chip__x" aria-hidden="true">✕</span>
                 </button>
               )}
@@ -1163,20 +1162,20 @@ const renderOrder = (o) => {
                       <div className="admin-order__mid">
                         <span className="badge badge--branch">{b?.name}</span>
                         <span className="admin-order__name">{o.customer.name}</span>
-                        {o.source === "whatsapp" && <span className="badge badge--source">💬 WhatsApp</span>}
+                        {o.source === "whatsapp" && <span className="badge badge--source"><IconChat /> WhatsApp</span>}
                         {o.source === "counter" && o.orderMode === "delivery" && (
-                          <span className="badge badge--source">🛵 Delivery</span>
+                          <span className="badge badge--source"><IconDelivery /> Delivery</span>
                         )}
                         {o.source === "counter" && o.orderMode !== "delivery" && (
-                          <span className="badge badge--source">🧍 Mostrador</span>
+                          <span className="badge badge--source"><IconTakeout /> Mostrador</span>
                         )}
-                        {o.shipping?.pending && <span className="badge badge--shipping-pending">⚠️ Envío a confirmar</span>}
-                        {o.scheduledFor && <span className="badge" title={`Programado: ${new Date(o.scheduledFor).toLocaleString("es-AR")}`}>🕒 {arClockLabel(o.scheduledFor)}</span>}
+                        {o.shipping?.pending && <span className="badge badge--shipping-pending"><IconAlertCircle /> Envío a confirmar</span>}
+                        {o.scheduledFor && <span className="badge" title={`Programado: ${new Date(o.scheduledFor).toLocaleString("es-AR")}`}><IconClock /> {arClockLabel(o.scheduledFor)}</span>}
                       </div>
                       <div className="admin-order__bottom">
-                        <span className={`badge badge--status-${o.status}`}>{statusEmoji(o.status)} {statusLabel(o.status)}</span>
+                        <span className={`badge badge--status-${o.status}`}><IconOrderStatus status={o.status} size={14} /> {statusLabel(o.status)}</span>
                         <span className={`badge badge--pay badge--pay-${o.paymentStatus}`}>
-                          {o.paymentMethod === "mercadopago" ? "💳 " : "💰 "}
+                          {o.paymentMethod === "mercadopago" ? <IconCard /> : <IconCash />}
                           {paymentLabel(o.paymentStatus)}
                         </span>
                         <strong className="admin-order__total">{formatPrice(o.total)}</strong>
@@ -1264,10 +1263,10 @@ const renderOrder = (o) => {
                   {selected.orderNumber}
                 </h3>
                 <span className={`badge badge--status-${selected.status}`}>
-                  {statusEmoji(selected.status)} {statusLabel(selected.status)}
+                  <IconOrderStatus status={selected.status} size={14} /> {statusLabel(selected.status)}
                 </span>
                 <span className={`badge badge--pay badge--pay-${selected.paymentStatus}`}>
-                  {selected.paymentMethod === "mercadopago" ? "💳 " : "💰 "}
+                  {selected.paymentMethod === "mercadopago" ? <IconCard /> : <IconCash />}
                   {paymentLabel(selected.paymentStatus)}
                 </span>
               </div>
@@ -1305,24 +1304,24 @@ const renderOrder = (o) => {
                   <p className="detail-strong">{selected.customer.name}</p>
                   <p>{selected.customer.phone || "Sin teléfono"}</p>
                   {selected.orderMode === "delivery" && selected.address && (
-                    <p className="detail-wrap">📍 {selected.address}</p>
+                    <p className="detail-wrap"><IconLocation /> {selected.address}</p>
                   )}
                   {selected.orderMode === "delivery" && selected.notes && (
-                    <p className="detail-note detail-wrap">📝 {selected.notes}</p>
+                    <p className="detail-note detail-wrap"><IconReceipt /> {selected.notes}</p>
                   )}
                 </div>
                 <div className="detail-block">
                   <h4>Sucursal / Entrega</h4>
                   <p className="detail-strong">{BRANCHES[selected.branch]?.name}</p>
-                  <p>{selected.orderMode === "delivery" ? "🛵 Delivery" : "🥡 Retiro"}</p>
+                  <p>{selected.orderMode === "delivery" ? <><IconDelivery /> Delivery</> : <><IconTakeout /> Retiro</>}</p>
                   <p>{new Date(selected.createdAt).toLocaleString("es-AR")}</p>
                   <div className="order-chips">
                     {selected.shipping?.pending && (
-                      <span className="badge badge--shipping-pending">⚠️ Envío a confirmar</span>
+                      <span className="badge badge--shipping-pending"><IconAlertCircle /> Envío a confirmar</span>
                     )}
                     {selected.scheduledFor && (
                       <span className="badge">
-                        🕒 Programado: {new Date(selected.scheduledFor).toLocaleString("es-AR")}
+                        <IconClock /> Programado: {new Date(selected.scheduledFor).toLocaleString("es-AR")}
                       </span>
                     )}
                   </div>
@@ -1509,7 +1508,7 @@ const renderOrder = (o) => {
                           aria-pressed={edit.orderMode === "delivery"}
                           onClick={() => setEditField({ orderMode: "delivery" })}
                         >
-                          🛵 Delivery
+                          <IconDelivery /> Delivery
                         </button>
                         <button
                           type="button"
@@ -1517,7 +1516,7 @@ const renderOrder = (o) => {
                           aria-pressed={edit.orderMode === "pickup"}
                           onClick={() => setEditField({ orderMode: "pickup" })}
                         >
-                          🥡 Mostrador
+                          <IconTakeout /> Mostrador
                         </button>
                       </div>
                     </div>
@@ -1533,7 +1532,7 @@ const renderOrder = (o) => {
                           aria-pressed={edit.paymentMethod === "efectivo"}
                           onClick={() => setEditField({ paymentMethod: "efectivo" })}
                         >
-                          💰 Efectivo
+                          <IconCash /> Efectivo
                         </button>
                         <button
                           type="button"
@@ -1541,7 +1540,7 @@ const renderOrder = (o) => {
                           aria-pressed={edit.paymentMethod === "transferencia"}
                           onClick={() => setEditField({ paymentMethod: "transferencia" })}
                         >
-                          🏦 Transferencia
+                          <IconBank /> Transferencia
                         </button>
                       </div>
                       {selected.paymentMethod === "mercadopago" && (
@@ -1734,14 +1733,14 @@ const renderOrder = (o) => {
                       className={`status-btn ${selected.status === s.id ? "is-active" : ""}`}
                       onClick={() => handleSetStatus(selected.id, s.id)}
                     >
-                      {s.emoji} {s.label}
+                      <IconOrderStatus status={s.id} size={14} /> {s.label}
                     </button>
                   ))}
                   <button
                     className={`status-btn status-btn--danger ${selected.status === "cancelled" ? "is-active" : ""}`}
                     onClick={() => handleSetStatus(selected.id, "cancelled")}
                   >
-                    ❌ {statusLabel("cancelled")}
+                    <IconX /> {statusLabel("cancelled")}
                   </button>
                 </div>
               </div>

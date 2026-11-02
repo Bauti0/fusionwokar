@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import ProductCard from "./ProductCard.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
 import { closedLabel, pauseNotice } from "../utils/schedule.js";
-import { IconSearch, IconClock, IconEmptySearch, IconPause, IconLocation, IconScooter, IconAlertCircle } from "./ui/icons.jsx";
+import { IconSearch, IconClock, IconEmptySearch, IconPause, IconLocation, IconDelivery, IconAlertCircle } from "./ui/icons.jsx";
 
 // ============================================================
 // Vista de menú de una sucursal
@@ -149,7 +149,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
           )}
           {branch.deliveryInfo && (
             <p className="menu__delivery">
-              <IconScooter />
+              <IconDelivery />
               <span>{branch.deliveryInfo}</span>
             </p>
           )}

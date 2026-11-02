@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { formatPrice, lineTotal } from "../utils/format.js";
+import { formatPriceCompact, lineTotal } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
 import Tooltip from "./ui/Tooltip.jsx";
 import { IconCart, IconTrash } from "./ui/icons.jsx";
@@ -60,12 +60,12 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
 {/* Extras y opciones: los extras usan e.price, las opciones usan o.extraPrice */}
                     {(item.extras || []).length > 0 && (
                       <p className="cart-item__extras">
-                        {(item.extras || []).map((e) => `${e.label} (+${formatPrice(e.price)})`).join(", ")}
+                        {(item.extras || []).map((e) => `${e.label} (+${formatPriceCompact(e.price)})`).join(", ")}
                       </p>
                     )}
                     {(item.options || []).length > 0 && (
                       <p className="cart-item__extras">
-                        {(item.options || []).map((o) => `${o.label}${o.extraPrice > 0 ? ` (+${formatPrice(o.extraPrice)})` : ""}`).join(", ")}
+                        {(item.options || []).map((o) => `${o.label}${o.extraPrice > 0 ? ` (+${formatPriceCompact(o.extraPrice)})` : ""}`).join(", ")}
                       </p>
                     )}
                     {item.notes && <p className="cart-item__extras">Nota: {item.notes}</p>}
@@ -99,7 +99,7 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
                     </div>
                   </div>
                   <div className="cart-item__price">
-                    {formatPrice(lineTotal(item))}
+                    {formatPriceCompact(lineTotal(item))}
                   </div>
                 </div>
                 );
@@ -108,17 +108,17 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
               <div className="summary">
                 <div className="summary__row">
                   <span>Subtotal ({count} items)</span>
-                  <span>{formatPrice(subtotal)}</span>
+                  <span>{formatPriceCompact(subtotal)}</span>
                 </div>
                 {extrasTotal > 0 && (
                   <div className="summary__row">
                     <span>Extras</span>
-                    <span>{formatPrice(extrasTotal)}</span>
+                    <span>{formatPriceCompact(extrasTotal)}</span>
                   </div>
                 )}
                 <div className="summary__row summary__row--total">
                   <span>Total</span>
-                  <span>{formatPrice(total)}</span>
+                  <span>{formatPriceCompact(total)}</span>
                 </div>
               </div>
             </>
@@ -135,7 +135,7 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
                 onCheckout();
               }}
             >
-              Continuar · {formatPrice(total)}
+              Continuar · {formatPriceCompact(total)}
             </button>
             <button className="btn btn--ghost btn--block" onClick={onBack}>
               Seguir agregando

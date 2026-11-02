@@ -5,11 +5,12 @@ import { formatPrice } from "../utils/format.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
 import { useDelayedLoading } from "../utils/skeleton-delay.js";
+import { IconCash, IconCard, IconBank, IconDelivery, IconCheck, IconAlertCircle, IconTakeout } from "./ui/icons.jsx";
 
 const PAYMENT_OPTIONS = [
-  { value: "efectivo", label: "💰 Efectivo" },
-  { value: "mercadopago", label: "💳 Mercado Pago" },
-  { value: "transferencia", label: "🏦 Transferencia" },
+  { value: "efectivo", label: <><IconCash /> Efectivo</> },
+  { value: "mercadopago", label: <><IconCard /> Mercado Pago</> },
+  { value: "transferencia", label: <><IconBank /> Transferencia</> },
 ];
 
 // ============================================================
@@ -237,7 +238,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
       )}
       {success && (
         <div className="admin-new-order__success">
-          ✅ Pedido <strong>{success}</strong> cargado correctamente.
+          <IconCheck /> Pedido <strong>{success}</strong> cargado correctamente.
           <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSuccess(null)}>
             Cargar otro
           </button>
@@ -245,7 +246,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
       )}
       {prefillSkipped.length > 0 && (
         <div className="form-error">
-          ⚠️ No se pudieron cargar del pedido original: {prefillSkipped.join(", ")}. Ya no
+          <IconAlertCircle /> No se pudieron cargar del pedido original: {prefillSkipped.join(", ")}. Ya no
           están en el menú de esta sucursal.
         </div>
       )}
@@ -324,10 +325,10 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
 
           <div className="segment">
             <button type="button" className={orderMode === "pickup" ? "is-active" : ""} onClick={() => setOrderMode("pickup")}>
-              🧍 Mostrador
+              <IconTakeout /> Mostrador
             </button>
             <button type="button" className={orderMode === "delivery" ? "is-active" : ""} onClick={() => setOrderMode("delivery")}>
-              🛵 Delivery
+              <IconDelivery /> Delivery
             </button>
           </div>
 
