@@ -29,7 +29,11 @@ export default function FadeImage({ src, alt, width, height, className = "", asp
   }
 
   return (
-    <div className="fade-image__wrap" style={{ aspectRatio }}>
+    // La clase también va al wrapper: ahí viven los tamaños de las
+    // miniaturas (.cart-item__thumb, .summary__thumb). Si quedaba solo en
+    // el <img>, .fade-image__img (width/height 100%) la pisaba por orden y
+    // la imagen ocupaba todo el ancho del carrito.
+    <div className={`fade-image__wrap ${className}`} style={{ aspectRatio }}>
       <img
         ref={imgRef}
         src={src}
