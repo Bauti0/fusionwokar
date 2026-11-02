@@ -44,6 +44,7 @@ export function startNewOrderLoop() {
     playChimePair();
     loopTimer = setInterval(playChimePair, 1200);
   } catch {
+    console.error("autoplay bloqueado, navegador viejo, etc.")
     /* autoplay bloqueado, navegador viejo, etc. */
   }
 }
