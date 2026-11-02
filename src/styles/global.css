@@ -70,7 +70,7 @@ a { color: var(--color-primary); }
   border: none; border-radius: 999px; padding: 15px 24px;
   font-weight: 700; font-size: 16px; letter-spacing: 0.2px;
   transition: transform 0.09s var(--ease), box-shadow 0.18s var(--ease), background 0.18s var(--ease), filter 0.18s var(--ease);
-  text-decoration: none; white-space: nowrap;
+  text-decoration: none;
 }
 .btn:active { transform: scale(0.97); }
 .btn--primary {
@@ -1657,6 +1657,17 @@ body:has(.admin-login) { background: var(--color-secondary); }
    ============================================================ */
 .page { flex: 1; padding-bottom: 100px; }
 .page__title { font-family: var(--font-display); font-size: 24px; text-transform: uppercase; margin: 24px 0 4px; letter-spacing: .3px; }
+/* Icono de estado del seguimiento: alinea ícono y texto en el título <h2> y centra el SVG dentro de la burbuja de 54×54. Selectores: .page__title (inline-flex + gap) y .track-status-bubble > svg (centrado). */
+.page__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.track-status-bubble > svg,
+.track-status-bubble > * {
+  display: block;
+  margin: 0 auto;
+}
 .page__sub { margin: 0 0 22px; color: var(--color-text-soft); font-size: 14px; }
 .cart-item { display: flex; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--color-border); animation: fadeSlide .25s var(--ease) both; }
 .cart-item__info { flex: 1; min-width: 0; }
@@ -1709,7 +1720,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   display: inline-flex; align-items: center; justify-content: center;
   box-shadow: 0 3px 8px rgba(229,52,46,.3);
 }
-.hours-note { font-size: 13px; color: var(--color-text-soft); background: var(--color-surface); border-radius: var(--radius-sm); padding: 11px 14px; margin: 8px 0 0; border: 1px solid var(--color-border); }
+.hours-note { font-size: 13px; color: var(--color-text-soft); background: var(--color-surface); border-radius: var(--radius-sm); padding: 11px 14px; margin: 8px 0 0; border: 1px solid var(--color-border); display: inline-flex; align-items: center; gap: 8px; }
 .hours-note--warn {
   color: var(--color-warn-text, #8a6d1a); background: var(--color-warn-soft, rgba(255,193,7,.08));
   border-color: var(--color-warn-border, rgba(255,193,7,.4));
@@ -2856,9 +2867,9 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .refund-box__row input:focus { border-color: var(--color-primary); background: #fff; box-shadow: 0 0 0 4px rgba(229,52,46,.1); }
 .status-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .status-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   border: 2px solid var(--color-border); background: var(--color-bg);
   border-radius: var(--radius-sm); padding: 10px 8px; font-size: 13px; font-weight: 600;
-  text-align: center;
 }
 .status-btn:hover { border-color: #cfcbc5; }
 .status-btn.is-active { border-color: var(--color-primary); background: #fff; box-shadow: 0 0 0 3px rgba(229,52,46,0.1); color: var(--color-primary); }
@@ -5087,3 +5098,62 @@ body:has(.admin-login) { background: var(--color-secondary); }
   display: block;
 }
 
+
+/* ============================================================
+   Correcciones de alineación (precio del carrito, horarios, admin)
+   ============================================================ */
+/* El precio del botón "Continuar · $22.900" nunca se parte en dos líneas */
+.drawer__footer .btn { white-space: nowrap; }
+.drawer__footer .btn--ghost { white-space: normal; }
+/* Ícono del reloj: no se achica ni se desalinea cuando el texto da dos líneas */
+.hours-note svg { flex-shrink: 0; }
+/* Los íconos sin tamaño explícito miden 24px: dentro de badges y botones de
+   estado del admin empujaban el texto y descuadraban las filas. */
+.badge svg { width: 14px; height: 14px; flex-shrink: 0; }
+.status-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+.admin-order__mid { flex-wrap: wrap; }
+.admin-order__name { min-width: 0; overflow-wrap: anywhere; }
+.admin-order__bottom .badge { min-width: 0; }
+@media (max-width: 400px) {
+  .admin-order { padding: 12px; }
+  .admin-order__total { font-size: 15px; }
+}
+
+/* ============================================================
+   Alineación de íconos SVG en toda la web
+   ------------------------------------------------------------
+   Los íconos de ui/icons.jsx miden 24px por defecto y, sin reglas,
+   se apoyaban en la línea base del texto: quedaban más altos que la
+   letra y cada botón se descuadraba distinto. Acá se centran todos
+   con flex y se fijan tamaños razonables SOLO para los que usan el
+   tamaño por defecto (width="24"); los que traen tamaño explícito
+   no se tocan.
+   ============================================================ */
+svg { flex-shrink: 0; vertical-align: middle; }
+
+/* Botones, links y badges que llevan un ícono hijo directo: ícono y texto
+   en la misma línea, centrados. :where() deja la especificidad en cero para
+   que cualquier clase específica siga ganando. */
+:where(button, a, .badge):has(> svg):not([hidden]) {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+:where(button, a):has(> svg):not([hidden]) { justify-content: center; }
+.btn svg[width="24"] { width: 20px; height: 20px; }
+
+/* Texto corrido con un ícono adelante (detalle del pedido, avisos, etc.) */
+.detail-block p svg[width="24"],
+.hint svg[width="24"],
+.admin-empty--sm svg[width="24"] { width: 16px; height: 16px; vertical-align: -3px; margin-right: 4px; }
+
+/* Menú del admin (arriba en móvil como chips, a la izquierda en escritorio)
+   Usa .admin prefix para ganar especificidad sobre reglas anteriores. */
+.admin .admin-nav__btn { display: inline-flex; align-items: center; gap: 8px; line-height: 1.2; }
+.admin .admin-nav__btn svg { width: 20px; height: 20px; }
+.admin .admin-nav__badge { margin-left: auto; }
+@media (min-width: 1024px) {
+  .admin .admin-nav__btn {
+    display: flex; align-items: center; justify-content: flex-start;
+    gap: 10px; width: 100%; text-align: left;
+  }
+  .admin .admin-nav__btn svg { width: 20px; height: 20px; }
+}
