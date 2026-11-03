@@ -53,6 +53,8 @@ export default function TrackOrder() {
   // envejecer y refleja que la conexión está fallando.
   const [lastUpdated, setLastUpdated] = useState(null);
   const [, setTick] = useState(0);
+  const [statusPulse, setStatusPulse] = useState(false);
+  const prevStatusRef = useRef(null);
 
   // Skeleton solo en la primera carga, con retardo anti-parpadeo (200 ms de espera,
   // 300 ms de visibilidad mínima). Si el primer fetch falla, se muestra el error.
@@ -222,6 +224,19 @@ export default function TrackOrder() {
     return () => clearInterval(id);
   }, []);
 
+  // Pulse en la burbuja de estado cuando cambia order.status (se limpia a los 400ms)
+  // Debe ir ANTES de los early returns para respetar rules-of-hooks.
+  // Usamos optional chaining en la dependencia para que no falle cuando order es null.
+  useEffect(() => {
+    if (!order) return;
+    if (prevStatusRef.current !== null && prevStatusRef.current !== order.status) {
+      setStatusPulse(true);
+      const t = setTimeout(() => setStatusPulse(false), 400);
+      return () => clearTimeout(t);
+    }
+    prevStatusRef.current = order.status;
+  }, [order?.status]);
+
   if (notFound) {
     return (
       <div className="app">
@@ -339,7 +354,7 @@ export default function TrackOrder() {
 
           <div className="track-card">
             <div className={`track-card__status is-${statusTone}`}>
-              <span className={`track-status-bubble track-status-bubble--${statusTone}`} aria-hidden="true">
+              <span className={`track-status-bubble track-status-bubble--${statusTone} ${statusPulse ? "is-updated" : ""}`} aria-hidden="true">
                 <IconOrderStatus status={order.status} size={28} />
               </span>
               <div>

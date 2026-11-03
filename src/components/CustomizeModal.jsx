@@ -12,6 +12,8 @@ import useDialogA11y from "../hooks/useDialogA11y.js";
 // ============================================================
 export default function CustomizeModal({ product, onClose, onConfirm, closeOnAdd = false }) {
   const dialogRef = useDialogA11y({ onClose });
+  const overlayRef = useRef(null);
+  const sheetRef = useRef(null);
   const [selectedExtras, setSelectedExtras] = useState(() =>
     new Set(product.extras?.filter((e) => e.default).map((e) => e.id) || [])
   );
@@ -22,6 +24,34 @@ export default function CustomizeModal({ product, onClose, onConfirm, closeOnAdd
   // Anti doble toque (solo con closeOnAdd, panel de admin): un segundo
   // click en "Agregar" antes del re-render no suma el producto otra vez.
   const confirmRef = useRef(false);
+
+  const handleClose = () => {
+    const overlay = overlayRef.current;
+    const sheet = sheetRef.current;
+    if (!overlay || !sheet) { onClose(); return; }
+    // Guarda para evitar doble llamada (transitionend overlay/sheet + timeout)
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      onClose();
+    };
+    overlay.classList.add("modal-overlay--closing");
+    sheet.classList.add("modal--closing");
+    let ended = 0;
+    const onEnd = (e) => {
+      if (e.target !== sheet && e.target !== overlay) return;
+      ended++;
+      if (ended === 2) {
+        sheet.removeEventListener("transitionend", onEnd);
+        overlay.removeEventListener("transitionend", onEnd);
+        finish();
+      }
+    };
+    sheet.addEventListener("transitionend", onEnd);
+    overlay.addEventListener("transitionend", onEnd);
+    setTimeout(finish, 300);
+  };
 
   // Memoizado para que no se reconstruya en cada render (se usa como dep de
   // allOptions y se renderiza en el JSX).
@@ -121,20 +151,20 @@ export default function CustomizeModal({ product, onClose, onConfirm, closeOnAdd
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" ref={overlayRef} onClick={handleClose}>
       <div
         className="modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="customize-title"
-        ref={dialogRef}
+        ref={(el) => { dialogRef.current = el; sheetRef.current = el; }}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal__head">
           <h3 className="modal__name" id="customize-title">{product.name}</h3>
           <span className="modal__price">{formatPrice(total)}</span>
-          <button className="modal__close" onClick={onClose} aria-label="Cerrar">
+          <button className="modal__close" onClick={handleClose} aria-label="Cerrar">
             ✕
           </button>
         </div>

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { formatPriceCompact, lineTotal } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
 import Tooltip from "./ui/Tooltip.jsx";
@@ -12,6 +12,7 @@ import FadeImage from "./FadeImage.jsx";
 // ============================================================
 export default function CartView({ cart, branch, onCheckout, onBack }) {
   const { items = [], updateQty, removeItem, subtotal = 0, extrasTotal = 0, total = 0, count = 0 } = cart || {};
+  const sheetRef = useRef(null);
 
   // Bloquea el scroll de fondo mientras el drawer está abierto
   useEffect(() => {
@@ -22,10 +23,31 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
     };
   }, []);
 
+  const handleBack = () => {
+    const sheet = sheetRef.current;
+    if (!sheet) { onBack(); return; }
+    // Guarda para evitar doble llamada (transitionend + timeout)
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      onBack();
+    };
+    sheet.classList.add("drawer--closing");
+    const onEnd = (e) => {
+      if (e.target !== sheet) return;
+      sheet.removeEventListener("transitionend", onEnd);
+      finish();
+    };
+    sheet.addEventListener("transitionend", onEnd);
+    // Fallback si transitionend no dispara
+    setTimeout(finish, 300);
+  };
+
   return (
     <div data-testid="cart-drawer" className="drawer" role="dialog" aria-modal="true" aria-label="Tu pedido">
-      <div className="drawer__backdrop" onClick={onBack} />
-      <div className="drawer__sheet">
+      <div className="drawer__backdrop" onClick={handleBack} />
+      <div className="drawer__sheet" ref={sheetRef}>
         <div className="drawer__head">
           <div>
             <h2 className="drawer__title">Tu pedido</h2>

@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { formatPrice } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
 import { IconSparkle, IconFlash } from "./ui/icons.jsx";
@@ -31,18 +31,28 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   const [added, setAdded] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
 
-  const timer = useRef(null);
-
   // Si la foto no carga (archivo borrado, ruta rota…) se cae al
   // estado sin foto. El estado persiste para no volver a intentar
   // la misma imagen rota en cada re-render (React podría re-montar
   // el <img> con el mismo src).
   const hasImage = !!product.image && !imgFailed;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   function flash() {
+    if (!mountedRef.current) return;
     setAdded(true);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setAdded(false), 1100);
+    // Interruptible: dos rAF = próximo frame de pintura después del cambio de estado.
+    // Si el usuario toca otra vez antes, el setAdded(false) del siguiente click
+    // gana y no queda estado roto.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (mountedRef.current) setAdded(false);
+      });
+    });
   }
 
   function handleClick() {
