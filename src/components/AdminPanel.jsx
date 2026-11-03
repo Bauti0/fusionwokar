@@ -519,7 +519,7 @@ export default function AdminPanel({ me, onLogout }) {
   const mpAprobado =
     selected?.paymentMethod === "mercadopago" && selected?.paymentStatus === "approved";
   const puedeEditar =
-    !!selected && (me?.role === "superadmin" || selected.branch === me?.branch);
+    !!selected && (me?.role === "superadmin" || selected?.branch === me?.branch);
   const editBloqueo = !selected
     ? ""
     : selected.status === "cancelled"
@@ -1378,9 +1378,9 @@ const renderOrder = (o) => {
                     </span>
                   </div>
 
-                  {(selected.mpOrderId || selected.mpPaymentId) && (
+                  {(selected?.mpOrderId || selected?.mpPaymentId) && (
                     <dl className="pay-card__ids">
-                      {selected.mpOrderId && (
+                      {selected?.mpOrderId && (
                         <div className="pay-card__id">
                           <dt>Order MP</dt>
                           <dd>
@@ -1389,14 +1389,14 @@ const renderOrder = (o) => {
                               type="button"
                               className={`copy-btn ${copiedId === "order" ? "is-copied" : ""}`}
                               aria-label="Copiar Order MP"
-                              onClick={() => copyId(selected.mpOrderId, "order")}
+                              onClick={() => copyId(selected?.mpOrderId, "order")}
                             >
                               {copiedId === "order" ? "✓ Copiado" : "Copiar"}
                             </button>
                           </dd>
                         </div>
                       )}
-                      {selected.mpPaymentId && (
+                      {selected?.mpPaymentId && (
                         <div className="pay-card__id">
                           <dt>ID pago</dt>
                           <dd>
@@ -1405,7 +1405,7 @@ const renderOrder = (o) => {
                               type="button"
                               className={`copy-btn ${copiedId === "payment" ? "is-copied" : ""}`}
                               aria-label="Copiar ID de pago"
-                              onClick={() => copyId(selected.mpPaymentId, "payment")}
+                              onClick={() => copyId(selected?.mpPaymentId, "payment")}
                             >
                               {copiedId === "payment" ? "✓ Copiado" : "Copiar"}
                             </button>
