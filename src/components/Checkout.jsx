@@ -130,7 +130,6 @@ export default function Checkout({
   // Para efectivo/transferencia se deja pasar con envío "a confirmar"; para
   // Mercado Pago se bloquea pero con la puerta de WhatsApp del local.
   const shippingUnavailable = wantsDelivery && supportsAutoShipping && !!shippingError;
-  console.log("[Checkout] branch:", branch.id, "supportsAutoShipping:", supportsAutoShipping, "wantsDelivery:", wantsDelivery, "shippingUnavailable:", shippingUnavailable);
   const contactWaLink = `https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(
     "Hola! Estoy haciendo un pedido pero no puedo calcular el envío automáticamente en la página. ¿Me pueden ayudar?"
   )}`;
@@ -151,9 +150,7 @@ export default function Checkout({
   // cambia la dirección/sucursal/modalidad. Un timer de 8 s muestra
   // "Estamos calculando…" sin bloquear el formulario. AbortError se ignora.
   useEffect(() => {
-    console.log("[Checkout shipping useEffect] wantsDelivery:", wantsDelivery, "isTandil:", isTandil, "supportsAutoShipping:", supportsAutoShipping, "branch.id:", branch.id);
     if (!wantsDelivery || !supportsAutoShipping) {
-      console.log("[Checkout shipping useEffect] SKIPPING - not delivery or no auto shipping config");
       setShipping(null);
       setShippingError("");
       setShippingBusy(false);
@@ -161,9 +158,7 @@ export default function Checkout({
       return;
     }
     const addr = address.trim();
-    console.log("[Checkout useEffect] addr:", addr, "length:", addr.length, "minAddressLength:", minAddressLength);
     if (addr.length < minAddressLength) {
-      console.log("[Checkout useEffect] SKIPPING - addr too short:", addr.length, "<", minAddressLength);
       setShippingError("");
       setShippingBusy(false);
       setShippingCalculating(false);
@@ -188,7 +183,6 @@ export default function Checkout({
     const controller = new AbortController();
 
     const startFetch = async () => {
-      console.log("[Checkout startFetch] Iniciando fetch para:", branch.id, addr);
       setShippingCalculating(false);
       setShippingBusy(true);
       setShippingError("");
@@ -199,9 +193,7 @@ export default function Checkout({
       }, 8000);
 
       try {
-        console.log("[Checkout startFetch] Llamando shippingQuote...");
         const res = await shippingQuote(branch.id, addr, { signal: controller.signal });
-        console.log("[Checkout startFetch] Respuesta:", res);
         const data = { blocks: res.blocks, cost: res.cost };
         quoteCache.set(key, { res: data, at: Date.now() });
         // Solo aplicar si NO fue abortado y la dirección sigue siendo la actual
@@ -210,10 +202,8 @@ export default function Checkout({
           setShippingError("");
         }
       } catch (err) {
-        console.log("[Checkout startFetch] Error:", err);
         // AbortError: consulta cancelada por cambio de dirección → no hacer nada
         if (err.name === "AbortError" || err.name === "CancellationError") {
-          console.log("[Checkout startFetch] AbortError detectado, saliendo");
           return;
         }
         const msg = err.message || "";
