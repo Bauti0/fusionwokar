@@ -66,7 +66,8 @@ export function validateCheckoutForm(
     return { field: "address", message: "Ingresá tu dirección de entrega." };
   }
   if (wantsDelivery && quotesShipping) {
-    if (address.trim().length < 8) {
+    const minLen = BRANCHES[branchId]?.minAddressLength ?? 8;
+    if (address.trim().length < minLen) {
       return { field: "address", message: "La dirección es muy corta. Ingresá la calle y el número." };
     }
     if (shippingError) {

@@ -37,6 +37,8 @@ export const BRANCHES = {
     supportsDelivery: true,
     // Configuración de envío automático (usa la misma tarifa que Tandil)
     shippingConfig: true,
+    // Longitud mínima de dirección para validar (Necochea: números de calle cortos, ej: "49 2442" = 7 chars)
+    minAddressLength: 4,
   },
   tandil: {
     id: "tandil",
@@ -66,6 +68,8 @@ export const BRANCHES = {
     supportsDelivery: true,
     // Configuración de envío automático
     shippingConfig: true,
+    // Longitud mínima de dirección para validar (Tandil: ej: "Av. 12 345" = 8+ chars)
+    minAddressLength: 8,
   },
 };
 

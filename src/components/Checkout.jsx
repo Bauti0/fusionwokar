@@ -122,6 +122,7 @@ export default function Checkout({
   const wantsDelivery = orderMode === "delivery";
   const isTandil = branch.id === "tandil";
   const supportsAutoShipping = branch.shippingConfig === true;
+  const minAddressLength = branch.minAddressLength ?? 8;
   const shippingCost = wantsDelivery ? shipping?.cost || 0 : 0;
   const finalTotal = (coupon ? coupon.totalAfter : total) + shippingCost;
   const discount = coupon ? coupon.discount : 0;
@@ -160,7 +161,9 @@ export default function Checkout({
       return;
     }
     const addr = address.trim();
-    if (addr.length < 8) {
+    console.log("[Checkout useEffect] addr:", addr, "length:", addr.length, "minAddressLength:", minAddressLength);
+    if (addr.length < minAddressLength) {
+      console.log("[Checkout useEffect] SKIPPING - addr too short:", addr.length, "<", minAddressLength);
       setShippingError("");
       setShippingBusy(false);
       setShippingCalculating(false);
