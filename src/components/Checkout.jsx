@@ -185,6 +185,7 @@ export default function Checkout({
     const controller = new AbortController();
 
     const startFetch = async () => {
+      console.log("[Checkout startFetch] Iniciando fetch para:", branch.id, addr);
       setShippingCalculating(false);
       setShippingBusy(true);
       setShippingError("");
@@ -195,7 +196,9 @@ export default function Checkout({
       }, 8000);
 
       try {
+        console.log("[Checkout startFetch] Llamando shippingQuote...");
         const res = await shippingQuote(branch.id, addr, { signal: controller.signal });
+        console.log("[Checkout startFetch] Respuesta:", res);
         const data = { blocks: res.blocks, cost: res.cost };
         quoteCache.set(key, { res: data, at: Date.now() });
         // Solo aplicar si NO fue abortado y la dirección sigue siendo la actual
@@ -204,8 +207,12 @@ export default function Checkout({
           setShippingError("");
         }
       } catch (err) {
+        console.log("[Checkout startFetch] Error:", err);
         // AbortError: consulta cancelada por cambio de dirección → no hacer nada
-        if (err.name === "AbortError" || err.name === "CancellationError") return;
+        if (err.name === "AbortError" || err.name === "CancellationError") {
+          console.log("[Checkout startFetch] AbortError detectado, saliendo");
+          return;
+        }
         const msg = err.message || "";
         if (shouldCacheQuoteError(err)) {
           quoteCache.set(key, { err: msg, at: Date.now() });
