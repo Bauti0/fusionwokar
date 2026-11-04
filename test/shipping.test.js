@@ -31,6 +31,13 @@ process.env.SHIPPING_PER_BLOCK = "100";
 process.env.SHIPPING_BLOCK_METERS = "130"; // la cuadra de Tandil
 process.env.SHIPPING_MAX_BLOCKS = "40"; // tope ACTIVO para el caso "fuera de zona"
 
+// Necochea config (usa los mismos defaults que Tandil salvo blockMeters=100)
+process.env.SHIPPING_NECOCHEA_FLAT_BLOCKS = "20";
+process.env.SHIPPING_NECOCHEA_BASE_COST = "4000";
+process.env.SHIPPING_NECOCHEA_PER_BLOCK = "100";
+process.env.SHIPPING_NECOCHEA_BLOCK_METERS = "100"; // la cuadra de Necochea ≈ 100m
+process.env.SHIPPING_NECOCHEA_MAX_BLOCKS = "40";
+
 const { computeShipping } = await import("../server/shipping.js");
 
 // Metros de RUTA que la "red" mockeada devuelve por dirección.
@@ -54,16 +61,13 @@ function mockearRed(t) {
     llamadasExternas += 1;
     if (u.includes("nominatim")) {
       const q = new URL(u).searchParams.get("q") || "";
-      // Origen (el local de Chacabuco 660): coordenadas fijas, cualquiera
-      // sirve porque la distancia la fija el mock de OSRM.
+      // Origen Tandil (Chacabuco 660)
       if (q.includes("Chacabuco 660")) return respuestaJson([{ lat: "-37.32154", lon: "-59.13024" }]);
+      // Origen Necochea (Av. 59 1461)
+      if (q.includes("Av. 59 1461") && q.includes("Necochea")) return respuestaJson([{ lat: "-38.5475", lon: "-58.7367" }]);
       // Destino: se busca con startsWith porque shipping.js enriquece la
-      // dirección con ", Tandil, Buenos Aires, Argentina" antes de
-      // geocodificar. La "longitud" del destino son los METROS de ruta:
-      // el único que la lee es el mock de OSRM (haversine nunca se
-      // calcula, OSRM siempre responde), así que no hace falta que sean
-      // coordenadas creíbles. Se usan metros ENTEROS para que el borde
-      // exacto de 20 cuadras no dependa de redondeos de punto flotante.
+      // dirección con ", Tandil, Buenos Aires, Argentina" o ", Necochea, Buenos Aires, Argentina"
+      // La "longitud" del destino son los METROS de ruta.
       for (const [dir, metros] of METROS_POR_DIRECCION) {
         if (q.startsWith(dir)) return respuestaJson([{ lat: "-37.32154", lon: String(metros) }]);
       }
@@ -183,16 +187,18 @@ describe("computeShipping (tarifa por cuadras, con la red mockeada)", () => {
     );
   });
 
-  it("Necochea no tiene envío: supported false, sin consultar nada", async (t) => {
-    // Regresión que cubre: Necochea todavía no tiene reparto. Si se
-    // "arregla" el cálculo para cotizar cualquier sucursal, el checkout
-    // de Necochea ofrecería un envío que nadie puede entregar. Además,
-    // este caso no puede tocar la red: se afirma con el contador.
+  it("Necochea tiene envío: supported true, cotiza con la misma lógica que Tandil", async (t) => {
+    // Necochea ahora tiene reparto con la misma regla de cuadras que Tandil.
+    // Usa sus propias variables de entorno (SHIPPING_NECOCHEA_*).
     mockearRed(t);
+    METROS_POR_DIRECCION.set("Av. 59 1461", 0); // 0 metros = propia dirección del local
     const antes = llamadasExternas;
-    const r = await computeShipping("necochea", "Av. 59 1234");
-    assert.deepEqual(r, { cost: 0, blocks: 0, supported: false });
-    assert.equal(llamadasExternas, antes); // no hizo ninguna llamada externa
+    const r = await cotizar(t, "necochea", "Av. 59 1461");
+    assert.equal(r.supported, true);
+    assert.equal(r.cost, 4000); // base cost
+    assert.equal(r.blocks, 0);
+    // Hizo llamadas externas para geocodificar y calcular ruta
+    assert.ok(llamadasExternas > antes);
   });
 });
 

@@ -1,11 +1,12 @@
 // ============================================================
-// FUSIÓN WOK — Cálculo de envío (Tandil, por ahora)
-// Regla real:
+// FUSIÓN WOK — Cálculo de envío (Tandil y Necochea)
+// Regla real (ambas sucursales):
 //   - Las primeras 20 cuadras a la redonda del local: $4.000 fijos.
 //   - Cada cuadra extra: $100.
-//   - La cuadra en Tandil ≈ 130 m (configurable con SHIPPING_BLOCK_METERS).
+//   - La cuadra en Tandil ≈ 130 m, en Necochea ≈ 100 m (configurable).
 //   0 cuadras (la dirección del propio local) también paga $4.000.
-//   - Origen: Chacabuco 660, Tandil, Buenos Aires.
+//   - Origen Tandil: Chacabuco 660, Tandil, Buenos Aires.
+//   - Origen Necochea: Av. 59 1461, Necochea, Buenos Aires.
 //   - Servicios 100% gratis, con respaldos para que una limitación
 //     de tráfico (429) o una caída no dejen sin envío:
 //       1) Geocoding: Nominatim (OSM) → si falla, Photon (Komoot).
@@ -14,26 +15,39 @@
 //          falla, distancia en línea recta (factor ~1.25x).
 //   - MAX_BLOCKS es opcional (SHIPPING_MAX_BLOCKS): si se define, las
 //     direcciones más allá de ese tope se rechazan como "fuera de zona".
-// Necochea aún NO implementado: devuelve costo 0.
 // ============================================================
 
 import { normalizeAddressKey } from "./utils/normalizeAddressKey.js";
 
+// ============ Configuración Tandil ============
 // Franquicia: hasta esta cantidad de cuadras se cobra solo la base
-const FLAT_BLOCKS = Number(process.env.SHIPPING_FLAT_BLOCKS || 20);
+const TANDIL_FLAT_BLOCKS = Number(process.env.SHIPPING_FLAT_BLOCKS || 20);
 // Costo fijo de la franquicia (base)
-const SHIPPING_BASE_COST = Number(process.env.SHIPPING_BASE_COST || 4000);
+const TANDIL_BASE_COST = Number(process.env.SHIPPING_BASE_COST || 4000);
 // Costo por cuadra extra por encima de la franquicia
-const SHIPPING_PER_BLOCK = Number(process.env.SHIPPING_PER_BLOCK || 100);
+const TANDIL_PER_BLOCK = Number(process.env.SHIPPING_PER_BLOCK || 100);
 // Tope de reparto total en cuadras. OPCIONAL: si SHIPPING_MAX_BLOCKS no está
 // definida (o es 0/negativa) NO hay tope de distancia — aplica la regla
 // comercial: las primeras SHIPPING_FLAT_BLOCKS cuadras salen SHIPPING_BASE_COST
 // y cada cuadra adicional SHIPPING_PER_BLOCK. (SHIPPING_MAX_KM quedó obsoleta:
 // la regla es por cuadras y el reparto no tiene límite de cobertura.)
-const MAX_BLOCKS = Math.max(0, Number(process.env.SHIPPING_MAX_BLOCKS || 0) || 0);
-const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
+const TANDIL_MAX_BLOCKS = Math.max(0, Number(process.env.SHIPPING_MAX_BLOCKS || 0) || 0);
 // Una cuadra en Tandil ≈ 130 m (los geocoders devuelven metros)
-const BLOCK_METERS = Number(process.env.SHIPPING_BLOCK_METERS || 130);
+const TANDIL_BLOCK_METERS = Number(process.env.SHIPPING_BLOCK_METERS || 130);
+// Origen Tandil: Chacabuco 660, Tandil, Buenos Aires, Argentina
+const TANDIL_ORIGIN_QUERY = "Chacabuco 660, Tandil, Buenos Aires, Argentina";
+
+// ============ Configuración Necochea ============
+const NECOCHEA_FLAT_BLOCKS = Number(process.env.SHIPPING_NECOCHEA_FLAT_BLOCKS || 20);
+const NECOCHEA_BASE_COST = Number(process.env.SHIPPING_NECOCHEA_BASE_COST || 4000);
+const NECOCHEA_PER_BLOCK = Number(process.env.SHIPPING_NECOCHEA_PER_BLOCK || 100);
+const NECOCHEA_MAX_BLOCKS = Math.max(0, Number(process.env.SHIPPING_NECOCHEA_MAX_BLOCKS || 0) || 0);
+// Una cuadra en Necochea ≈ 100 m (los geocoders devuelven metros)
+const NECOCHEA_BLOCK_METERS = Number(process.env.SHIPPING_NECOCHEA_BLOCK_METERS || 100);
+// Origen Necochea: Av. 59 1461, Necochea, Buenos Aires, Argentina
+const NECOCHEA_ORIGIN_QUERY = "Av. 59 1461, Necochea, Buenos Aires, Argentina";
+
+const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
 // Multiplicador línea recta → calles (distancia de ruta aproximada)
 const ROAD_FACTOR = 1.25;
 // El local es fijo: cacheamos 24 h
@@ -45,36 +59,41 @@ const KM_TTL = 7 * 24 * 60 * 60 * 1000;
 // por 90 s, así el cliente puede reintentar sin saturar nada.
 const FAIL_TTL = 90 * 1000;
 
-const ORIGIN_QUERY = "Chacabuco 660, Tandil, Buenos Aires, Argentina";
 const GEO_TIMEOUT_MS = 5000; // reducido para que el total no crezca
 const USER_AGENT = "FusionWok/1.0 (+https://fusionwok.net)";
 
 // Coordenadas del local por variables de entorno (opcionales).
 // Si ambas están definidas y son válidas, se evita geocodificar el origen.
-let originCoords = null;
-let originAt = 0;
-function parseOriginCoords() {
-  const latStr = (process.env.SHIPPING_ORIGIN_LAT || "").trim();
-  const lngStr = (process.env.SHIPPING_ORIGIN_LNG || "").trim();
+function parseOriginCoords(latEnv, lngEnv, label) {
+  const latStr = (process.env[latEnv] || "").trim();
+  const lngStr = (process.env[lngEnv] || "").trim();
   if (!latStr || !lngStr) return null; // ausentes: caso normal, sin aviso
   const lat = Number(latStr);
   const lng = Number(lngStr);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    console.warn("SHIPPING_ORIGIN_LAT/LNG: valores no numéricos, se ignoran");
+    console.warn(`${latEnv}/${lngEnv}: valores no numéricos, se ignoran`);
     return null;
   }
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-    console.warn("SHIPPING_ORIGIN_LAT/LNG: fuera de rango lat/lng, se ignoran");
+    console.warn(`${latEnv}/${lngEnv}: fuera de rango lat/lng, se ignoran`);
     return null;
   }
   // Heurística Argentina (aprox): lat ∈ [-56, -21], lng ∈ [-74, -53]
   if (lat < -56 || lat > -21 || lng < -74 || lng > -53) {
-    console.warn("SHIPPING_ORIGIN_LAT/LNG: fuera de heurística Argentina, se ignoran");
+    console.warn(`${latEnv}/${lngEnv}: fuera de heurística Argentina, se ignoran`);
     return null;
   }
   return { lat, lng };
 }
-const ENV_ORIGIN = parseOriginCoords();
+
+const ENV_TANDIL_ORIGIN = parseOriginCoords("SHIPPING_ORIGIN_LAT", "SHIPPING_ORIGIN_LNG", "Tandil");
+const ENV_NECOCHEA_ORIGIN = parseOriginCoords("SHIPPING_NECOCHEA_ORIGIN_LAT", "SHIPPING_NECOCHEA_ORIGIN_LNG", "Necochea");
+
+// Cache de orígenes por sucursal
+const originCache = {
+  tandil: { coords: null, at: 0 },
+  necochea: { coords: null, at: 0 }
+};
 
 const blockCache = new Map(); // clave normalizada → { blocks, cost, at }
 const transientFailCache = new Map(); // clave normalizada → { at } (fallos transitorios: 15s)
@@ -439,32 +458,69 @@ async function roadDistanceKm(from, to, opts = {}) {
   }
 }
 
-function enrichAddress(address) {
+function enrichAddress(address, branch) {
   const a = String(address || "").trim();
   if (!a) return "";
+  if (branch === "necochea") {
+    return /necochea/i.test(a) ? a : `${a}, Necochea, Buenos Aires, Argentina`;
+  }
+  // tandil (default)
   return /tandil/i.test(a) ? a : `${a}, Tandil, Buenos Aires, Argentina`;
 }
 
-async function getOrigin(opts = {}) {
+function getBranchConfig(branch) {
+  if (branch === "necochea") {
+    return {
+      flatBlocks: NECOCHEA_FLAT_BLOCKS,
+      baseCost: NECOCHEA_BASE_COST,
+      perBlock: NECOCHEA_PER_BLOCK,
+      maxBlocks: NECOCHEA_MAX_BLOCKS,
+      blockMeters: NECOCHEA_BLOCK_METERS,
+      originQuery: NECOCHEA_ORIGIN_QUERY,
+      envOrigin: ENV_NECOCHEA_ORIGIN,
+      cacheKey: "necochea"
+    };
+  }
+  // tandil
+  if (branch === "tandil") {
+    return {
+      flatBlocks: TANDIL_FLAT_BLOCKS,
+      baseCost: TANDIL_BASE_COST,
+      perBlock: TANDIL_PER_BLOCK,
+      maxBlocks: TANDIL_MAX_BLOCKS,
+      blockMeters: TANDIL_BLOCK_METERS,
+      originQuery: TANDIL_ORIGIN_QUERY,
+      envOrigin: ENV_TANDIL_ORIGIN,
+      cacheKey: "tandil"
+    };
+  }
+  // branch no soportada
+  return null;
+}
+
+async function getOrigin(branch, opts = {}) {
+  const config = getBranchConfig(branch);
   // Si hay coordenadas de entorno válidas, úsalas directo (sin geocodificar ni cachear).
-  if (ENV_ORIGIN) return ENV_ORIGIN;
-  if (originCoords && Date.now() - originAt < ORIGIN_TTL) return originCoords;
-  const o = await geocode(ORIGIN_QUERY, opts);
-  if (!o) throw unknown("No pudimos ubicar la dirección del local.");
-  originCoords = o;
-  originAt = Date.now();
+  if (config.envOrigin) return config.envOrigin;
+  const cache = originCache[config.cacheKey];
+  if (cache.coords && Date.now() - cache.at < ORIGIN_TTL) return cache.coords;
+  const o = await geocode(config.originQuery, opts);
+  if (!o) throw unknown(`No pudimos ubicar la dirección del local en ${branch}.`);
+  cache.coords = o;
+  cache.at = Date.now();
   return o;
 }
 
-// Devuelve { cost, blocks, supported } para un envío en Tandil.
+// Devuelve { cost, blocks, supported } para un envío en Tandil o Necochea.
 // Reintentar es seguro: los fallos transitorios se cachean brevemente y los
 // resultados por dirección se guardan para no repetir consultas.
 export async function computeShipping(branch, address) {
   const a = String(address || "").trim();
-  if (branch !== "tandil" || !a) {
-    return { cost: 0, blocks: 0, supported: branch === "tandil" };
+  const config = getBranchConfig(branch);
+  if (!config || !a) {
+    return { cost: 0, blocks: 0, supported: !!config };
   }
-  const key = normalizeAddressKey(a);
+  const key = `${config.cacheKey}:${normalizeAddressKey(a)}`;
   const started = Date.now();
 
   const cached = blockCache.get(key);
@@ -493,7 +549,7 @@ export async function computeShipping(branch, address) {
   // ni los obliga a seguir respondiendo. Los definitivos (unknown/zone) se
   // cachean donde se detectan, con su plazo de 90 s.
   try {
-    const dest = await geocode(enrichAddress(a), { deadline: started + DEADLINE_MS });
+    const dest = await geocode(enrichAddress(a, branch), { deadline: started + DEADLINE_MS });
     if (Date.now() - started > DEADLINE_MS) {
       throw transient("No pudimos consultar el mapa. Volvé a intentar en unos segundos.");
     }
@@ -501,32 +557,32 @@ export async function computeShipping(branch, address) {
       definitiveFailCache.set(key, { at: Date.now(), code: "unknown" });
       throw unknown("No pudimos ubicar esa dirección. Revisá calle y número.");
     }
-    const km = await roadDistanceKm(await getOrigin({ deadline: started + DEADLINE_MS }), dest, { deadline: started + DEADLINE_MS });
+    const km = await roadDistanceKm(await getOrigin(branch, { deadline: started + DEADLINE_MS }), dest, { deadline: started + DEADLINE_MS });
     if (Date.now() - started > DEADLINE_MS) {
       throw transient("No pudimos consultar el mapa. Volvé a intentar en unos segundos.");
     }
-    const exact = (km * 1000) / BLOCK_METERS;
+    const exact = (km * 1000) / config.blockMeters;
 
-    // Fuera de zona de reparto: solo si hay un tope configurado (SHIPPING_MAX_BLOCKS).
+    // Fuera de zona de reparto: solo si hay un tope configurado.
     // Sin tope configurado el reparto no tiene límite de cobertura.
-    if (MAX_BLOCKS > 0 && exact > MAX_BLOCKS) {
+    if (config.maxBlocks > 0 && exact > config.maxBlocks) {
       definitiveFailCache.set(key, { at: Date.now(), code: "zone" });
       throw new ShippingError(
         "zone",
-        `Esa dirección queda a ${Math.round(exact)} cuadras. Nuestro reparto cubre hasta ${MAX_BLOCKS} cuadras (~${Math.round((MAX_BLOCKS * BLOCK_METERS) / 1000)} km).`
+        `Esa dirección queda a ${Math.round(exact)} cuadras. Nuestro reparto cubre hasta ${config.maxBlocks} cuadras (~${Math.round((config.maxBlocks * config.blockMeters) / 1000)} km).`
       );
     }
 
-    // Dentro de la franquicia (hasta 20 cuadras): costo fijo.
+    // Dentro de la franquicia: costo fijo.
     // Después: la primera cuadra entera o parcial que salga de la franquicia
-    // paga como extra ($100), igual que cada cuadra adicional.
+    // paga como extra, igual que cada cuadra adicional.
     let cost, blocks;
-    if (exact <= FLAT_BLOCKS) {
-      cost = SHIPPING_BASE_COST;
+    if (exact <= config.flatBlocks) {
+      cost = config.baseCost;
       blocks = Math.round(exact);
     } else {
-      const extra = Math.ceil(exact) - FLAT_BLOCKS;
-      cost = SHIPPING_BASE_COST + extra * SHIPPING_PER_BLOCK;
+      const extra = Math.ceil(exact) - config.flatBlocks;
+      cost = config.baseCost + extra * config.perBlock;
       blocks = Math.ceil(exact);
     }
     blockCache.set(key, { blocks, cost, at: Date.now() });
