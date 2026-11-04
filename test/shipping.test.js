@@ -31,8 +31,12 @@ process.env.SHIPPING_PER_BLOCK = "100";
 process.env.SHIPPING_BLOCK_METERS = "130"; // la cuadra de Tandil
 process.env.SHIPPING_MAX_BLOCKS = "40"; // tope ACTIVO para el caso "fuera de zona"
 
-// Necochea usa la misma tarifa que Tandil; solo cambia el tamaño de cuadra
+// Necochea config (usa los mismos defaults que Tandil salvo blockMeters=100)
+process.env.SHIPPING_NECOCHEA_FLAT_BLOCKS = "20";
+process.env.SHIPPING_NECOCHEA_BASE_COST = "4000";
+process.env.SHIPPING_NECOCHEA_PER_BLOCK = "100";
 process.env.SHIPPING_NECOCHEA_BLOCK_METERS = "100"; // la cuadra de Necochea ≈ 100m
+process.env.SHIPPING_NECOCHEA_MAX_BLOCKS = "40";
 
 const { computeShipping } = await import("../server/shipping.js");
 
