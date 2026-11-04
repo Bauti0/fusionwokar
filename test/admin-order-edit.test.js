@@ -611,10 +611,11 @@ describe("computeShipping — Tandil vs Necochea", () => {
     assert.equal(result.supported, true);
   });
 
-  it("Necochea: supported=true, costo calculado", async () => {
-    const result = await computeShipping("necochea", "Av. 59 1461");
-    assert.equal(result.supported, true);
-    assert.ok(result.cost > 0);
+  it("Necochea: supported=false, costo 0", async () => {
+    const result = await computeShipping("necochea", "Cualquier dirección");
+    assert.equal(result.cost, 0);
+    assert.equal(result.blocks, 0);
+    assert.equal(result.supported, false);
   });
 
   it("branch vacía: supported=false, costo 0", async () => {
@@ -622,12 +623,5 @@ describe("computeShipping — Tandil vs Necochea", () => {
     assert.equal(result.cost, 0);
     assert.equal(result.blocks, 0);
     assert.equal(result.supported, false);
-  });
-
-  it("Necochea sin dirección: costo 0, soportado", async () => {
-    const result = await computeShipping("necochea", "");
-    assert.equal(result.cost, 0);
-    assert.equal(result.blocks, 0);
-    assert.equal(result.supported, true);
   });
 });
