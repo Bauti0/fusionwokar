@@ -120,14 +120,14 @@ export default function Checkout({
   const { items, total, count } = cart;
   const isMp = paymentMethod === "mercadopago";
   const wantsDelivery = orderMode === "delivery";
-  const hasShipping = branch.id === "tandil" || branch.id === "necochea";
+  const isTandil = branch.id === "tandil";
   const shippingCost = wantsDelivery ? shipping?.cost || 0 : 0;
   const finalTotal = (coupon ? coupon.totalAfter : total) + shippingCost;
   const discount = coupon ? coupon.discount : 0;
   // El cálculo automático de envío falló del todo (servicio caído, saturación).
   // Para efectivo/transferencia se deja pasar con envío "a confirmar"; para
   // Mercado Pago se bloquea pero con la puerta de WhatsApp del local.
-  const shippingUnavailable = wantsDelivery && hasShipping && !!shippingError;
+  const shippingUnavailable = wantsDelivery && isTandil && !!shippingError;
   const contactWaLink = `https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(
     "Hola! Estoy haciendo un pedido pero no puedo calcular el envío automáticamente en la página. ¿Me pueden ayudar?"
   )}`;
@@ -148,7 +148,7 @@ export default function Checkout({
   // cambia la dirección/sucursal/modalidad. Un timer de 8 s muestra
   // "Estamos calculando…" sin bloquear el formulario. AbortError se ignora.
   useEffect(() => {
-    if (!wantsDelivery || !hasShipping) {
+    if (!wantsDelivery || !isTandil) {
       setShipping(null);
       setShippingError("");
       setShippingBusy(false);
@@ -218,7 +218,6 @@ export default function Checkout({
       }
     };
 
-    if (!wantsDelivery || !hasShipping || !addr) return;
     debounceTimer = setTimeout(startFetch, 1500);
 
     return () => {
@@ -226,7 +225,7 @@ export default function Checkout({
       clearTimeout(calculatingTimer);
       controller.abort();
     };
-  }, [wantsDelivery, hasShipping, address, branch.id]);
+  }, [wantsDelivery, isTandil, address, branch.id]);
 
   // UX-01: el <div class="form-error"> existe recién después del render que
   // muestra el error, así que el scroll se hace acá y no en el momento del
