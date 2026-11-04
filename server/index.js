@@ -1000,10 +1000,11 @@ async function validateOrderBody(body, { requireEmail = false, requirePhone = tr
     discount = coupon.discount;
     appliedCoupon = coupon.code;
   }
-  // Envío (solo delivery en Tandil por ahora): se recalcula server-side para
-  // que nadie pueda trucar el costo desde el cliente.
-  let shipping = { cost: 0, blocks: 0, supported: branch === "tandil" };
-  if (orderMode === "delivery" && branch === "tandil") {
+  // Envío (delivery en sucursales con cálculo automático): se recalcula
+  // server-side para que nadie pueda trucar el costo desde el cliente.
+  // computeShipping devuelve supported=false para sucursales sin config.
+  let shipping = { cost: 0, blocks: 0, supported: false };
+  if (orderMode === "delivery") {
     try {
       shipping = await computeShipping(branch, address);
     } catch (err) {

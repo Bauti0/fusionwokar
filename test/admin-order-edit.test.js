@@ -259,7 +259,7 @@ describe("computeOrderEdits — pickup → delivery", () => {
     assert.deepEqual(audit.map((a) => a.field), ["orderMode", "address", "shipping"]);
   });
 
-  it("con envío manual en Necochea (sin cálculo automático): funciona con el costo a mano", async () => {
+  it("con envío manual en Necochea: usa el costo a mano y estima cuadras", async () => {
     const db = await makeDb();
     const id = await addOrder(db, { branch: "necochea", order_mode: "pickup", total: 8000 });
     const row = await getOrder(db, id);
@@ -276,7 +276,8 @@ describe("computeOrderEdits — pickup → delivery", () => {
     const upd = await getOrder(db, id);
     assert.equal(upd.order_mode, "delivery");
     assert.equal(upd.shipping, 3000);
-    assert.equal(upd.shipping_km, 0, "Necochea no estima cuadras");
+    // Con envío manual se estima a partir de la tarifa base: 3000 < 4000 → 20 cuadras
+    assert.equal(upd.shipping_km, 20);
     assert.equal(upd.total, 11000, "8000 + 3000 de envío");
   });
 
@@ -321,20 +322,40 @@ describe("computeOrderEdits — pickup → delivery", () => {
     assert.equal((await getOrder(db, id)).order_mode, "pickup", "no se tocó la fila");
   });
 
-  it("Necochea sin envío manual → 400 pidiendo shippingCost", async () => {
+  it("Necochea con envío calculado (red mockeada): $4.000 fijos, 10 cuadras", async (t) => {
+    // Mock de red para Necochea: origen + destino + router
+    t.mock.method(globalThis, "fetch", async (url) => {
+      const u = String(url);
+      const json = (obj) => ({ ok: true, status: 200, json: async () => obj });
+      // Origen Necochea: Diagonal San Martín 1258
+      if (u.includes("nominatim") && u.includes("Diagonal+San+Mart")) {
+        return json([{ lat: "-38.56705", lon: "-58.72938" }]);
+      }
+      // Destino: cualquier dirección en Necochea
+      if (u.includes("nominatim")) {
+        return json([{ lat: "-38.57000", lon: "-58.72000" }]);
+      }
+      // OSRM: ~1.3 km = 10 cuadras
+      if (u.includes("project-osrm")) return json({ routes: [{ distance: 1300 }] });
+      throw new Error(`El mock no sabe responder esta URL: ${u}`);
+    });
+
     const db = await makeDb();
-    const id = await addOrder(db, { branch: "necochea", order_mode: "pickup", total: 8000 });
+    const id = await addOrder(db, { branch: "necochea", order_mode: "pickup", total: 10000 });
     const row = await getOrder(db, id);
 
-    const result = await computeOrderEdits(
-      row,
-      { orderMode: "delivery", address: "Calle 5 678" },
-      superadmin,
-      iso
-    );
-    assert.equal(result.error?.status, 400);
-    assert.match(result.error.message, /shippingCost/);
-    assert.equal((await getOrder(db, id)).order_mode, "pickup", "no se tocó la fila");
+    const result = await computeOrderEdits(row, { orderMode: "delivery", address: "Calle 5 678" }, superadmin, iso);
+    assert.ok(!result.error, result.error?.message);
+    assert.equal(result.newValues.shipping, 4000, "10 cuadras ≤ 20 → tarifa fija");
+    assert.equal(result.newValues.shippingKm, 10);
+    assert.equal(result.newValues.total, 14000);
+
+    await db.prepare(result.sql).run(...result.values);
+    const upd = await getOrder(db, id);
+    assert.equal(upd.order_mode, "delivery");
+    assert.equal(upd.shipping, 4000);
+    assert.equal(upd.total, 14000);
+    assert.equal(upd.address, "Calle 5 678");
   });
 });
 
@@ -611,11 +632,23 @@ describe("computeShipping — Tandil vs Necochea", () => {
     assert.equal(result.supported, true);
   });
 
-  it("Necochea: supported=false, costo 0", async () => {
-    const result = await computeShipping("necochea", "Cualquier dirección");
-    assert.equal(result.cost, 0);
-    assert.equal(result.blocks, 0);
-    assert.equal(result.supported, false);
+  it("Necochea: supported=true, calcula con red mockeada", async (t) => {
+    t.mock.method(globalThis, "fetch", async (url) => {
+      const u = String(url);
+      const json = (obj) => ({ ok: true, status: 200, json: async () => obj });
+      if (u.includes("nominatim") && u.includes("Diagonal+San+Mart")) {
+        return json([{ lat: "-38.56705", lon: "-58.72938" }]);
+      }
+      if (u.includes("nominatim")) {
+        return json([{ lat: "-38.57000", lon: "-58.72000" }]);
+      }
+      if (u.includes("project-osrm")) return json({ routes: [{ distance: 1300 }] });
+      throw new Error(`El mock no sabe responder esta URL: ${u}`);
+    });
+    const result = await computeShipping("necochea", "Calle 5 678");
+    assert.equal(result.cost, 4000);
+    assert.equal(result.blocks, 10);
+    assert.equal(result.supported, true);
   });
 
   it("branch vacía: supported=false, costo 0", async () => {

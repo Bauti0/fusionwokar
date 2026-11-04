@@ -16,7 +16,7 @@ import { isOpenAtTime } from "./schedule.js";
 // El ejemplo del celular va por sucursal (2262 en Necochea, 249 en Tandil):
 // estaba fijo en "Ej: 2262 555555" y le mostrábamos el código de área de
 // Necochea a los clientes de Tandil. Cae en el de Necochea si no hay sucursal.
-import { phonePlaceholderFor } from "../data/branches.js";
+import { phonePlaceholderFor, BRANCHES } from "../data/branches.js";
 
 export function validateCheckoutForm(
   {
@@ -37,8 +37,9 @@ export function validateCheckoutForm(
 ) {
   const isMp = paymentMethod === "mercadopago";
   const wantsDelivery = orderMode === "delivery";
-  // La cotización automática del envío existe solo en Tandil.
-  const quotesShipping = branchId === "tandil";
+  // La cotización automática del envío existe en sucursales con config de envío.
+  const branch = BRANCHES[branchId];
+  const quotesShipping = branch?.supportsDelivery && branch?.shippingConfig;
 
   // El orden ES el orden del formulario: con varios problemas a la vez,
   // se reporta el primero para que el checkout scrollee hasta ahí.

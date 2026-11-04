@@ -31,11 +31,12 @@ export const BRANCHES = {
       { days: [0, 1, 2, 3, 4, 5, 6], from: "11:00", to: "15:00" },
       { days: [0, 1, 2, 3, 4, 5, 6], from: "19:30", to: "23:30" },
     ],
-    // Info de delivery mostrada en el menú y el checkout. Si no hay un costo
-    // fijo se muestra el texto de referencia (sin inventar números).
-    deliveryInfo: "Costo de envío según tu zona · Te lo confirmamos por WhatsApp",
+    // Info de delivery mostrada en el menú y el checkout.
+    deliveryInfo: "Envío: $4.000 hasta 20 cuadras a la redonda · +$100 por cuadra extra. Ingresá tu dirección y te mostramos el costo.",
     // Delivery en esta sucursal
     supportsDelivery: true,
+    // Configuración de envío automático (usa la misma tarifa que Tandil)
+    shippingConfig: true,
   },
   tandil: {
     id: "tandil",
@@ -63,6 +64,8 @@ export const BRANCHES = {
     ],
     deliveryInfo: "Envío: $4.000 hasta 20 cuadras a la redonda · +$100 por cuadra extra. Ingresá tu dirección y te mostramos el costo.",
     supportsDelivery: true,
+    // Configuración de envío automático
+    shippingConfig: true,
   },
 };
 

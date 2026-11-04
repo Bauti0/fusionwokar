@@ -54,12 +54,13 @@ function mockearRed(t) {
     llamadasExternas += 1;
     if (u.includes("nominatim")) {
       const q = new URL(u).searchParams.get("q") || "";
-      // Origen (el local de Chacabuco 660): coordenadas fijas, cualquiera
-      // sirve porque la distancia la fija el mock de OSRM.
+      // Origen Tandil (Chacabuco 660): coordenadas fijas
       if (q.includes("Chacabuco 660")) return respuestaJson([{ lat: "-37.32154", lon: "-59.13024" }]);
+      // Origen Necochea (Diagonal San Martín 1258): coordenadas fijas
+      if (q.includes("Diagonal San Martín")) return respuestaJson([{ lat: "-38.56705", lon: "-58.72938" }]);
       // Destino: se busca con startsWith porque shipping.js enriquece la
-      // dirección con ", Tandil, Buenos Aires, Argentina" antes de
-      // geocodificar. La "longitud" del destino son los METROS de ruta:
+      // dirección con la ciudad de la sucursal antes de geocodificar.
+      // La "longitud" del destino son los METROS de ruta:
       // el único que la lee es el mock de OSRM (haversine nunca se
       // calcula, OSRM siempre responde), así que no hace falta que sean
       // coordenadas creíbles. Se usan metros ENTEROS para que el borde
@@ -183,16 +184,17 @@ describe("computeShipping (tarifa por cuadras, con la red mockeada)", () => {
     );
   });
 
-  it("Necochea no tiene envío: supported false, sin consultar nada", async (t) => {
-    // Regresión que cubre: Necochea todavía no tiene reparto. Si se
-    // "arregla" el cálculo para cotizar cualquier sucursal, el checkout
-    // de Necochea ofrecería un envío que nadie puede entregar. Además,
-    // este caso no puede tocar la red: se afirma con el contador.
+  it("Necochea calcula envío con misma tarifa: $4.000 hasta 20 cuadras, 10 cuadras", async (t) => {
+    // Regresión que cubre: Necochea ahora tiene reparto con la misma tarifa.
+    // El test mockea la red para origen Necochea + destino + router.
     mockearRed(t);
-    const antes = llamadasExternas;
-    const r = await computeShipping("necochea", "Av. 59 1234");
-    assert.deepEqual(r, { cost: 0, blocks: 0, supported: false });
-    assert.equal(llamadasExternas, antes); // no hizo ninguna llamada externa
+    // El mock de la Fase A usa METROS_POR_DIRECCION para el destino.
+    // Origen (Diagonal San Martín 1258): coordenadas fijas.
+    // Destino: 1300 m de ruta = 10 cuadras.
+    METROS_POR_DIRECCION.set("Diagonal San Martín 1258", 0); // origen
+    METROS_POR_DIRECCION.set("Calle 5 678", 1300); // 10 cuadras
+    const r = await cotizar(t, "necochea", "Calle 5 678");
+    assert.deepEqual(r, { cost: 4000, blocks: 10, supported: true });
   });
 });
 

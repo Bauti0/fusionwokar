@@ -12,7 +12,7 @@ const VALID_ORDER_MODES = ["delivery", "pickup"];
 /**
  * Calcula el envío para pickup → delivery.
  * Si se proporciona manualShippingCost (>=0), lo usa.
- * Si no, llama a computeShipping (solo Tandil).
+ * Si no, llama a computeShipping (cualquier sucursal con config).
  * Devuelve { cost, blocks } o lanza error con .code.
  */
 async function calculateShippingForPickupToDelivery(branch, address, manualShippingCost) {
@@ -27,37 +27,37 @@ async function calculateShippingForPickupToDelivery(branch, address, manualShipp
   if (typeof manualShippingCost === "number" && manualShippingCost >= 0) {
     const cost = Math.round(manualShippingCost);
     let blocks = 0;
-    if (branch === "tandil" && cost > 0) {
-      const base = Number(process.env.SHIPPING_BASE_COST || 4000);
-      const perBlock = Number(process.env.SHIPPING_PER_BLOCK || 100);
-      const flat = Number(process.env.SHIPPING_FLAT_BLOCKS || 20);
+    // Estimamos bloques a partir del costo manual usando la tarifa de la sucursal.
+    // Para tandil usamos las env vars globales; para otras sucursales usamos los mismos defaults.
+    const base = Number(process.env.SHIPPING_BASE_COST || 4000);
+    const perBlock = Number(process.env.SHIPPING_PER_BLOCK || 100);
+    const flat = Number(process.env.SHIPPING_FLAT_BLOCKS || 20);
+    if (cost > 0) {
       blocks = cost <= base ? flat : flat + Math.ceil((cost - base) / perBlock);
     }
     return { cost, blocks };
   }
 
-  // computeShipping automático (solo Tandil implementado)
-  if (branch === "tandil") {
-    try {
-      const ship = await computeShipping(branch, addr);
-      return { cost: ship.cost, blocks: ship.blocks };
-    } catch (err) {
-      if (err.code === "zone" || err.code === "unknown") {
-        throw err; // 400 definitivo
-      }
-      // transient u otro: exigir manual
-      const e = new Error("No se pudo calcular el envío automático. Ingresá el costo manual (shippingCost).");
+  // computeShipping automático (cualquier sucursal con config en shipping.js)
+  try {
+    const ship = await computeShipping(branch, addr);
+    if (!ship.supported) {
+      const e = new Error("Envío automático no disponible para esta sucursal. Ingresá shippingCost manual.");
       e.code = "shipping_unavailable";
       e.status = 400;
       throw e;
     }
+    return { cost: ship.cost, blocks: ship.blocks };
+  } catch (err) {
+    if (err.code === "zone" || err.code === "unknown") {
+      throw err; // 400 definitivo
+    }
+    // transient u otro: exigir manual
+    const e = new Error("No se pudo calcular el envío automático. Ingresá el costo manual (shippingCost).");
+    e.code = "shipping_unavailable";
+    e.status = 400;
+    throw e;
   }
-
-  // Necochea u otra sin computeShipping: exige manual
-  const e = new Error("Envío automático no disponible para esta sucursal. Ingresá shippingCost manual.");
-  e.code = "shipping_unavailable";
-  e.status = 400;
-  throw e;
 }
 
 /**
