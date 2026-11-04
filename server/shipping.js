@@ -1,10 +1,10 @@
 // ============================================================
 // FUSIÓN WOK — Cálculo de envío (Tandil y Necochea)
 // Regla real (ambas sucursales):
-//   - Las primeras 20 cuadras a la redonda del local: $4.000 fijos.
-//   - Cada cuadra extra: $100.
-//   - La cuadra en Tandil ≈ 130 m, en Necochea ≈ 100 m (configurable).
-//   0 cuadras (la dirección del propio local) también paga $4.000.
+//   - Las primeras SHIPPING_FLAT_BLOCKS cuadras a la redonda del local: $SHIPPING_BASE_COST fijos.
+//   - Cada cuadra extra: $SHIPPING_PER_BLOCK.
+//   - La cuadra en Tandil ≈ 130 m (SHIPPING_BLOCK_METERS), en Necochea ≈ 100 m (SHIPPING_NECOCHEA_BLOCK_METERS).
+//   0 cuadras (la dirección del propio local) también paga la base.
 //   - Origen Tandil: Chacabuco 660, Tandil, Buenos Aires.
 //   - Origen Necochea: Av. 59 1461, Necochea, Buenos Aires.
 //   - Servicios 100% gratis, con respaldos para que una limitación
@@ -19,31 +19,27 @@
 
 import { normalizeAddressKey } from "./utils/normalizeAddressKey.js";
 
-// ============ Configuración Tandil ============
+// ============ Parámetros COMUNES de tarifa (ambas sucursales) ============
 // Franquicia: hasta esta cantidad de cuadras se cobra solo la base
-const TANDIL_FLAT_BLOCKS = Number(process.env.SHIPPING_FLAT_BLOCKS || 20);
+const FLAT_BLOCKS = Number(process.env.SHIPPING_FLAT_BLOCKS || 20);
 // Costo fijo de la franquicia (base)
-const TANDIL_BASE_COST = Number(process.env.SHIPPING_BASE_COST || 4000);
+const BASE_COST = Number(process.env.SHIPPING_BASE_COST || 4000);
 // Costo por cuadra extra por encima de la franquicia
-const TANDIL_PER_BLOCK = Number(process.env.SHIPPING_PER_BLOCK || 100);
+const PER_BLOCK = Number(process.env.SHIPPING_PER_BLOCK || 100);
 // Tope de reparto total en cuadras. OPCIONAL: si SHIPPING_MAX_BLOCKS no está
 // definida (o es 0/negativa) NO hay tope de distancia — aplica la regla
 // comercial: las primeras SHIPPING_FLAT_BLOCKS cuadras salen SHIPPING_BASE_COST
 // y cada cuadra adicional SHIPPING_PER_BLOCK. (SHIPPING_MAX_KM quedó obsoleta:
 // la regla es por cuadras y el reparto no tiene límite de cobertura.)
-const TANDIL_MAX_BLOCKS = Math.max(0, Number(process.env.SHIPPING_MAX_BLOCKS || 0) || 0);
+const MAX_BLOCKS = Math.max(0, Number(process.env.SHIPPING_MAX_BLOCKS || 0) || 0);
+
+// ============ Parámetros PROPIOS de cada sucursal ============
 // Una cuadra en Tandil ≈ 130 m (los geocoders devuelven metros)
 const TANDIL_BLOCK_METERS = Number(process.env.SHIPPING_BLOCK_METERS || 130);
-// Origen Tandil: Chacabuco 660, Tandil, Buenos Aires, Argentina
-const TANDIL_ORIGIN_QUERY = "Chacabuco 660, Tandil, Buenos Aires, Argentina";
-
-// ============ Configuración Necochea ============
-const NECOCHEA_FLAT_BLOCKS = Number(process.env.SHIPPING_NECOCHEA_FLAT_BLOCKS || 20);
-const NECOCHEA_BASE_COST = Number(process.env.SHIPPING_NECOCHEA_BASE_COST || 4000);
-const NECOCHEA_PER_BLOCK = Number(process.env.SHIPPING_NECOCHEA_PER_BLOCK || 100);
-const NECOCHEA_MAX_BLOCKS = Math.max(0, Number(process.env.SHIPPING_NECOCHEA_MAX_BLOCKS || 0) || 0);
 // Una cuadra en Necochea ≈ 100 m (los geocoders devuelven metros)
 const NECOCHEA_BLOCK_METERS = Number(process.env.SHIPPING_NECOCHEA_BLOCK_METERS || 100);
+// Origen Tandil: Chacabuco 660, Tandil, Buenos Aires, Argentina
+const TANDIL_ORIGIN_QUERY = "Chacabuco 660, Tandil, Buenos Aires, Argentina";
 // Origen Necochea: Av. 59 1461, Necochea, Buenos Aires, Argentina
 const NECOCHEA_ORIGIN_QUERY = "Av. 59 1461, Necochea, Buenos Aires, Argentina";
 
@@ -471,10 +467,10 @@ function enrichAddress(address, branch) {
 function getBranchConfig(branch) {
   if (branch === "necochea") {
     return {
-      flatBlocks: NECOCHEA_FLAT_BLOCKS,
-      baseCost: NECOCHEA_BASE_COST,
-      perBlock: NECOCHEA_PER_BLOCK,
-      maxBlocks: NECOCHEA_MAX_BLOCKS,
+      flatBlocks: FLAT_BLOCKS,
+      baseCost: BASE_COST,
+      perBlock: PER_BLOCK,
+      maxBlocks: MAX_BLOCKS,
       blockMeters: NECOCHEA_BLOCK_METERS,
       originQuery: NECOCHEA_ORIGIN_QUERY,
       envOrigin: ENV_NECOCHEA_ORIGIN,
@@ -484,10 +480,10 @@ function getBranchConfig(branch) {
   // tandil
   if (branch === "tandil") {
     return {
-      flatBlocks: TANDIL_FLAT_BLOCKS,
-      baseCost: TANDIL_BASE_COST,
-      perBlock: TANDIL_PER_BLOCK,
-      maxBlocks: TANDIL_MAX_BLOCKS,
+      flatBlocks: FLAT_BLOCKS,
+      baseCost: BASE_COST,
+      perBlock: PER_BLOCK,
+      maxBlocks: MAX_BLOCKS,
       blockMeters: TANDIL_BLOCK_METERS,
       originQuery: TANDIL_ORIGIN_QUERY,
       envOrigin: ENV_TANDIL_ORIGIN,
