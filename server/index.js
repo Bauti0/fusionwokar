@@ -2711,11 +2711,24 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
 // IDs de pedidos "en curso" sin seen_at (respeta scope, sin filtros de UI).
 // LO USA EL PANEL PARA SABER SI HAY PEDIDOS NUEVOS AUNQUE ESTÉN EN OTRA PÁGINA/FILTRO.
 // Debe ir ANTES de /:id para que Express no lo capture como parámetro.
+//
+// branch_admin: SIEMPRE su sucursal del token (ignora ?branch=).
+// superadmin: respeta ?branch= (tandil|necochea|all|""), valida y devuelve 400 si inválido.
 app.get("/api/admin/orders/unseen", requireAdmin, async (req, res) => {
   try {
-    const scope = adminScope(req);
-    const branch = scope?.branch || null;
-    if (scope?.role === "branch_admin" && !branch) return res.json({ ids: [] });
+    const scope = adminScope(req); // string (branch) para branch_admin, null para superadmin
+    if (scope) {
+      // branch_admin: scope es su sucursal (string), ignora query param
+      const ids = await getUnseenOrderIds(db, scope);
+      return res.json({ ids });
+    }
+    // superadmin (scope === null): valida y usa ?branch=
+    const rawBranch = typeof req.query.branch === "string" ? req.query.branch.trim().toLowerCase() : "";
+    const validBranches = ["tandil", "necochea", "all", ""];
+    if (!validBranches.includes(rawBranch)) {
+      return res.status(400).json({ error: "Sucursal inválida" });
+    }
+    const branch = rawBranch === "all" || rawBranch === "" ? null : rawBranch;
     const ids = await getUnseenOrderIds(db, branch);
     res.json({ ids });
   } catch (err) {

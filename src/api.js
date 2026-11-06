@@ -550,8 +550,9 @@ export function adminMarkSeen(id) {
   return request(`/api/admin/orders/${id}/seen`, { method: "PATCH" });
 }
 
-export function adminGetUnseenIds() {
-  return request("/api/admin/orders/unseen");
+export function adminGetUnseenIds(branch = "") {
+  const params = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+  return request(`/api/admin/orders/unseen${params}`);
 }
 
 export function adminMarkAllSeen(ids) {

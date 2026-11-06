@@ -361,7 +361,7 @@ export default function AdminPanel({ me, onLogout }) {
   const [unseenErrorCount, setUnseenErrorCount] = useState(0);
   const loadUnseen = useCallback(async () => {
     try {
-      const d = await adminGetUnseenIds();
+      const d = await adminGetUnseenIds(branchFilter);
       // Filtrar ids que YA marcamos localmente como vistos (evita revive por race)
       const fresh = (d.ids || []).filter((id) => !locallySeenRef.current.has(id));
       setUnseenIds((prev) => {
@@ -375,7 +375,7 @@ export default function AdminPanel({ me, onLogout }) {
     } catch {
       setUnseenErrorCount((c) => c + 1);
     }
-  }, []);
+  }, [branchFilter]);
 
   useEffect(() => {
     loadUnseen();
@@ -384,8 +384,7 @@ export default function AdminPanel({ me, onLogout }) {
   }, [loadUnseen]);
 
   // Loop controlado SOLO por estado: silencio del header + desbloqueo +
-  // pedidos sin ver. shouldPlayAlert concentra la decisión (y está testada.
-  // El intervalo de repetición (1.2 s) vive en startNewOrderLoop.
+  // pedidos sin ver. shouldPlayAlert concentra la decisión.
   useEffect(() => {
     const alerta = shouldPlayAlert({
       unseenCount: unseenIds.size,

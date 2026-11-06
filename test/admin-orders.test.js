@@ -2,7 +2,7 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient } from "@libsql/client";
 import { createDb } from "../server/sqlite.js";
-import { listOrders, getOrderScoped, effectiveBranch } from "../server/admin-queries.js";
+import { listOrders, getOrderScoped, effectiveBranch, getUnseenOrderIds } from "../server/admin-queries.js";
 import { toPublicOrder } from "../server/public-order.js";
 
 // ============================================================
@@ -51,6 +51,8 @@ async function makeDb() {
       total INTEGER NOT NULL DEFAULT 0,
       coupon_code TEXT NOT NULL DEFAULT '',
       refunded_amount INTEGER NOT NULL DEFAULT 0,
+      seen_at TEXT,
+      scheduled_for TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -68,8 +70,8 @@ async function addOrder(db, o = {}) {
   const r = await db
     .prepare(
       `INSERT INTO orders
-        (order_number, branch, customer_name, customer_phone, payment_method, payment_status, status, total, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (order_number, branch, customer_name, customer_phone, payment_method, payment_status, status, total, seen_at, scheduled_for, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       `FW-${String(seq).padStart(5, "0")}`,
@@ -80,6 +82,8 @@ async function addOrder(db, o = {}) {
       o.payment_status || "approved",
       o.status || "completed",
       o.total ?? 10000,
+      o.seen_at || null,
+      o.scheduled_for || null,
       ts,
       ts
     );
@@ -251,5 +255,58 @@ describe("pedido manual sin teléfono", () => {
     const order = toPublicOrder(row);
     assert.equal(order.customer.phone, "", "el detalle del panel lo resuelve con 'Sin teléfono'");
     assert.equal(order.customer.name, "Consumidor final");
+  });
+});
+
+describe("getUnseenOrderIds — aislamiento por scope", () => {
+  it("branch_admin (scope=tandil) SOLO ve pedidos sin ver de tandil", async () => {
+    const db = await makeDb();
+    // Pedidos activos sin ver de tandil
+    await addOrder(db, { branch: "tandil", status: "received", payment_status: "approved" });
+    await addOrder(db, { branch: "tandil", status: "preparing", payment_status: "approved" });
+    // Pedido activo sin ver de necochea
+    await addOrder(db, { branch: "necochea", status: "received", payment_status: "approved" });
+    // Pedido ya visto de tandil (no debe aparecer)
+    await addOrder(db, { branch: "tandil", status: "received", payment_status: "approved", seen_at: new Date().toISOString() });
+    // Pedido con pago rechazado (no debe aparecer)
+    await addOrder(db, { branch: "tandil", status: "received", payment_status: "rejected" });
+
+    const ids = await getUnseenOrderIds(db, "tandil");
+    assert.equal(ids.length, 2, "solo 2 pedidos activos sin ver de tandil");
+  });
+
+  it("branch_admin (scope=necochea) NO ve pedidos de tandil", async () => {
+    const db = await makeDb();
+    await addOrder(db, { branch: "tandil", status: "received", payment_status: "approved" });
+    await addOrder(db, { branch: "necochea", status: "received", payment_status: "approved" });
+
+    const ids = await getUnseenOrderIds(db, "necochea");
+    assert.equal(ids.length, 1, "solo ve el pedido de necochea");
+    // Verificar que el ID corresponde a necochea
+    const order = await db.prepare("SELECT branch FROM orders WHERE id = ?").get(ids[0]);
+    assert.equal(order.branch, "necochea");
+  });
+
+  it("superadmin (scope=null) ve TODOS los pedidos sin ver de ambas sucursales", async () => {
+    const db = await makeDb();
+    await addOrder(db, { branch: "tandil", status: "received", payment_status: "approved" });
+    await addOrder(db, { branch: "tandil", status: "preparing", payment_status: "approved" });
+    await addOrder(db, { branch: "necochea", status: "received", payment_status: "approved" });
+    await addOrder(db, { branch: "necochea", status: "ready", payment_status: "approved" });
+
+    const ids = await getUnseenOrderIds(db, null);
+    assert.equal(ids.length, 4, "superadmin ve todos los pedidos sin ver");
+  });
+
+  it("excluye pedidos programados para más de 1 hora en el futuro", async () => {
+    const db = await makeDb();
+    const future = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2 horas en el futuro
+    const soon = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min en el futuro
+    await addOrder(db, { branch: "tandil", status: "received", payment_status: "approved", scheduled_for: future });
+    await addOrder(db, { branch: "tandil", status: "received", payment_status: "approved", scheduled_for: soon });
+    await addOrder(db, { branch: "tandil", status: "received", payment_status: "approved" }); // sin scheduled_for
+
+    const ids = await getUnseenOrderIds(db, "tandil");
+    assert.equal(ids.length, 2, "excluye el programado para +1h, incluye el de 30min y el sin fecha");
   });
 });
