@@ -44,6 +44,7 @@ import AdminCustomers from "./AdminCustomers.jsx";
 import AdminSales from "./AdminSales.jsx";
 import AdminNewOrder from "./AdminNewOrder.jsx";
 import AdminUsers from "./AdminUsers.jsx";
+import AdminBranchHours from "./AdminBranchHours.jsx";
 import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import { SectionFallback } from "./ui/ErrorFallbacks.jsx";
 import { checkCrashOrders, checkCrashStats, checkCrashProducts, checkCrashExtras, checkCrashCoupons, checkCrashCustomers, checkCrashSales, checkCrashUsers, checkCrashNewOrder } from "../hooks/useCrashTest.js";
@@ -802,6 +803,13 @@ export default function AdminPanel({ me, onLogout }) {
               <IconLock /> Cuentas
             </button>
           )}
+          <button
+            data-testid="nav-horarios"
+            className={`admin-nav__btn ${section === "horarios" ? "is-active" : ""}`}
+            onClick={() => setSection("horarios")}
+          >
+            <IconClock /> Horarios
+          </button>
           {/* Commit con el que se compiló la app (lo inyecta vite.config.js
               al hacer el build). Sirve para saber de un vistazo qué versión
               está corriendo el panel. Si no se pudo leer el hash ("?") no se
@@ -891,6 +899,17 @@ export default function AdminPanel({ me, onLogout }) {
               resetKeys={['section']}
             >
               <AdminUsers me={me} onLogout={onLogout} />
+            </ErrorBoundary>
+          </>
+        )}
+
+        {section === "horarios" && (
+          <>
+            <ErrorBoundary
+              fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los horarios" />}
+              resetKeys={['section']}
+            >
+              <AdminBranchHours me={me} />
             </ErrorBoundary>
           </>
         )}
