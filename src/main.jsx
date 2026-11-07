@@ -18,6 +18,61 @@ let globalErrorShown = false;
 const MAX_GLOBAL_ERRORS = 3;
 let globalErrorCount = 0;
 
+// Rate limiting: mapa errorKey -> { count, windowStart }
+const errorRateLimit = new Map();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minuto
+const RATE_LIMIT_MAX = 3; // máximo 3 por minuto por error
+
+function getErrorKey(ev) {
+  // Usar filename + lineno + colno + message como clave
+  const filename = ev.filename || (ev.error && ev.error.stack) || "";
+  const msg = ev.message || (ev.error && ev.error.message) || "";
+  const lineno = ev.lineno || 0;
+  const colno = ev.colno || 0;
+  return `${filename}:${lineno}:${colno}:${msg}`.slice(0, 200);
+}
+
+function isOwnOriginError(ev) {
+  const filename = ev.filename || (ev.error && ev.error.stack) || "";
+  // Ignorar errores de extensiones del navegador
+  if (filename.startsWith("chrome-extension://") || filename.startsWith("moz-extension://") || filename.startsWith("safari-extension://")) {
+    return false;
+  }
+  // Ignorar errores sin filename (suelen ser de extensiones o scripts inyectados)
+  if (!filename || filename === "") {
+    return false;
+  }
+  // Solo errores de nuestro origen (http/https de nuestro dominio, o archivo local en dev)
+  // En desarrollo Vite usa http://localhost:5173 o archivo://
+  // En producción nuestros assets están en el mismo origen
+  return true;
+}
+
+function shouldShowError(ev) {
+  const key = getErrorKey(ev);
+  const now = Date.now();
+  const entry = errorRateLimit.get(key);
+
+  if (!entry) {
+    errorRateLimit.set(key, { count: 1, windowStart: now });
+    return true;
+  }
+
+  if (now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
+    // Ventana nueva
+    errorRateLimit.set(key, { count: 1, windowStart: now });
+    return true;
+  }
+
+  if (entry.count < RATE_LIMIT_MAX) {
+    entry.count++;
+    return true;
+  }
+
+  // Rate limit excedido: no mostrar ni loggear
+  return false;
+}
+
 function showGlobalErrorMessage() {
   if (globalErrorShown || globalErrorCount >= MAX_GLOBAL_ERRORS) return;
   globalErrorShown = true;
@@ -72,12 +127,36 @@ function showGlobalErrorMessage() {
 if (typeof window !== "undefined") {
   // Errores síncronos en event handlers, timeouts, etc.
   window.addEventListener("error", (ev) => {
+    // Ignorar errores que no sean de nuestro origen (extensiones, etc.)
+    if (!isOwnOriginError(ev)) {
+      return;
+    }
+    // Rate limiting
+    if (!shouldShowError(ev)) {
+      return;
+    }
     console.error("Global error:", ev.error || ev.message, ev.filename, ev.lineno, ev.colno);
     showGlobalErrorMessage();
   });
 
   // Promesas rechazadas sin catch
   window.addEventListener("unhandledrejection", (ev) => {
+    // Para unhandledrejection, ev.reason puede tener stack
+    const fakeEv = {
+      filename: (ev.reason && ev.reason.stack) || "",
+      message: (ev.reason && ev.reason.message) || String(ev.reason),
+      lineno: 0,
+      colno: 0,
+      error: ev.reason,
+    };
+    // Ignorar errores que no sean de nuestro origen
+    if (!isOwnOriginError(fakeEv)) {
+      return;
+    }
+    // Rate limiting
+    if (!shouldShowError(fakeEv)) {
+      return;
+    }
     console.error("Unhandled rejection:", ev.reason);
     showGlobalErrorMessage();
     // No prevenimos el default para que siga apareciendo en consola
