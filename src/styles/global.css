@@ -712,6 +712,50 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .admin .new-order__product-list::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.4); }
 
 /* ============================================================
+   Admin Panel — Contenedor unificado (AdminPanelCard)
+   Fondo: var(--color-surface) — un tono entre el fondo de página (--color-bg/#111)
+   y las tarjetas internas (stat-card usa --color-bg/#111 para la principal y --color-bg para las demás).
+   Borde sutil, radio, padding interno y margen superior consistente.
+   ============================================================ */
+.admin-panel-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 16px 0;
+}
+
+.admin-panel-card__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.admin-panel-card__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-panel-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-panel-card__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ============================================================
    Admin Panel — Estilos específicos por sección (tema oscuro)
    ============================================================ */
 
@@ -1074,7 +1118,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   margin-bottom: 14px;
 }
 .admin .admin-cat {
-  background: var(--color-surface);
+  background: var(--color-bg);
   border-color: var(--color-border);
 }
 .admin .admin-cat__name { color: var(--color-primary); }
@@ -1123,7 +1167,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .admin .admin-coupons .admin-products__toolbar h3 { color: var(--color-text); }
 .admin .coupon-card {
-  background: var(--color-surface);
+  background: var(--color-bg);
   border-color: var(--color-border);
   color: var(--color-text);
 }
@@ -1153,7 +1197,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   margin-bottom: 14px;
 }
 .admin .customer-card {
-  background: var(--color-surface);
+  background: var(--color-bg);
   border-color: var(--color-border);
 }
 .admin .customer-card__name { color: var(--color-text); }
@@ -1186,7 +1230,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .admin .payment-breakdown h4 { color: var(--color-text); }
 .admin .payment-breakdown__row {
-  background: var(--color-surface);
+  background: var(--color-bg);
   border-color: var(--color-border);
   color: var(--color-text);
 }

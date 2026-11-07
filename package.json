@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "node --test \"test/**/*.test.js\"",
+    "test:smoke": "node --test \"test/**/*-smoke.test.js\"",
     "verify": "npm run lint && npm run test && npm run build",
     "predeploy": "npm run verify"
   },
@@ -30,11 +31,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.0",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^10.0.5",
     "eslint": "^10.11.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.12.0",
+    "jsdom": "^31.0.0",
     "vite": "^6.4.3"
   }
 }

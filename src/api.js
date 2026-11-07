@@ -558,3 +558,14 @@ export function adminGetUnseenIds(branch = "") {
 export function adminMarkAllSeen(ids) {
   return request("/api/admin/orders/seen-all", { method: "POST", body: JSON.stringify({ ids }) });
 }
+
+export function adminGetBranchHours(branch) {
+  return request(`/api/admin/branch-hours?branch=${encodeURIComponent(branch)}`);
+}
+
+export function adminReplaceBranchHours(branch, hours) {
+  return request("/api/admin/branch-hours", {
+    method: "PUT",
+    body: JSON.stringify({ branch, hours }),
+  });
+}
