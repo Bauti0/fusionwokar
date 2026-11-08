@@ -371,12 +371,15 @@ export const IconVolume2 = createIcon([
   <path key="p3" d="M19.364 18.364a9 9 0 0 0 0-12.728" />,
 ]);
 
+// Silenciado: parlante + X SOLO. Acá estaba el bug de superposición: este
+// ícono tenía TAMBIÉN los arcos de ondas del volumen normal (p2/p3 de
+// IconVolume2), así que el estado "silenciado" mostraba el parlante con
+// ondas y una X cruzada encima (verificado en el DOM: 5 paths en el mismo
+// svg). El volume-x de Lucide es parlante + X, sin ondas.
 export const IconVolumeX = createIcon([
   <path key="p1" d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />,
-  <path key="p2" d="M16 9a5 5 0 0 1 0 6" />,
-  <path key="p3" d="M19.364 18.364a9 9 0 0 0 0-12.728" />,
-  <line key="l1" x1="22" y1="9" x2="15.5" y2="15.5" />,
-  <line key="l2" x1="15.5" y1="9" x2="22" y2="15.5" />,
+  <line key="l1" x1="22" y1="9" x2="16" y2="15" />,
+  <line key="l2" x1="16" y1="9" x2="22" y2="15" />,
 ]);
 
 // Pausa (para estado de cocina pausada)
