@@ -889,7 +889,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los productos" />}
               resetKeys={['section']}
             >
-              <AdminProducts me={me} />
+              <AdminPanelCard title="Productos" titleIcon={<IconBowlSteam style={{ width: 18, height: 18 }} />}>
+                <AdminProducts me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -901,7 +903,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los adicionales" />}
               resetKeys={['section']}
             >
-              <AdminExtras me={me} />
+              <AdminPanelCard title="Adicionales" titleIcon={<IconChopsticks style={{ width: 18, height: 18 }} />}>
+                <AdminExtras me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -913,7 +917,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los cupones" />}
               resetKeys={['section']}
             >
-              <AdminCoupons me={me} />
+              <AdminPanelCard title="Cupones" titleIcon={<IconTag style={{ width: 18, height: 18 }} />}>
+                <AdminCoupons me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -925,7 +931,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los clientes" />}
               resetKeys={['section']}
             >
-              <AdminCustomers me={me} />
+              <AdminPanelCard title="Clientes" titleIcon={<IconUser style={{ width: 18, height: 18 }} />}>
+                <AdminCustomers me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -937,7 +945,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las ventas" />}
               resetKeys={['section']}
             >
-              <AdminSales me={me} />
+              <AdminPanelCard title="Ventas y caja" titleIcon={<IconMoney style={{ width: 18, height: 18 }} />}>
+                <AdminSales me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -949,7 +959,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las cuentas" />}
               resetKeys={['section']}
             >
-              <AdminUsers me={me} onLogout={onLogout} />
+              <AdminPanelCard title="Cuentas" titleIcon={<IconLock style={{ width: 18, height: 18 }} />}>
+                <AdminUsers me={me} onLogout={onLogout} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -960,7 +972,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los horarios" />}
               resetKeys={['section']}
             >
-              <AdminBranchHours me={me} />
+              <AdminPanelCard title="Horarios" titleIcon={<IconClock style={{ width: 18, height: 18 }} />}>
+                <AdminBranchHours me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
