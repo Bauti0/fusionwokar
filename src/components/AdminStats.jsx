@@ -2,30 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { adminStats } from "../api.js";
 import { formatPrice } from "../utils/format.js";
 import { periodRange } from "../utils/dates.js";
-import DateRangePicker from "./ui/DateRangePicker.jsx";
 import { useDelayedLoading } from "../utils/skeleton-delay.js";
-import { IconChart, IconCash, IconReceipt, IconCart, IconLocation, IconUser, IconMoney, IconFlash } from "./ui/icons.jsx";
+import { IconCash, IconReceipt, IconCart, IconLocation, IconUser, IconMoney, IconFlash } from "./ui/icons.jsx";
 
 // ============================================================
 // AdminStats — estadísticas del panel
 // - Venta neta (total + por sucursal), ticket promedio, pedidos
 // - Productos más vendidos (cantidad) y que más facturan (netos)
-// - Filtros de período: Hoy / 7 días / 30 días / personalizado
+// - Filtros de período: controlados por el padre (AdminPanel)
 // ============================================================
 
-const PERIODS = [
-  { id: "today", label: "Hoy" },
-  { id: "7d", label: "Últimos 7 días" },
-  { id: "30d", label: "Últimos 30 días" },
-  { id: "custom", label: "Personalizado" },
-];
-
-const branchLabel = (v) => (typeof v === "number" && Number.isFinite(v) ? `${v}%` : "0%");
-
-export default function AdminStats({ me }) {
-  const [period, setPeriod] = useState("30d");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+export default function AdminStats({ me, period, from, to }) {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState("");
   const [statsSettled, setStatsSettled] = useState(false);
@@ -72,32 +59,6 @@ export default function AdminStats({ me }) {
 
   return (
       <>
-        <div className="admin-stats__head">
-          <div className="admin-stats__period">
-            {PERIODS.map((p) => (
-              <button
-                key={p.id}
-                className={`period-btn ${period === p.id ? "is-active" : ""}`}
-                onClick={() => setPeriod(p.id)}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {period === "custom" && (
-          <div className="admin-stats__custom">
-            <DateRangePicker
-              from={from}
-              to={to}
-              onChange={({ from: f, to: t }) => {
-                setFrom(f);
-                setTo(t);
-              }}
-            />
-          </div>
-        )}
 
         {error && <div className="form-error">{error}</div>}
 

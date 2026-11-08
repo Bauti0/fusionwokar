@@ -35,6 +35,7 @@ import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 import PauseModal from "./ui/PauseModal.jsx";
+import DateRangePicker from "./ui/DateRangePicker.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import AdminStats from "./AdminStats.jsx";
 import AdminProducts from "./AdminProducts.jsx";
@@ -45,6 +46,7 @@ import AdminSales from "./AdminSales.jsx";
 import AdminNewOrder from "./AdminNewOrder.jsx";
 import AdminUsers from "./AdminUsers.jsx";
 import AdminBranchHours from "./AdminBranchHours.jsx";
+import AdminPanelCard from "./AdminPanelCard.jsx";
 import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import { SectionFallback } from "./ui/ErrorFallbacks.jsx";
 import { checkCrashOrders, checkCrashStats, checkCrashProducts, checkCrashExtras, checkCrashCoupons, checkCrashCustomers, checkCrashSales, checkCrashUsers, checkCrashNewOrder } from "../hooks/useCrashTest.js";
@@ -213,6 +215,10 @@ export default function AdminPanel({ me, onLogout }) {
   const [unseenIds, setUnseenIds] = useState(() => new Set());
   const locallySeenRef = useRef(new Set());
   const [today, setToday] = useState(null);
+  // ---------- filtros de período para Estadísticas ----------
+  const [statsPeriod, setStatsPeriod] = useState("30d");
+  const [statsFrom, setStatsFrom] = useState("");
+  const [statsTo, setStatsTo] = useState("");
   // ---------- pausa de pedidos por sucursal ----------
   // Estado ({ <id>: { paused, until, message } }) y branch del modal de
   // pausa abierto (null = cerrado). "Reanudar" es directo (sin modal).
@@ -826,7 +832,52 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las estadísticas" />}
               resetKeys={['section']}
             >
-              <AdminStats me={me} />
+              <AdminPanelCard
+                title="Estadísticas"
+                titleIcon={<IconChart style={{ width: 18, height: 18 }} />}
+                actions={
+                  <>
+                    <div className="admin-stats__period">
+                      {[
+                        { id: "today", label: "Hoy" },
+                        { id: "7d", label: "Últimos 7 días" },
+                        { id: "30d", label: "Últimos 30 días" },
+                        { id: "custom", label: "Personalizado" },
+                      ].map((p) => (
+                        <button
+                          key={p.id}
+                          className={`period-btn ${statsPeriod === p.id ? "is-active" : ""}`}
+                          onClick={() => setStatsPeriod(p.id)}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                    {statsPeriod === "custom" && (
+                      <div className="admin-stats__custom" style={{ marginBottom: 0 }}>
+                        <DateRangePicker
+                          from={statsFrom}
+                          to={statsTo}
+                          onChange={({ from: f, to: t }) => {
+                            setStatsFrom(f);
+                            setStatsTo(t);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </>
+                }
+              >
+                <AdminStats
+                  me={me}
+                  period={statsPeriod}
+                  from={statsFrom}
+                  to={statsTo}
+                  onPeriodChange={setStatsPeriod}
+                  onFromChange={setStatsFrom}
+                  onToChange={setStatsTo}
+                />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
