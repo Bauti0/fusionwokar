@@ -219,6 +219,10 @@ export default function AdminPanel({ me, onLogout }) {
   const [statsPeriod, setStatsPeriod] = useState("30d");
   const [statsFrom, setStatsFrom] = useState("");
   const [statsTo, setStatsTo] = useState("");
+  // ---------- filtros de período para Ventas ----------
+  const [salesPeriod, setSalesPeriod] = useState("30d");
+  const [salesFrom, setSalesFrom] = useState("");
+  const [salesTo, setSalesTo] = useState("");
   // ---------- pausa de pedidos por sucursal ----------
   // Estado ({ <id>: { paused, until, message } }) y branch del modal de
   // pausa abierto (null = cerrado). "Reanudar" es directo (sin modal).
@@ -945,8 +949,51 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las ventas" />}
               resetKeys={['section']}
             >
-              <AdminPanelCard title="Ventas y caja" titleIcon={<IconMoney style={{ width: 18, height: 18 }} />}>
-                <AdminSales me={me} />
+              <AdminPanelCard
+                title="Ventas"
+                titleIcon={<IconMoney style={{ width: 18, height: 18 }} />}
+                actions={
+                  <>
+                    <div className="admin-stats__period">
+                      {[
+                        { id: "today", label: "Hoy" },
+                        { id: "7d", label: "Últimos 7 días" },
+                        { id: "30d", label: "Últimos 30 días" },
+                        { id: "custom", label: "Personalizado" },
+                      ].map((p) => (
+                        <button
+                          key={p.id}
+                          className={`period-btn ${salesPeriod === p.id ? "is-active" : ""}`}
+                          onClick={() => setSalesPeriod(p.id)}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                    {salesPeriod === "custom" && (
+                      <div className="admin-stats__custom" style={{ marginBottom: 0 }}>
+                        <DateRangePicker
+                          from={salesFrom}
+                          to={salesTo}
+                          onChange={({ from: f, to: t }) => {
+                            setSalesFrom(f);
+                            setSalesTo(t);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </>
+                }
+              >
+                <AdminSales
+                  me={me}
+                  period={salesPeriod}
+                  from={salesFrom}
+                  to={salesTo}
+                  onPeriodChange={setSalesPeriod}
+                  onFromChange={setSalesFrom}
+                  onToChange={setSalesTo}
+                />
               </AdminPanelCard>
             </ErrorBoundary>
           </>

@@ -146,7 +146,6 @@ export default function AdminUsers({ onLogout }) {
   return (
     <section className="admin-users">
       <div className="admin-products__toolbar">
-        <h3><IconLock /> Cuentas</h3>
         <button
           className="btn btn--primary btn--sm"
           onClick={() => {

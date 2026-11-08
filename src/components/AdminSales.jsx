@@ -4,36 +4,26 @@ import { BRANCH_LIST, BRANCHES } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
 import { periodRange, dayShort, dayLabel, dateShort, dateTimeShort, isToday } from "../utils/dates.js";
 import Dropdown from "./ui/Dropdown.jsx";
-import DateRangePicker from "./ui/DateRangePicker.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import useDialogA11y from "../hooks/useDialogA11y.js";
 import {
   IconPlus, IconCash, IconBank, IconCard, IconCheck, IconX,
-  IconEdit, IconTrash, IconInfo, IconAlertCircle, IconMoney, IconReceipt, IconCart
+  IconEdit, IconTrash, IconInfo, IconAlertCircle, IconMoney, IconReceipt, IconCart, IconChart
 } from "./ui/icons.jsx";
-
-const PERIODS = [
-  { id: "today", label: "Hoy" },
-  { id: "7d", label: "Últimos 7 días" },
-  { id: "30d", label: "Últimos 30 días" },
-  { id: "custom", label: "Personalizado" },
-];
 
 const PAYMENT_LABELS = { efectivo: <><IconCash /> Efectivo</>, mercadopago: <><IconCard /> Mercado Pago</>, transferencia: <><IconBank /> Transferencia</> };
 
 // ============================================================
 // AdminSales — ventas por período + arqueo de caja
+// Props: me, period, from, to, onPeriodChange, onFromChange, onToChange
 // ============================================================
-export default function AdminSales({ me }) {
+export default function AdminSales({ me, period, from, to, onPeriodChange, onFromChange, onToChange }) {
   const isBranchAdmin = me?.role === "branch_admin";
   // El admin de sucursal opera SIEMPRE su caja: sin dropdown (el
   // server de todos modos filtra por la sesión).
   const [branchSel, setBranchSel] = useState(BRANCH_LIST[0]?.id || "");
   const branch = isBranchAdmin ? me.branch : branchSel;
-  const [period, setPeriod] = useState("30d");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
   const [sales, setSales] = useState(null);
   const [error, setError] = useState("");
 
@@ -62,17 +52,6 @@ export default function AdminSales({ me }) {
 
   return (
     <section className="admin-sales">
-      <div className="admin-stats__head">
-        <h3><IconMoney /> Ventas</h3>
-        <div className="admin-stats__period">
-          {PERIODS.map((p) => (
-            <button key={p.id} className={`period-btn ${period === p.id ? "is-active" : ""}`} onClick={() => setPeriod(p.id)}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <div className="admin-products__controls" style={{ marginBottom: 14 }}>
         {isBranchAdmin ? (
           <span className="badge badge--branch">{BRANCH_LIST.find((b) => b.id === branch)?.name}</span>
@@ -80,12 +59,6 @@ export default function AdminSales({ me }) {
           <Dropdown value={branch} onChange={setBranchSel} options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))} />
         )}
       </div>
-
-      {period === "custom" && (
-        <div className="admin-stats__custom">
-          <DateRangePicker from={from} to={to} onChange={({ from: f, to: t }) => { setFrom(f); setTo(t); }} />
-        </div>
-      )}
 
       {error && <div className="form-error">{error}</div>}
 
@@ -135,7 +108,7 @@ export default function AdminSales({ me }) {
           </div>
 
           <div className="sales-chart">
-            <h4>📈 Ventas por día</h4>
+            <h4><IconChart style={{ width: 16, height: 16 }} /> Ventas por día</h4>
             {days.length === 0 ? (
               <p className="hint">Sin ventas en este período.</p>
             ) : (

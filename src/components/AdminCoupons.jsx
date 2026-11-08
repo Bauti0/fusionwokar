@@ -125,7 +125,6 @@ export default function AdminCoupons({ me }) {
   return (
     <section className="admin-coupons">
       <div className="admin-products__toolbar">
-        <h3><IconTag /> Cupones de descuento</h3>
         <button className="btn btn--primary btn--sm" onClick={() => { setCreating(true); setError(""); }}>
           <IconPlus style={{ width: 13, height: 13 }} /> Crear cupón
         </button>
