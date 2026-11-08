@@ -4,9 +4,7 @@ import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 import Switch from "./ui/Switch.jsx";
-import TimeField from "./ui/TimeField.jsx";
 import { IconPlus, IconTrash, IconClock, IconAlertCircle } from "./ui/icons.jsx";
-import AdminPanelCard from "./AdminPanelCard.jsx";
 
 // ============================================================
 // AdminBranchHours — edición de horarios por sucursal
@@ -222,7 +220,7 @@ export default function AdminBranchHours({ me }) {
   );
 
   return (
-    <AdminPanelCard title="Horarios" titleIcon={<IconClock style={{ width: 18, height: 18 }} />}>
+    <>
       <div className="admin-products__controls" style={{ marginBottom: 14 }}>
         {isBranchAdmin ? (
           <span className="badge badge--branch">{BRANCH_LIST.find((b) => b.id === branchId)?.name}</span>
@@ -275,28 +273,28 @@ export default function AdminBranchHours({ me }) {
                       <div className="admin-bh-slot__inputs">
                         <div className="admin-bh-slot__input">
                           <span className="admin-bh-slot__input-label">Apertura</span>
-                          <TimeField
+                          <input
+                            type="time"
                             value={slot.open}
-                            onChange={(v) => updateSlot(dayKey, idx, "open", v)}
+                            onChange={(e) => updateSlot(dayKey, idx, "open", e.target.value)}
                             disabled={slot.closed || loading || saving}
-                            ariaLabel={`Apertura franja ${idx + 1} ${day.label}`}
                           />
                         </div>
                         <div className="admin-bh-slot__input">
                           <span className="admin-bh-slot__input-label">Cierre</span>
-                          <TimeField
+                          <input
+                            type="time"
                             value={slot.close}
-                            onChange={(v) => updateSlot(dayKey, idx, "close", v)}
+                            onChange={(e) => updateSlot(dayKey, idx, "close", e.target.value)}
                             disabled={slot.closed || loading || saving}
-                            ariaLabel={`Cierre franja ${idx + 1} ${day.label}`}
                           />
                         </div>
+                        {slot.close && slot.open && slot.close < slot.open && (
+                          <span className="admin-bh-slot__midnight-note">
+                            <IconAlertCircle style={{ width: 12, height: 12 }} /> Cierra al día siguiente
+                          </span>
+                        )}
                       </div>
-                      {slot.close && slot.open && slot.close < slot.open && (
-                        <span className="admin-bh-slot__midnight-note">
-                          <IconAlertCircle style={{ width: 12, height: 12 }} /> Cierra al día siguiente
-                        </span>
-                      )}
                       {slots.length > 1 && (
                         <button
                           type="button"
@@ -348,6 +346,6 @@ export default function AdminBranchHours({ me }) {
           onClose={() => setConfirmState(null)}
         />
       )}
-    </AdminPanelCard>
+    </>
   );
 }
