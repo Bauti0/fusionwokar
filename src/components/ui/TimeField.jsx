@@ -54,6 +54,7 @@ export default function TimeField({
   const [inputVal, setInputVal] = useState(() => formatDisplay(value));
   const inputRef = useRef(null);
   const popoverRef = useRef(null);
+  const triggerRef = useRef(null);
 
   // Sincronizar selector interno con value externo
   useEffect(() => {
@@ -77,6 +78,8 @@ export default function TimeField({
     }
     function onClickOutside(e) {
       if (isOpen && popoverRef.current && !popoverRef.current.contains(e.target)) {
+        const trigger = triggerRef.current;
+        if (trigger && trigger.contains(e.target)) return; // click en el trigger: no cerrar
         const input = inputRef.current;
         if (input && !input.contains(e.target)) {
           setIsOpen(false);
@@ -235,7 +238,7 @@ export default function TimeField({
   );
 
   return (
-    <div className="timefield">
+    <div className="timefield" ref={triggerRef}>
       <div className={`timefield-input-wrap${error ? " has-error" : ""}`}>
         <span className="timefield-icon" aria-hidden="true">
           <IconClock style={{ width: 18, height: 18 }} />
