@@ -85,6 +85,16 @@ const PAYMENT_FILTER_LABELS = {
   refunded: "Devueltos",
 };
 
+// Rango completo de filtros de período: lo comparten Estadísticas y Ventas.
+// "Este mes" se marca como los demás; el rango real lo calcula periodRange().
+const PERIOD_OPTIONS = [
+  { id: "today", label: "Hoy" },
+  { id: "7d", label: "Últimos 7 días" },
+  { id: "month", label: "Este mes" },
+  { id: "30d", label: "Últimos 30 días" },
+  { id: "custom", label: "Personalizado" },
+];
+
 // Tabs del modal de detalle del pedido
 const ORDER_TABS = [
   { id: "pedido", label: "Pedido" },
@@ -842,12 +852,7 @@ export default function AdminPanel({ me, onLogout }) {
                 actions={
                   <>
                     <div className="admin-stats__period">
-                      {[
-                        { id: "today", label: "Hoy" },
-                        { id: "7d", label: "Últimos 7 días" },
-                        { id: "30d", label: "Últimos 30 días" },
-                        { id: "custom", label: "Personalizado" },
-                      ].map((p) => (
+                      {PERIOD_OPTIONS.map((p) => (
                         <button
                           key={p.id}
                           className={`period-btn ${statsPeriod === p.id ? "is-active" : ""}`}
@@ -955,12 +960,7 @@ export default function AdminPanel({ me, onLogout }) {
                 actions={
                   <>
                     <div className="admin-stats__period">
-                      {[
-                        { id: "today", label: "Hoy" },
-                        { id: "7d", label: "Últimos 7 días" },
-                        { id: "30d", label: "Últimos 30 días" },
-                        { id: "custom", label: "Personalizado" },
-                      ].map((p) => (
+                      {PERIOD_OPTIONS.map((p) => (
                         <button
                           key={p.id}
                           className={`period-btn ${salesPeriod === p.id ? "is-active" : ""}`}

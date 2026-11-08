@@ -74,9 +74,27 @@ export function isToday(isoDate, now = new Date()) {
   return AR_TODAY_FORMAT.format(now) === isoDate.slice(0, 10);
 }
 
-export function periodRange(period, from, to) {
+// Medianoche (00:00) del primer día del mes ACTUAL según el reloj de
+// America/Argentina/Buenos_Aires. "Hoy" se lee con AR_TODAY_FORMAT
+// para que el mes no corra ni con la zona del navegador ni la del servidor:
+// el 1 de cada mes entre las 21:00 y las 23:59 de Argentina ya es el mes
+// siguiente en UTC, y "Este mes" no puede apuntar al mes equivocado.
+//
+// La medianoche AR de un día Y-M-D son las 03:00 UTC de ese día: ART quedó
+// fija en UTC-3 (sin DST desde 2009).
+// ponytail: offset fijo UTC-3; si Argentina volviera a DST, cambiar esto por
+// el cálculo de offset vía Intl para la fecha puntual.
+function arMonthStart(now) {
+  const ymd = AR_TODAY_FORMAT.format(now); // "YYYY-MM-DD" de ARGENTINA
+  return new Date(`${ymd.slice(0, 7)}-01T03:00:00Z`);
+}
+
+// `now` es inyectable: los tests clavan fechas (bordes 00:30/23:30 AR) sin
+// depender del reloj con que corre el test.
+export function periodRange(period, from, to, now = new Date()) {
   const nowDate = new Date();
   if (period === "today") return { from: startOfToday(), to: nowDate };
+  if (period === "month") return { from: arMonthStart(now), to: now };
   if (period === "7d") return { from: new Date(nowDate.getTime() - 7 * 86400000), to: nowDate };
   if (period === "30d") return { from: new Date(nowDate.getTime() - 30 * 86400000), to: nowDate };
   // custom: the rango seleccionado abarca el día COMPLETO del límite superior

@@ -82,6 +82,51 @@ describe("periodRange — rango custom", () => {
   });
 });
 
+describe("periodRange — Este mes (mes de Argentina)", () => {
+  // El rango de "Este mes" se decide con el reloj de America/Argentina/
+  // Buenos_Aires, NO con el mes UTC ni el del navegador: el 1 de cada mes
+  // entre las 21:00 y las 23:59 de Argentina ya es el mes siguiente en UTC,
+  // y el filtro marcaba el mes equivocado. Todos los casos usan `now`
+  // inyectado, sin depender del reloj con que corre el test.
+  const ymdUtc = (d) => d.toISOString().slice(0, 10);
+
+  it("15 de noviembre → desde el 1/11", () => {
+    const now = new Date("2026-11-15T15:00:00Z"); // 12:00 ARG
+    const { from } = periodRange("month", null, null, now);
+    assert.equal(ymdUtc(from), "2026-11-01");
+    assert.equal(from.toISOString(), "2026-11-01T03:00:00.000Z"); // 00:00 ARG
+  });
+
+  it("1 de noviembre a las 00:30 ARG → desde el 1/11", () => {
+    const now = new Date("2026-11-01T03:30:00Z"); // 00:30 ARG
+    const { from } = periodRange("month", null, null, now);
+    assert.equal(ymdUtc(from), "2026-11-01");
+    // El límite inferior no puede quedar DESPUÉS de now (rango vacío).
+    assert.ok(from.getTime() <= now.getTime());
+  });
+
+  it("31 de octubre a las 23:30 ARG con proceso en TZ=UTC → desde el 1/10, no 1/11", () => {
+    const now = new Date("2026-10-31T23:30:00-03:00"); // = 2026-11-01T02:30Z
+    const { from } = periodRange("month", null, null, now);
+    // En UTC ya es noviembre, pero en Argentina todavía es 31/10: el mes es
+    // octubre aunque el proceso corra con TZ=UTC (el Intl formatea en AR).
+    assert.equal(ymdUtc(from), "2026-10-01");
+    assert.equal(from.toISOString(), "2026-10-01T03:00:00.000Z");
+  });
+
+  it("1 de diciembre 01:00 UTC (30/11 22:00 en Argentina) → mes de noviembre", () => {
+    const now = new Date("2026-12-01T01:00:00Z");
+    const { from } = periodRange("month", null, null, now);
+    assert.equal(ymdUtc(from), "2026-11-01");
+  });
+
+  it("el límite superior es el momento actual (exacto, no fin de día)", () => {
+    const now = new Date("2026-11-15T15:00:00Z");
+    const { to } = periodRange("month", null, null, now);
+    assert.equal(to.getTime(), now.getTime());
+  });
+});
+
 describe("startOfToday", () => {
   it("devuelve la medianoche de hoy", () => {
     const d = startOfToday();
