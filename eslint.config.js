@@ -85,13 +85,24 @@ export default [
     },
   },
 
-  // ---- Tests -----------------------------------------------------------
+  // ---- Tests (Node) ----------------------------------------------------
   {
     files: ["test/**/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
       globals: { ...globals.node },
+    },
+    rules: { ...RULES, "no-console": "off" },
+  },
+
+  // ---- Tests (Playwright/browser) --------------------------------------
+  {
+    files: ["test/**/*.spec.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: { ...globals.node, ...globals.browser },
     },
     rules: { ...RULES, "no-console": "off" },
   },
