@@ -35,6 +35,7 @@ import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 import PauseModal from "./ui/PauseModal.jsx";
+import DateRangePicker from "./ui/DateRangePicker.jsx";
 import TicketPrint from "./TicketPrint.jsx";
 import AdminStats from "./AdminStats.jsx";
 import AdminProducts from "./AdminProducts.jsx";
@@ -44,6 +45,8 @@ import AdminCustomers from "./AdminCustomers.jsx";
 import AdminSales from "./AdminSales.jsx";
 import AdminNewOrder from "./AdminNewOrder.jsx";
 import AdminUsers from "./AdminUsers.jsx";
+import AdminBranchHours from "./AdminBranchHours.jsx";
+import AdminPanelCard from "./AdminPanelCard.jsx";
 import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import { SectionFallback } from "./ui/ErrorFallbacks.jsx";
 import { checkCrashOrders, checkCrashStats, checkCrashProducts, checkCrashExtras, checkCrashCoupons, checkCrashCustomers, checkCrashSales, checkCrashUsers, checkCrashNewOrder } from "../hooks/useCrashTest.js";
@@ -212,6 +215,14 @@ export default function AdminPanel({ me, onLogout }) {
   const [unseenIds, setUnseenIds] = useState(() => new Set());
   const locallySeenRef = useRef(new Set());
   const [today, setToday] = useState(null);
+  // ---------- filtros de período para Estadísticas ----------
+  const [statsPeriod, setStatsPeriod] = useState("30d");
+  const [statsFrom, setStatsFrom] = useState("");
+  const [statsTo, setStatsTo] = useState("");
+  // ---------- filtros de período para Ventas ----------
+  const [salesPeriod, setSalesPeriod] = useState("30d");
+  const [salesFrom, setSalesFrom] = useState("");
+  const [salesTo, setSalesTo] = useState("");
   // ---------- pausa de pedidos por sucursal ----------
   // Estado ({ <id>: { paused, until, message } }) y branch del modal de
   // pausa abierto (null = cerrado). "Reanudar" es directo (sin modal).
@@ -802,6 +813,13 @@ export default function AdminPanel({ me, onLogout }) {
               <IconLock /> Cuentas
             </button>
           )}
+          <button
+            data-testid="nav-horarios"
+            className={`admin-nav__btn ${section === "horarios" ? "is-active" : ""}`}
+            onClick={() => setSection("horarios")}
+          >
+            <IconClock /> Horarios
+          </button>
           {/* Commit con el que se compiló la app (lo inyecta vite.config.js
               al hacer el build). Sirve para saber de un vistazo qué versión
               está corriendo el panel. Si no se pudo leer el hash ("?") no se
@@ -818,7 +836,52 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las estadísticas" />}
               resetKeys={['section']}
             >
-              <AdminStats me={me} />
+              <AdminPanelCard
+                title="Estadísticas"
+                titleIcon={<IconChart style={{ width: 18, height: 18 }} />}
+                actions={
+                  <>
+                    <div className="admin-stats__period">
+                      {[
+                        { id: "today", label: "Hoy" },
+                        { id: "7d", label: "Últimos 7 días" },
+                        { id: "30d", label: "Últimos 30 días" },
+                        { id: "custom", label: "Personalizado" },
+                      ].map((p) => (
+                        <button
+                          key={p.id}
+                          className={`period-btn ${statsPeriod === p.id ? "is-active" : ""}`}
+                          onClick={() => setStatsPeriod(p.id)}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                    {statsPeriod === "custom" && (
+                      <div className="admin-stats__custom" style={{ marginBottom: 0 }}>
+                        <DateRangePicker
+                          from={statsFrom}
+                          to={statsTo}
+                          onChange={({ from: f, to: t }) => {
+                            setStatsFrom(f);
+                            setStatsTo(t);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </>
+                }
+              >
+                <AdminStats
+                  me={me}
+                  period={statsPeriod}
+                  from={statsFrom}
+                  to={statsTo}
+                  onPeriodChange={setStatsPeriod}
+                  onFromChange={setStatsFrom}
+                  onToChange={setStatsTo}
+                />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -830,7 +893,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los productos" />}
               resetKeys={['section']}
             >
-              <AdminProducts me={me} />
+              <AdminPanelCard title="Productos" titleIcon={<IconBowlSteam style={{ width: 18, height: 18 }} />}>
+                <AdminProducts me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -842,7 +907,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los adicionales" />}
               resetKeys={['section']}
             >
-              <AdminExtras me={me} />
+              <AdminPanelCard title="Adicionales" titleIcon={<IconChopsticks style={{ width: 18, height: 18 }} />}>
+                <AdminExtras me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -854,7 +921,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los cupones" />}
               resetKeys={['section']}
             >
-              <AdminCoupons me={me} />
+              <AdminPanelCard title="Cupones" titleIcon={<IconTag style={{ width: 18, height: 18 }} />}>
+                <AdminCoupons me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -866,7 +935,9 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los clientes" />}
               resetKeys={['section']}
             >
-              <AdminCustomers me={me} />
+              <AdminPanelCard title="Clientes" titleIcon={<IconUser style={{ width: 18, height: 18 }} />}>
+                <AdminCustomers me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -878,7 +949,52 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las ventas" />}
               resetKeys={['section']}
             >
-              <AdminSales me={me} />
+              <AdminPanelCard
+                title="Ventas"
+                titleIcon={<IconMoney style={{ width: 18, height: 18 }} />}
+                actions={
+                  <>
+                    <div className="admin-stats__period">
+                      {[
+                        { id: "today", label: "Hoy" },
+                        { id: "7d", label: "Últimos 7 días" },
+                        { id: "30d", label: "Últimos 30 días" },
+                        { id: "custom", label: "Personalizado" },
+                      ].map((p) => (
+                        <button
+                          key={p.id}
+                          className={`period-btn ${salesPeriod === p.id ? "is-active" : ""}`}
+                          onClick={() => setSalesPeriod(p.id)}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                    {salesPeriod === "custom" && (
+                      <div className="admin-stats__custom" style={{ marginBottom: 0 }}>
+                        <DateRangePicker
+                          from={salesFrom}
+                          to={salesTo}
+                          onChange={({ from: f, to: t }) => {
+                            setSalesFrom(f);
+                            setSalesTo(t);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </>
+                }
+              >
+                <AdminSales
+                  me={me}
+                  period={salesPeriod}
+                  from={salesFrom}
+                  to={salesTo}
+                  onPeriodChange={setSalesPeriod}
+                  onFromChange={setSalesFrom}
+                  onToChange={setSalesTo}
+                />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
@@ -890,7 +1006,22 @@ export default function AdminPanel({ me, onLogout }) {
               fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="las cuentas" />}
               resetKeys={['section']}
             >
-              <AdminUsers me={me} onLogout={onLogout} />
+              <AdminPanelCard title="Cuentas" titleIcon={<IconLock style={{ width: 18, height: 18 }} />}>
+                <AdminUsers me={me} onLogout={onLogout} />
+              </AdminPanelCard>
+            </ErrorBoundary>
+          </>
+        )}
+
+        {section === "horarios" && (
+          <>
+            <ErrorBoundary
+              fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los horarios" />}
+              resetKeys={['section']}
+            >
+              <AdminPanelCard title="Horarios" titleIcon={<IconClock style={{ width: 18, height: 18 }} />}>
+                <AdminBranchHours me={me} />
+              </AdminPanelCard>
             </ErrorBoundary>
           </>
         )}
