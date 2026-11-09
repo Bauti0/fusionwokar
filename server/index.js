@@ -4890,12 +4890,46 @@ function serveSpaPage(req, res, { noindex = false } = {}) {
   );
 }
 
+// Shell mínimo para rutas que no necesitan SEO (admin, track).
+// Evita el mismatch de hidratación: SSR renderiza solo el shell,
+// el cliente hace todo el rendering.
+function serveMinimalShell(req, res, { noindex = false } = {}) {
+  if (noindex) res.setHeader("X-Robots-Tag", "noindex, follow");
+  res.setHeader("Cache-Control", "no-cache, must-revalidate");
+  const nonce = randomBytes(16).toString("base64");
+  res.setHeader("Content-Security-Policy", buildCsp(nonce));
+  // Leer el index.html base y extraer solo los assets (scripts/css)
+  const html = indexTemplate();
+  // Extraer el <head> con meta, links, scripts
+  const headMatch = html.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
+  const headContent = headMatch ? headMatch[1] : "";
+  // Inyectar nonce en el script inline JSON-LD si existe
+  const headWithNonce = headContent.replace(
+    /<script type="application\/ld\+json" id="seo-jsonld"><\/script>/,
+    () => `<script type="application/ld+json" id="seo-jsonld" nonce="${nonce}"></script>`
+  );
+  const minimalHtml = `<!doctype html>
+<html lang="es">
+  <head>
+${headWithNonce}
+  </head>
+  <body style="background:#111111;color:#ffffff;margin:0;">
+    <div id="root" suppressHydrationWarning></div>
+  </body>
+</html>`;
+  res.send(minimalHtml);
+}
+
 app.use((req, res, next) => {
   if (req.method !== "GET" && req.method !== "HEAD") return next();
   if (req.path.startsWith("/api")) return next();
   if (/\.[a-zA-Z0-9]{1,10}$/.test(req.path)) return next();
   const isSensitive = req.path.startsWith("/admin") || req.path.startsWith("/track/");
-  serveSpaPage(req, res, { noindex: isSensitive });
+  if (isSensitive) {
+    serveMinimalShell(req, res, { noindex: true });
+  } else {
+    serveSpaPage(req, res, { noindex: isSensitive });
+  }
 });
 
 // index.html y demás estáticos sin hash: negocian con ETag/Last-Modified

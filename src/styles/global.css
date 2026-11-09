@@ -1811,6 +1811,11 @@ body:has(.admin-login) { background: var(--color-secondary); }
   font-size: 14px;
 }
 
+/* Separación del título "NUESTRO MENÚ" en la vista Menu */
+.menu__banner-inner > .hours-info {
+  margin-top: 16px;
+}
+
 /* Fila base: icono fijo 20px + contenido flexible */
 .hours-info__row {
   display: flex;
@@ -1825,7 +1830,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   margin-top: 2px;
 }
 
-/* Fila principal: horarios de hoy + estado + toggle */
+/* Fila principal: horarios de hoy + estado + toggle — en su propia línea */
 .hours-info__row--main {
   flex-wrap: wrap;
   gap: 8px 14px;
@@ -1901,7 +1906,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   background: var(--color-text-soft);
 }
 
-/* Botón toggle "Ver/Ocultar horarios" */
+/* Botón toggle "Ver/Ocultar horarios" — estilo enlace */
 .hours-info__toggle {
   display: inline-flex;
   align-items: center;
@@ -1921,7 +1926,8 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .hours-info__toggle:hover {
   color: var(--color-primary);
-  background: var(--color-primary-soft);
+  background: transparent;
+  text-decoration: underline;
 }
 .hours-info__toggle:focus-visible {
   outline: none;
@@ -1951,7 +1957,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   font-variant-numeric: tabular-nums;
 }
 
-/* Panel desplegable */
+/* Panel desplegable — pegado bajo la fila de horarios, antes de dirección */
 .hours-info__panel {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -1974,7 +1980,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   }
 }
 
-/* Grilla de la semana */
+/* Grilla de la semana — 2 columnas: día a la izq, franjas a la der */
 .hours-info__week {
   display: grid;
   grid-template-columns: 96px 1fr;
@@ -2019,7 +2025,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   font-style: italic;
 }
 
-/* Resaltado del día de hoy */
+/* Resaltado del día de hoy — barra izquierda + badge "Hoy" */
 .hours-info__group--today .hours-info__day-label {
   position: relative;
   padding-left: 16px;
@@ -2046,7 +2052,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   letter-spacing: 0.3px;
 }
 
-/* Dirección y envío */
+/* Dirección y envío — filas propias debajo del panel */
 .hours-info__address,
 .hours-info__delivery {
   font-size: 13.5px;
@@ -2101,6 +2107,10 @@ body:has(.admin-login) { background: var(--color-secondary); }
   }
   .hours-info__day-slots {
     font-size: 12.5px;
+  }
+  /* En móvil: etiqueta y botón en segunda línea de la misma fila */
+  .hours-info__content {
+    flex-wrap: wrap;
   }
 }
 

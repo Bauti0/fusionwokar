@@ -200,7 +200,17 @@ if (typeof window !== "undefined") {
 // ============================================================
 checkCrashRoot();
 
-ReactDOM.createRoot(document.getElementById("root")).render(
+const root = ReactDOM.createRoot(document.getElementById("root"), {
+  onRecoverableError: (error, errorInfo) => {
+    // En desarrollo, loggear para depurar hidratación
+    if (import.meta.env.DEV) {
+      console.warn("React hydration recoverable error:", error, errorInfo);
+    }
+    // No hacer nada: React intentará recuperarse solo
+  },
+});
+
+root.render(
   <React.StrictMode>
     <BrowserRouter>
       <ErrorBoundary fallback={RootFallback} resetKeys={[window.location.pathname]}>
