@@ -443,13 +443,19 @@ export async function getOrder(orderId) {
 // arma el caller con lo que hace único a ESTA devolución (pedido + cuánto
 // faltaba devolver + monto): así un doble clic se deduplica, pero dos
 // devoluciones del mismo monto en momentos distintos sí se ejecutan.
-export async function refundOrder(orderId, { transactionId, amount, idempotencyKey } = {}) {
+// REQUERIDO: el caller DEBE proveerla. Antes había un fallback que solo usaba
+// orderId + amount (sin refunded_amount), lo que causaba colisiones entre
+// devoluciones parciales distintas del mismo monto (FIND-013/017).
+export async function refundOrder(orderId, { transactionId, amount, idempotencyKey }) {
+  if (!idempotencyKey) {
+    throw new Error("idempotencyKey es obligatorio en refundOrder (FIND-013/017)");
+  }
   const body =
     amount == null ? {} : { transactions: [{ id: transactionId, amount: String(Math.round(amount)) }] };
   const data = await mpFetch(`/v1/orders/${encodeURIComponent(orderId)}/refund`, {
     method: "POST",
     body,
-    idempotencyKey: idempotencyKey || `ref-${orderId}-${amount == null ? "full" : amount}`,
+    idempotencyKey,
   });
   return {
     id: data.id,
