@@ -3,7 +3,8 @@ import { formatPrice, lineTotal } from "../utils/format.js";
 import { validateCoupon, shippingQuote } from "../api.js";
 import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
 import { validateCheckoutForm } from "../utils/checkoutValidation.js";
-import { closedLabel, pauseNotice } from "../utils/schedule.js";
+import { pauseNotice } from "../utils/schedule.js";
+import { useBranchHours } from "../hooks/useBranchHours.js";
 import { phonePlaceholderFor } from "../data/branches.js";
 import { shouldCacheQuoteError } from "../utils/shippingCache.js";
 import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/checkoutHelpers.js";
@@ -143,6 +144,10 @@ export default function Checkout({
   // estado local también expira (StoreApp), pero por si el cliente quedó con
   // la pantalla abierta, el botón no se bloquea con una pausa vencida.
   const paused = !!pause?.paused && (pause.until == null || pause.until > Date.now());
+
+  // Horarios de la sucursal actual (hook con cache y refresh)
+  const { closedLabel, hoursSummary, windows } = useBranchHours(branch.id);
+  const hoursText = hoursSummary() || branch.hours[orderMode]; // fallback al texto fijo si no hay resumen
 
   // Cotización de envío con debounce (no satura la API). Espera una dirección
   // con un mínimo de texto. La caché se consulta ANTES del debounce para
@@ -305,6 +310,7 @@ export default function Checkout({
       shippingError,
       scheduleMode,
       scheduledAt,
+      branchWindows: windows, // del hook useBranchHours
     });
     if (invalid) {
       submittingRef.current = false;
@@ -397,11 +403,11 @@ export default function Checkout({
             <IconClock size={16} />
             <span>
               Horarios {orderMode === "delivery" ? "de entrega" : "de retiro"}:{" "}
-              <strong>{branch.hours[orderMode]}</strong>
+              <strong>{hoursText}</strong>
             </span>
           </p>
-          {closedLabel(branch.id) && (
-            <p className="hours-note hours-note--warn">{closedLabel(branch.id)}.</p>
+          {closedLabel() && (
+            <p className="hours-note hours-note--warn">{closedLabel()}.</p>
           )}
         </div>
 

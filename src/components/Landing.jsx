@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { BRAND, BRANCH_LIST, phonePlaceholderFor } from "../data/branches.js";
 import { SOCIAL } from "../data/social.js";
 import { isValidPhone } from "../utils/validation.js";
-import { isNowOpen, closedLabel, arClockLabel } from "../utils/schedule.js";
+import { arClockLabel } from "../utils/schedule.js";
+import { useAllBranchHours } from "../hooks/useAllBranchHours.js";
 import { getPause } from "../api.js";
 import { IconBowlSteam, IconChopsticks, HeroMotif, IconLock, IconCheck, IconDelivery } from "./ui/icons.jsx";
 
@@ -33,6 +34,9 @@ export default function Landing({ onStart, initialBranch, customer }) {
       alive = false;
     };
   }, []);
+
+  // Horarios de todas las sucursales para mostrar estado en las tarjetas
+  const { isNowOpen, closedLabel } = useAllBranchHours(BRANCH_LIST.map((b) => b.id));
 
   function handleStart(e) {
     e.preventDefault();

@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import ProductCard from "./ProductCard.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
-import { closedLabel, pauseNotice } from "../utils/schedule.js";
+import { useBranchHours } from "../hooks/useBranchHours.js";
+import { pauseNotice } from "../utils/schedule.js";
 import { IconSearch, IconClock, IconEmptySearch, IconPause, IconLocation, IconDelivery, IconAlertCircle } from "./ui/icons.jsx";
 
 // ============================================================
@@ -56,6 +57,9 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
   const catsRef = useRef(null);
   const [catsHint, setCatsHint] = useState(false);
 
+  // Horarios de la sucursal actual (hook con cache y refresh)
+  const { closedLabel, hoursSummary, loading: hoursLoading } = useBranchHours(branch.id);
+
   // Al cambiar de sucursal (o refrescar el menú) la categoría activa se
   // reinicia a la primera: si quedara apuntando a una categoría de la otra
   // sucursal, la sección se vería vacía sin entender por qué.
@@ -102,7 +106,8 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
   }, [onAdd]);
 
   const topIds = menu.topProductIds || [];
-  const closed = closedLabel(branch.id);
+  const closed = closedLabel();
+  const hoursText = hoursSummary() || branch.hours[orderMode]; // fallback al texto fijo si no hay resumen
   // Pausa de pedidos de esta sucursal (viene del menú o de un 423 del
   // checkout). Se muestra el pill y la línea con el motivo y la hora
   // de reapertura; el botón de confirmar se bloquea en el checkout.
@@ -122,7 +127,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
             </span>
             <span className="menu__hours">
               <IconClock className="menu__hours-icon" />
-              {branch.hours[orderMode]}
+              {hoursText}
             </span>
             {closed && (
               <span className="menu__closed">
