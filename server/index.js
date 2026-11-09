@@ -3023,12 +3023,13 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
       return;
     }
 
-    // Red de seguridad: si MP respondió sin el detalle del reembolso, se anota
-    // uno local para que el historial del panel no quede vacío.
+    // FIND-004: MP es la fuente de verdad del monto. Solo agregamos entrada
+    // local si MP devolvió array VACÍO (raro, pero posible). Si MP reportó
+    // reembolsos, confiamos en esos montos; no inflamos con lo que pidió el admin.
     const reportadas = result.refunds || [];
-    const base = reportadas.some((r) => (r.amount || 0) === amount)
-      ? reportadas
-      : [...reportadas, { id: result.id || `mp-${Date.now()}`, amount, at: now() }];
+    const base = reportadas.length === 0
+      ? [{ id: result.id || `mp-${Date.now()}`, amount, at: now() }]
+      : reportadas;
     // El nombre/autoría se pega solo a la devolución NUEVA: las que ya estaban
     // anotadas conservan lo registrado antes (mergeRefunds da prioridad a lo
     // existente y MP no reporta quién devolvió desde el panel).

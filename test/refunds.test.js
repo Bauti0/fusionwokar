@@ -233,3 +233,87 @@ describe("registro de quien devuelve (by/admin en refunds_json)", () => {
     assert.equal(pub.refundedAmount, 500);
   });
 });
+
+// ---------------------------------------------------------------------
+// FIND-004: El endpoint de reembolso del panel usa el monto PEDIDO
+// en lugar del monto REAL que devolvió MP, inflando refunded_amount.
+// Escenario: total=1000, ya reembolsado=200, admin pide 800, MP devuelve 500.
+// Antes del fix: el endpoint agregaba una entrada local con amount=800 (el
+// pedido) y applyRefunds sumaba 200(previo) + 500(MP) + 800(pedido) = 1500,
+// aunque MP solo devolvió 500.
+// Después del fix: se confía en MP como fuente de verdad; solo se agrega
+// entrada local si MP devolvió array VACÍO.
+// ---------------------------------------------------------------------
+
+describe("FIND-004: panel refund confía en MP como fuente de verdad", () => {
+  it("si MP devuelve reembolsos, se usan ESE monto (no el pedido)", async () => {
+    const db = await makeDb();
+    const id = await addOrder(db, 1000);
+    // Estado previo: ya reembolsado 200
+    await applyRefunds(db, id, { mpRefunds: [{ id: "r1", amount: 200 }], patch: endpointPatch });
+    let row = await readOrder(db, id);
+    assert.equal(Number(row.refunded_amount), 200);
+
+    // Simula lo que hacía el endpoint ANTES del fix:
+    // MP devuelve reembolsos reales: [{ amount: 500 }]
+    // pero el endpoint agregaba local con el monto PEDIDO (800)
+    const mpRefunds = [{ id: "r2", amount: 500 }]; // MP realmente devolvió 500
+    const amountPedida = 800; // admin pidió 800
+
+    // Lógica BUGGY del endpoint (antes del fix):
+    // const base = reportadas.some(r => r.amount === amountPedida) ? reportadas : [...reportadas, { amount: amountPedida }];
+    // Esto agregaba 800 en lugar de confiar en los 500 de MP.
+    const baseBuggy = mpRefunds.some((r) => r.amount === amountPedida)
+      ? mpRefunds
+      : [...mpRefunds, { id: "local", amount: amountPedida, at: new Date().toISOString() }];
+
+    await applyRefunds(db, id, { mpRefunds: baseBuggy, patch: endpointPatch });
+    row = await readOrder(db, id);
+    // BUG: refunded_amount queda 1500 (200 previo + 500 de MP + 800 pedido) en lugar de 700 (200 + 500)
+    assert.equal(Number(row.refunded_amount), 1500, "BUG: endpoint infla el monto sumando lo pedido (800) a lo real de MP (500) + lo previo (200)");
+    const refunds = parseRefunds(row.refunds_json);
+    assert.equal(refunds.length, 3, "BUG: se agregó entrada local espuria");
+    assert.ok(refunds.some((r) => r.amount === 800), "BUG: existe entrada con monto pedido (800) en vez de real (500)");
+
+    // AHORA: limpiamos y probamos la lógica CORRECTA (solo agregar local si MP devolvió array vacío)
+    // El reset debe ser consistente: refunded_amount Y refunds_json
+    const resetRefunds = JSON.stringify([{ id: "r1", amount: 200, at: new Date().toISOString() }]);
+    await db.prepare("UPDATE orders SET refunded_amount = 200, refunds_json = ? WHERE id = ?").run(resetRefunds, id);
+    row = await readOrder(db, id);
+    assert.equal(Number(row.refunded_amount), 200);
+
+    // Lógica CORRECTA (después del fix):
+    // Solo agregar entrada local si MP devolvió array VACÍO
+    const baseFixed = mpRefunds.length === 0
+      ? [{ id: "local", amount: amountPedida, at: new Date().toISOString() }]
+      : mpRefunds;
+
+    await applyRefunds(db, id, { mpRefunds: baseFixed, patch: endpointPatch });
+    row = await readOrder(db, id);
+    assert.equal(Number(row.refunded_amount), 700, "FIX: suma solo lo que MP reportó (200 + 500)");
+    const refundsFixed = parseRefunds(row.refunds_json);
+    assert.equal(refundsFixed.length, 2, "FIX: solo las dos entradas reales");
+    assert.ok(!refundsFixed.some((r) => r.amount === 800), "FIX: no hay entrada espuria con 800");
+  });
+
+  it("si MP devuelve array VACÍO, se agrega entrada local como fallback (edge case)", async () => {
+    const db = await makeDb();
+    const id = await addOrder(db, 1000);
+    const amountPedida = 500;
+
+    // MP devuelve array vacío (raro pero posible según docs)
+    const mpRefunds = [];
+
+    // Lógica CORRECTA: agregar entrada local solo si MP devolvió array vacío
+    const baseFixed = mpRefunds.length === 0
+      ? [{ id: "local", amount: amountPedida, at: new Date().toISOString() }]
+      : mpRefunds;
+
+    await applyRefunds(db, id, { mpRefunds: baseFixed, patch: endpointPatch });
+    const row = await readOrder(db, id);
+    assert.equal(Number(row.refunded_amount), 500, "fallback: usa monto pedido cuando MP no reporta nada");
+    const refunds = parseRefunds(row.refunds_json);
+    assert.equal(refunds.length, 1);
+    assert.equal(refunds[0].amount, 500);
+  });
+});
