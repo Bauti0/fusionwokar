@@ -1224,6 +1224,9 @@ setInterval(() => {
     if (e.blockedUntil > t) continue; // bloqueo activo: no se toca
     if (e.at && t - e.at > 30 * 60000) loginAttempts.delete(k);
   }
+  // FIND-001: limpieza esporádica de webhook_requests (>24h)
+  const cutoff = new Date(t - 24 * 60 * 60 * 1000).toISOString();
+  db.prepare("DELETE FROM webhook_requests WHERE created_at < ?").run(cutoff).catch(() => {});
 }, 15 * 60 * 1000).unref();
 
 // ---------- pedidos (cliente) ----------
@@ -2429,22 +2432,17 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
 
     // ---- FIND-001: deduplicación por x-request-id ----
     // Mercado Pago reenvía notificaciones con el mismo x-request-id.
-    // Guardamos los IDs ya procesados (TTL 24h = ventana de reintentos de MP)
-    // para no reprocesar el mismo evento y evitar doble confirmación/devolución.
+    // Verificamos si ya procesamos este request-id (SELECT solo al entrar).
+    // El INSERT se hace SOLO tras procesar OK (antes del 200), con INSERT OR IGNORE
+    // para que sea idempotente. La limpieza de entradas viejas (>24h) NO va acá
+    // (la hace un intervalo aparte para no penalizar cada request).
     const requestId = req.headers["x-request-id"];
     if (requestId) {
-      // Limpiar entradas antiguas (>24h) antes de chequear/insertar
-      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      await db.prepare("DELETE FROM webhook_requests WHERE created_at < ?").run(cutoff);
-
       const existing = await db.prepare("SELECT 1 FROM webhook_requests WHERE request_id = ?").get(requestId);
       if (existing) {
         console.log(`Webhook duplicado (request-id ya procesado): ${requestId}`);
         return res.sendStatus(200);
       }
-
-      // Insertar el request-id para marcarlo como procesado
-      await db.prepare("INSERT INTO webhook_requests (request_id, created_at) VALUES (?, ?)").run(requestId, now());
     }
 
     // ---- Payload que no sabemos procesar: no-op con 200 ----
@@ -2477,6 +2475,8 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
         return res.sendStatus(200);
       }
       await applyMpOrderState(row, mpOrder);
+      // FIND-001: marcar request-id como procesado SOLO tras éxito
+      if (requestId) await db.prepare("INSERT OR IGNORE INTO webhook_requests (request_id, created_at) VALUES (?, ?)").run(requestId, now());
       return res.sendStatus(200);
     }
 
@@ -2526,6 +2526,8 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
           if (status === "rejected" && !wasFailure && row.coupon_code) {
             await releaseOrderCoupon(db, row.id, row.coupon_code, row.branch);
           }
+          // FIND-001: marcar request-id como procesado SOLO tras éxito
+          if (requestId) await db.prepare("INSERT OR IGNORE INTO webhook_requests (request_id, created_at) VALUES (?, ?)").run(requestId, now());
         }
       }
     }
