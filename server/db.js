@@ -273,6 +273,28 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_categories_branch ON categories(branch);
 `);
 
+  // Tabla de configuración simple (key/value) para el admin.
+  // Sirve para guardar el fingerprint SHA-256 del ADMIN_PASSWORD y detectar
+  // cuándo cambia, para invalidar tokens de superadmin (FIND-002).
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS admin_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  // Tabla para deduplicación de webhooks (FIND-001): guarda los x-request-id
+  // ya procesados con TTL de 24h (ventana de reintentos de Mercado Pago).
+  // Índice por created_at para limpieza eficiente de entradas viejas.
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS webhook_requests (
+      request_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_webhook_requests_created ON webhook_requests(created_at);
+  `);
+
 // Migraciones: agrega columnas nuevas a tablas ya existentes (SQLite no
 // soporta ALTER ... ADD COLUMN IF NOT EXISTS).
 async function ensureColumn(table, column, ddl) {

@@ -4,7 +4,7 @@ import cors from "cors";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, createHmac } from "node:crypto";
+import { randomBytes, createHmac, createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import {
   db,
@@ -225,6 +225,32 @@ async function seedTestData() {
   `).run("FW-00001", "tandil", "Test User", "1111111111", "pickup", "cash", "pending", "pending_payment", JSON.stringify([{productId: "wok-pollo", name: "Wok Pollo", qty: 1, unitPrice: 18900}]), 18900, now, now);
 }
 runConfigCheck();
+
+// FIND-002: invalidar tokens de superadmin si cambió ADMIN_PASSWORD.
+// Al arrancar, comparamos el SHA-256 del password actual con el guardado.
+// Si difiere (o no existe), borramos todos los tokens con admin_user_id NULL
+// (superadmin del .env) y actualizamos el fingerprint guardado.
+async function checkAdminPasswordChange() {
+  if (!ADMIN_PASSWORD) return; // sin password no hay superadmin
+  const currentHash = createHash("sha256").update(ADMIN_PASSWORD).digest("hex");
+  const row = await db.prepare("SELECT value FROM admin_config WHERE key = ?").get("admin_password_hash");
+  if (!row) {
+    // Primer arranque con esta versión: guardamos el hash actual
+    await db.prepare("INSERT INTO admin_config (key, value, updated_at) VALUES (?, ?, ?)")
+      .run("admin_password_hash", currentHash, new Date().toISOString());
+    return;
+  }
+  if (row.value !== currentHash) {
+    // Password cambió: purga tokens de superadmin
+    const deleted = await db.prepare("DELETE FROM admin_tokens WHERE admin_user_id IS NULL").run();
+    console.warn(`🔐 ADMIN_PASSWORD cambió: se invalidaron ${deleted.changes} sesión(es) de superadmin`);
+    // Actualizamos el fingerprint
+    await db.prepare("UPDATE admin_config SET value = ?, updated_at = ? WHERE key = ?")
+      .run(currentHash, new Date().toISOString(), "admin_password_hash");
+  }
+}
+
+await checkAdminPasswordChange();
 
 // Siembra el menú y las categorías en la BD (solo la primera vez).
 // Va DESPUÉS de la validación: si el .env está roto no tiene sentido que
@@ -2399,6 +2425,26 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
     if (!verifyWebhookSignature(req)) {
       console.warn("Webhook rechazado: firma inválida o MP_WEBHOOK_SECRET sin configurar");
       return res.status(400).json({ error: "Firma inválida" });
+    }
+
+    // ---- FIND-001: deduplicación por x-request-id ----
+    // Mercado Pago reenvía notificaciones con el mismo x-request-id.
+    // Guardamos los IDs ya procesados (TTL 24h = ventana de reintentos de MP)
+    // para no reprocesar el mismo evento y evitar doble confirmación/devolución.
+    const requestId = req.headers["x-request-id"];
+    if (requestId) {
+      // Limpiar entradas antiguas (>24h) antes de chequear/insertar
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      await db.prepare("DELETE FROM webhook_requests WHERE created_at < ?").run(cutoff);
+
+      const existing = await db.prepare("SELECT 1 FROM webhook_requests WHERE request_id = ?").get(requestId);
+      if (existing) {
+        console.log(`Webhook duplicado (request-id ya procesado): ${requestId}`);
+        return res.sendStatus(200);
+      }
+
+      // Insertar el request-id para marcarlo como procesado
+      await db.prepare("INSERT INTO webhook_requests (request_id, created_at) VALUES (?, ?)").run(requestId, now());
     }
 
     // ---- Payload que no sabemos procesar: no-op con 200 ----
