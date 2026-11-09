@@ -56,7 +56,8 @@ function denormalizeForServer(formHours) {
   for (let day = 0; day < 7; day++) {
     const key = String(day);
     const slots = formHours[key] || [];
-    const validSlots = slots.filter((s) => s.open && s.close);
+    // Un slot es válido solo si tiene open/close Y no está marcado como closed
+    const validSlots = slots.filter((s) => s.open && s.close && !s.closed);
     if (validSlots.length === 0) {
       payload[key] = { closed: true, slots: [] };
     } else {
@@ -154,8 +155,8 @@ export default function AdminBranchHours({ me }) {
         setHours({ ...hours, [day]: slots.map((s) => ({ ...s, closed: false })) });
       }
     } else {
-      // Cerrar: marcar todo como cerrado
-      setHours({ ...hours, [day]: slots.map((s) => ({ ...s, closed: true })) });
+      // Cerrar: marcar como cerrado y limpiar franjas (consistente con normalizeServerHours)
+      setHours({ ...hours, [day]: [{ ...EMPTY_SLOT, closed: true }] });
     }
     setDirty(true);
   }

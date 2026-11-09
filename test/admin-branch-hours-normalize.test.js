@@ -37,7 +37,8 @@ function denormalizeForServer(formHours) {
   for (let day = 0; day < 7; day++) {
     const key = String(day);
     const slots = formHours[key] || [];
-    const validSlots = slots.filter((s) => s.open && s.close);
+    // Un slot es válido solo si tiene open/close Y no está marcado como closed
+    const validSlots = slots.filter((s) => s.open && s.close && !s.closed);
     if (validSlots.length === 0) {
       payload[key] = { closed: true, slots: [] };
     } else {
@@ -196,5 +197,19 @@ describe("isFullyClosed", () => {
       "6": [{ open: "", close: "", closed: true }],
     };
     assert.strictEqual(isFullyClosed(formHours), true);
+  });
+
+  it("BUG: día con slots que tienen open/close pero closed=true -> denormalize lo trata como cerrado", () => {
+    // Simula el bug: el usuario apaga el día (closed=true) pero los slots
+    // conservan sus valores open/close del estado anterior
+    const formHours = {
+      "1": [
+        { open: "11:00", close: "15:00", closed: true },  // cerrado PERO con valores
+        { open: "19:30", close: "23:30", closed: true },
+      ],
+    };
+    const result = denormalizeForServer(formHours);
+    // Debería tratar el día como cerrado (no enviar las franjas)
+    assert.deepStrictEqual(result["1"], { closed: true, slots: [] });
   });
 });
