@@ -1799,6 +1799,303 @@ body:has(.admin-login) { background: var(--color-secondary); }
   transition: background .15s var(--ease), color .15s var(--ease);
 }
 .qty button:hover { background: var(--color-secondary); color: #fff; }
+
+/* ============================================================
+   BranchHoursInfo — Presentación unificada de horarios
+   Usada en Menu y Checkout. Clases .hours-info__* para no colisionar.
+   ============================================================ */
+.hours-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+
+/* Fila base: icono fijo 20px + contenido flexible */
+.hours-info__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.hours-info__icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--color-text-soft);
+  margin-top: 2px;
+}
+
+/* Fila principal: horarios de hoy + estado + toggle */
+.hours-info__row--main {
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.hours-info__content {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  flex: 1;
+  min-width: 0;
+}
+.hours-info__today-label {
+  font-weight: 600;
+}
+.hours-info__slots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.hours-info__slot {
+  white-space: nowrap;
+}
+.hours-info__slot-sep {
+  color: var(--color-text-soft);
+  opacity: 0.6;
+}
+.hours-info__closed {
+  color: var(--color-text-soft);
+  opacity: 0.7;
+}
+
+/* Etiqueta de estado (pill) */
+.hours-info__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.hours-info__status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.hours-info__status--open {
+  background: var(--color-success-soft);
+  color: var(--color-success-text);
+}
+.hours-info__status--open .hours-info__status-dot {
+  background: var(--color-success-text);
+  box-shadow: 0 0 0 3px rgba(31, 138, 76, 0.18);
+}
+.hours-info__status--closed {
+  background: var(--color-primary-soft);
+  color: var(--color-danger-text);
+}
+.hours-info__status--closed .hours-info__status-dot {
+  background: var(--color-danger-text);
+}
+.hours-info__status--pause {
+  background: var(--color-surface);
+  color: var(--color-text-soft);
+  border: 1px solid var(--color-border);
+}
+.hours-info__status--pause .hours-info__status-dot {
+  background: var(--color-text-soft);
+}
+
+/* Botón toggle "Ver/Ocultar horarios" */
+.hours-info__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-soft);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  min-height: 40px;
+  min-width: 40px;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+  flex-shrink: 0;
+}
+.hours-info__toggle:hover {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.hours-info__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+.hours-info__chevron {
+  transition: transform 0.18s var(--ease-out);
+  flex-shrink: 0;
+}
+.hours-info__chevron.rotated {
+  transform: rotate(180deg);
+}
+
+/* Panel desplegable */
+.hours-info__panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-top: 4px;
+  overflow: hidden;
+  /* Animación con grid-template-rows: 0fr -> 1fr */
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 180ms var(--ease-out);
+}
+.hours-info__panel[style*="1fr"],
+.hours-info__panel[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hours-info__panel {
+    transition: none;
+  }
+}
+
+/* Grilla de la semana */
+.hours-info__week {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 8px 12px;
+  margin: 0;
+  padding: 0;
+}
+.hours-info__group {
+  display: contents;
+}
+.hours-info__day-label,
+.hours-info__day-slots {
+  padding: 6px 0;
+}
+.hours-info__day-label {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.hours-info__day-slots {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 13px;
+  color: var(--color-text-soft);
+}
+.hours-info__slot {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.hours-info__slot-sep {
+  color: var(--color-text-soft);
+  opacity: 0.5;
+}
+.hours-info__slot--closed {
+  color: var(--color-text-mute);
+  font-style: italic;
+}
+
+/* Resaltado del día de hoy */
+.hours-info__group--today .hours-info__day-label {
+  position: relative;
+  padding-left: 16px;
+}
+.hours-info__group--today .hours-info__day-label::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-primary);
+  border-radius: 2px;
+}
+.hours-info__today-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  margin-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Dirección y envío */
+.hours-info__address,
+.hours-info__delivery {
+  font-size: 13.5px;
+  color: var(--color-text-soft);
+  line-height: 1.4;
+}
+.hours-info__address,
+.hours-info__delivery {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Pausa */
+.hours-info__row--pause {
+  background: var(--color-primary-soft);
+  border: 1px solid rgba(229,52,46,.25);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  gap: 8px;
+}
+.hours-info__pause {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-danger-text);
+  line-height: 1.4;
+}
+
+/* Responsive */
+@media (max-width: 420px) {
+  .hours-info {
+    font-size: 13.5px;
+  }
+  .hours-info__row--main {
+    gap: 6px 10px;
+  }
+  .hours-info__content {
+    gap: 6px 10px;
+  }
+  .hours-info__status {
+    padding: 2px 8px;
+    font-size: 12px;
+  }
+  .hours-info__toggle {
+    font-size: 12.5px;
+  }
+  .hours-info__week {
+    grid-template-columns: 80px 1fr;
+    gap: 6px 10px;
+  }
+  .hours-info__day-label {
+    font-size: 12.5px;
+  }
+  .hours-info__day-slots {
+    font-size: 12.5px;
+  }
+}
+
+@media (min-width: 768px) {
+  .hours-info__row--main {
+    flex-wrap: nowrap;
+  }
+  .hours-info__content {
+    flex-wrap: nowrap;
+  }
+}
 .qty span { min-width: 40px; text-align: center; font-weight: 800; font-size: 14px; }
 .cart-item__price { margin-left: auto; font-weight: 800; font-size: 14.5px; text-align: right; }
 .cart-item__remove { border: none; background: none; color: var(--color-danger-text, var(--color-primary)); font-size: 13px; font-weight: 700; padding: 4px 0; }

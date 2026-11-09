@@ -5,12 +5,13 @@ import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
 import { validateCheckoutForm } from "../utils/checkoutValidation.js";
 import { pauseNotice } from "../utils/schedule.js";
 import { useBranchHours } from "../hooks/useBranchHours.js";
+import BranchHoursInfo from "./BranchHoursInfo.jsx";
 import { phonePlaceholderFor } from "../data/branches.js";
 import { shouldCacheQuoteError } from "../utils/shippingCache.js";
 import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/checkoutHelpers.js";
 import { normalizeAddressKey } from "../utils/normalizeAddressKey.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
-import { IconMoney, IconBank, IconCard, IconLock, IconCheck, IconFlash, IconTakeout, IconChat, IconClockOutline, IconDelivery, IconClock, IconTag } from "./ui/icons.jsx";
+import { IconMoney, IconBank, IconCard, IconLock, IconCheck, IconFlash, IconTakeout, IconChat, IconClockOutline, IconDelivery, IconTag } from "./ui/icons.jsx";
 import FadeImage from "./FadeImage.jsx";
 
 const PAYMENT_METHODS = [
@@ -146,8 +147,7 @@ export default function Checkout({
   const paused = !!pause?.paused && (pause.until == null || pause.until > Date.now());
 
   // Horarios de la sucursal actual (hook con cache y refresh)
-  const { closedLabel, hoursSummary, windows } = useBranchHours(branch.id);
-  const hoursText = hoursSummary() || branch.hours[orderMode]; // fallback al texto fijo si no hay resumen
+  const { closedLabel, hoursSummary, structuredHours, windows } = useBranchHours(branch.id);
 
   // Cotización de envío con debounce (no satura la API). Espera una dirección
   // con un mínimo de texto. La caché se consulta ANTES del debounce para
@@ -399,16 +399,12 @@ export default function Checkout({
               <IconTakeout className="checkout__icon" width="20" height="20" /> Para retirar
             </button>
           </div>
-          <p className="hours-note">
-            <IconClock size={16} />
-            <span>
-              Horarios {orderMode === "delivery" ? "de entrega" : "de retiro"}:{" "}
-              <strong>{hoursText}</strong>
-            </span>
-          </p>
-          {closedLabel() && (
-            <p className="hours-note hours-note--warn">{closedLabel()}.</p>
-          )}
+          <BranchHoursInfo
+            branch={branch}
+            pause={pause}
+            structuredHours={structuredHours}
+            mode="compact"
+          />
         </div>
 
         <div className="checkout-section">

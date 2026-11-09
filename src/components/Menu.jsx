@@ -2,9 +2,8 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import ProductCard from "./ProductCard.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
 import { useBranchHours } from "../hooks/useBranchHours.js";
-import { pauseNotice } from "../utils/schedule.js";
-import { IconSearch, IconClock, IconEmptySearch, IconPause, IconLocation, IconDelivery, IconAlertCircle, IconChevronDown } from "./ui/icons.jsx";
-import { DAY_LONG, DAY_SHORT } from "../utils/hoursCore.js";
+import BranchHoursInfo from "./BranchHoursInfo.jsx";
+import { IconSearch, IconEmptySearch, IconAlertCircle } from "./ui/icons.jsx";
 
 // ============================================================
 // Vista de menú de una sucursal
@@ -109,12 +108,10 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
   const topIds = menu.topProductIds || [];
   const closed = closedLabel();
   const hoursText = hoursSummary() || branch.hours[orderMode]; // fallback al texto fijo si no hay resumen
-  const { today, grouped } = structuredHours || { today: null, grouped: [] };
   // Pausa de pedidos de esta sucursal (viene del menú o de un 423 del
   // checkout). Se muestra el pill y la línea con el motivo y la hora
   // de reapertura; el botón de confirmar se bloquea en el checkout.
   const paused = !!pause?.paused;
-  const [showAllHours, setShowAllHours] = useState(false);
 
   return (
     <div className="menu">
@@ -123,89 +120,12 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
           <div className="menu__banner-top">
             <h1>Nuestro <span className="menu__title-accent">menú</span></h1>
           </div>
-          <p className="menu__meta">
-            <span className="menu__branch">
-              <span className="branch-dot" aria-hidden="true" />
-              {branch.name}
-            </span>
-            {today && (
-              <>
-                <span className="menu__hours-today">
-                  <IconClock className="menu__hours-icon" />
-                  <span className="menu__hours-label">
-                    {today.isClosed ? "Hoy cerrado" : `Hoy ${today.slots.map(s => `${s.from} a ${s.to}`).join(" y ")}`}
-                  </span>
-                  <span className={`menu__status ${today.isClosed ? "closed" : "open"}`}>
-                    {today.isClosed ? "Cerrado" : "Abierto ahora"}
-                  </span>
-                </span>
-                <button
-                  className="menu__hours-expand"
-                  onClick={() => setShowAllHours(!showAllHours)}
-                  aria-expanded={showAllHours}
-                  aria-controls="menu-hours-full"
-                  type="button"
-                >
-                  <span>Ver todos los horarios</span>
-                  <IconChevronDown className={showAllHours ? "rotated" : ""} />
-                </button>
-              </>
-            )}
-            {!today && (
-              <span className="menu__hours">
-                <IconClock className="menu__hours-icon" />
-                {hoursText}
-              </span>
-            )}
-            {paused && (
-              <span className="menu__closed">
-                <IconPause />
-                Pausado
-              </span>
-            )}
-            <span className="menu__address">
-              <IconLocation />
-              {branch.address}
-            </span>
-          </p>
-          {paused && (
-            <p className="menu__paused">
-              <IconClock className="menu__hours-icon" />
-              <span>{pauseNotice(pause)}</span>
-            </p>
-          )}
-          {branch.deliveryInfo && (
-            <p className="menu__delivery">
-              <IconDelivery />
-              <span>{branch.deliveryInfo}</span>
-            </p>
-          )}
-          {showAllHours && today && (
-            <div id="menu-hours-full" className="menu__hours-full" role="region" aria-label="Horarios de la semana">
-              {grouped.map((group, idx) => (
-                <div key={idx} className="menu__hours-group">
-                  <span className="menu__hours-group-label">
-                    {group.days.length === 1
-                      ? DAY_LONG[group.days[0]]
-                      : `${DAY_SHORT[group.days[0]]}–${DAY_SHORT[group.days[group.days.length - 1]]}`}
-                  </span>
-                  <span className="menu__hours-group-slots">
-                    {group.slots.map((s, si) => (
-                      <span key={si} className="menu__hours-slot">
-                        {s.from} a {s.to}
-                      </span>
-                    ))}
-                  </span>
-                </div>
-              ))}
-              {today.isClosed && (
-                <div className="menu__hours-group">
-                  <span className="menu__hours-group-label">Hoy</span>
-                  <span className="menu__hours-slot closed">Cerrado</span>
-                </div>
-              )}
-            </div>
-          )}
+          <BranchHoursInfo
+            branch={branch}
+            pause={pause}
+            structuredHours={structuredHours}
+            mode="full"
+          />
         </div>
       </div>
 
