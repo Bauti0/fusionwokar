@@ -1,8 +1,10 @@
 // ============================================================
-// Horarios de apertura por sucursal
-// Funciones puras, sin DOM: se usan en el cliente (menú/checkout)
-// y en el server (validación de pedidos programados).
-// Exporta versiones SÍNCRONAS (usan branches.js) y ASÍNCRONAS (usan API/BD).
+// Horarios de apertura por sucursal — FUNCIONES SÍNCRONAS (branches.js)
+// ============================================================
+// Versiones puras que usan branches.js como fuente. Se usan en tests
+// y como respaldo de último momento en el cliente (mientras carga el hook).
+// La zona horaria es LA DEL NAVEGADOR (runtime). Para zona Argentina
+// fija, usar src/utils/hoursCore.js + useBranchHours hook.
 // ============================================================
 import { BRANCHES } from "../data/branches.js";
 
@@ -20,7 +22,7 @@ function branchWindows(branchId) {
 }
 
 // ============================================================
-// VERSIÓN SÍNCRONA (usa branches.js) — para tests y server sin BD
+// VERSIÓN SÍNCRONA (usa branches.js) — para tests y respaldo cliente
 // ============================================================
 
 // ¿La fecha está dentro de alguna ventana de apertura?
@@ -149,44 +151,11 @@ export function outsideHoursMessageSync(branchId) {
   return `${base} Podemos recibir tu pedido ${resumen}.`;
 }
 
-
-
 // ============================================================
-// VERSIÓN ASÍNCRONA (usa API/BD) — para cliente en producción
+// Pausa de pedidos (estado operativo del local, server/branch-pause.js)
 // ============================================================
 
-// Convierte filas de branch_hours al formato de ventanas.
-export function rowsToWindows(rows) {
-  if (!rows?.length) return null;
-  const byDay = new Map();
-  for (const r of rows) {
-    const day = Number(r.day_of_week);
-    if (!Number.isInteger(day) || day < 0 || day > 6) continue;
-    if (!byDay.has(day)) byDay.set(day, []);
-    const from = minutesOf(r.open_time);
-    const to = minutesOf(r.close_time);
-    if (from === null || to === null) continue;
-    byDay.get(day).push({
-      from: r.open_time,
-      to: r.close_time,
-      closed: r.closed === 1,
-      slot: r.slot,
-    });
-  }
-  for (const arr of byDay.values()) {
-    arr.sort((a, b) => a.slot - b.slot);
-  }
-  const windows = [];
-  for (const [day, slots] of byDay) {
-    for (const s of slots) {
-      if (s.closed) continue;
-      windows.push({ days: [day], from: s.from, to: s.to });
-    }
-  }
-  return windows.length ? windows : null;
-}
-
-// Convierte un Date a wall clock en zona fija (Argentina).
+// Convierte un Date a wall clock en zona Argentina.
 export function toWallclock(date, timeZone = "America/Argentina/Buenos_Aires") {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -203,93 +172,6 @@ export function toWallclock(date, timeZone = "America/Argentina/Buenos_Aires") {
   if (h === 24) h = 0;
   return new Date(get("year"), get("month") - 1, get("day"), h, get("minute"), get("second"));
 }
-
-// Cliente: fetch a /api/branch-hours/:branchId
-export async function getBranchWindowsClient(branchId) {
-  try {
-    const res = await fetch(`/api/branch-hours/${encodeURIComponent(branchId)}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return rowsToWindows(data.rows || []);
-  } catch {
-    return null;
-  }
-}
-
-// ¿La fecha está dentro de alguna ventana? (usa BD con respaldo automático)
-export async function isOpenAtTimeAsync(branchId, date) {
-  const arDate = toWallclock(date);
-  const windows = await getBranchWindowsClient(branchId);
-  const finalWindows = windows ?? branchWindows(branchId);
-  if (!finalWindows) return true;
-  return isOpenAt(arDate, finalWindows);
-}
-
-export async function isNowOpenAsync(branchId) {
-  return isOpenAtTimeAsync(branchId, new Date());
-}
-
-// Próxima apertura (async)
-export async function nextOpeningAsync(branchId, from = new Date()) {
-  const arFrom = toWallclock(from);
-  const windows = await getBranchWindowsClient(branchId);
-  const finalWindows = windows ?? branchWindows(branchId);
-  if (!finalWindows) return null;
-  const start = new Date(arFrom);
-  start.setSeconds(0, 0);
-  const startMs = start.getTime();
-  for (let d = 0; d < 14; d++) {
-    const day = (start.getDay() + d) % 7;
-    const base = new Date(start.getFullYear(), start.getMonth(), start.getDate() + d, 0, 0, 0, 0);
-    for (const w of finalWindows) {
-      const fromMin = minutesOf(w.from);
-      if (fromMin === null || !w.days.includes(day)) continue;
-      const next = new Date(base);
-      next.setHours(Math.floor(fromMin / 60), fromMin % 60, 0, 0);
-      if (next.getTime() > startMs) return next;
-    }
-  }
-  return null;
-}
-
-// Etiqueta "Cerrado ahora · Abrimos …" (async)
-export async function closedLabelAsync(branchId, now = new Date()) {
-  if (await isOpenAtTimeAsync(branchId, now)) return null;
-  const next = await nextOpeningAsync(branchId, now);
-  if (!next) return null;
-  const sameDay = next.toDateString() === now.toDateString();
-  const time = next.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
-  if (sameDay) return `Cerrado ahora · Abrimos hoy a las ${time}`;
-  const day = next.toLocaleDateString("es-AR", { weekday: "long" });
-  return `Cerrado ahora · Abrimos ${day} a las ${time}`;
-}
-
-// Mensajes y resúmenes ASYNC
-export async function hoursSummaryAsync(branchId) {
-  const windows = await getBranchWindowsClient(branchId);
-  const finalWindows = windows ?? branchWindows(branchId);
-  if (!finalWindows) return "";
-  const grupos = [];
-  for (const w of finalWindows) {
-    const dias = [...new Set(w.days)].sort((a, b) => a - b).join(",");
-    const rango = `${w.from} a ${w.to}`;
-    const grupo = grupos.find((g) => g.dias === dias);
-    if (grupo) grupo.rangos.push(rango);
-    else grupos.push({ dias, etiqueta: daysLabel(w.days), rangos: [rango] });
-  }
-  return grupos.map((g) => `${g.etiqueta} ${g.rangos.join(" y ")}`).join(" · ");
-}
-
-export async function outsideHoursMessageAsync(branchId) {
-  const base = "Elegí una fecha y hora dentro de nuestros horarios.";
-  const resumen = await hoursSummaryAsync(branchId);
-  if (!resumen) return base;
-  return `${base} Podemos recibir tu pedido ${resumen}.`;
-}
-
-// ============================================================
-// Pausa de pedidos (estado operativo del local, server/branch-pause.js)
-// ============================================================
 
 export function arClockLabel(ms) {
   const d = toWallclock(new Date(ms), "America/Argentina/Buenos_Aires");
