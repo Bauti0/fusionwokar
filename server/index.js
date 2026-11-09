@@ -4795,6 +4795,22 @@ function indexTemplate() {
 // El ticket de impresión abre una ventana about:blank SIN <script> (solo un
 // <style>, permitido): la impresión no se ve afectada.
 function buildCsp(nonce) {
+  // En test con TEST_RELAX_CSP=1: CSP relajada para evitar timeouts en networkidle
+  // por keepalive requests. En producción NUNCA se aplica, incluso si la variable
+  // está puesta (fail-safe).
+  if (process.env.NODE_ENV !== "production" && process.env.TEST_RELAX_CSP === "1") {
+    return [
+      "default-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com data:",
+      "img-src 'self' data: blob:",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join("; ");
+  }
   return [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}'`,
