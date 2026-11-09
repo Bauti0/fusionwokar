@@ -15,6 +15,7 @@ import {
   hoursSummary as coreHoursSummary,
   outsideHoursMessage as coreOutsideHoursMessage,
   branchWindowsFallback,
+  getStructuredHours,
 } from "../utils/hoursCore.js";
 
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutos
@@ -141,6 +142,9 @@ export function useBranchHours(branchId) {
     return coreOutsideHoursMessage(effectiveWindows);
   };
 
+  // Horarios estructurados para UI (hoy + semana agrupada)
+  const structuredHours = effectiveWindows ? getStructuredHours(effectiveWindows) : null;
+
   return {
     // Estado
     loading,
@@ -153,6 +157,8 @@ export function useBranchHours(branchId) {
     closedLabel,
     hoursSummary,
     outsideHoursMessage,
+    // Horarios estructurados para presentación
+    structuredHours,
     // Ventanas crudas (para casos especiales)
     windows: effectiveWindows,
   };

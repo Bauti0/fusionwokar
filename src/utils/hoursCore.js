@@ -8,8 +8,8 @@
 
 const ARG_TZ = "America/Argentina/Buenos_Aires";
 
-const DAY_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-const DAY_LONG = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+export const DAY_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+export const DAY_LONG = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 
 // Convierte "HH:MM" a minutos desde medianoche. null si inválido.
 export function minutesOf(hhmm) {
@@ -172,6 +172,86 @@ export function rowsToWindows(rows) {
   // Devolver [] (array vacío) si había filas pero ninguna ventana abierta
   // Esto permite distinguir "sucursal cerrada todo el tiempo" de "sin datos".
   return windows;
+}
+
+// Estructura de horarios para presentación en UI
+// Retorna: {
+//   today: { day: number, label: string, slots: [{from, to}], isClosed: boolean, isToday: boolean },
+//   week: Array<{ day: number, label: string, short: string, slots: [{from, to}], isClosed: boolean, isToday: boolean, isFuture: boolean }>,
+//   grouped: Array<{ days: number[], label: string, slots: [{from, to}] }>  // para resumen compacto
+// }
+// week ordenado lunes a domingo, con today resaltado
+export function getStructuredHours(windows, now = new Date()) {
+  if (!windows?.length) {
+    // Sin datos: semana vacía, todos abiertos (compatibilidad)
+    const today = toWallclock(now).getDay();
+    const week = [];
+    for (let d = 0; d < 7; d++) {
+      const dayIndex = (d + 1) % 7; // lunes=0 ... domingo=6
+      week.push({
+        day: dayIndex,
+        label: DAY_LONG[dayIndex],
+        short: DAY_SHORT[dayIndex],
+        slots: [],
+        isClosed: false,
+        isToday: dayIndex === today,
+        isFuture: dayIndex !== today,
+      });
+    }
+    return { today: week[today], week, grouped: [] };
+  }
+
+  // Construir mapa día -> slots
+  const daySlots = new Map();
+  for (const w of windows) {
+    for (const d of w.days) {
+      if (!daySlots.has(d)) daySlots.set(d, []);
+      daySlots.get(d).push({ from: w.from, to: w.to });
+    }
+  }
+  // Ordenar slots por hora de apertura
+  for (const slots of daySlots.values()) {
+    slots.sort((a, b) => minutesOf(a.from) - minutesOf(b.from));
+  }
+
+  const arNow = toWallclock(now);
+  const today = arNow.getDay();
+
+  // Semana lunes a domingo
+  const week = [];
+  for (let d = 0; d < 7; d++) {
+    const dayIndex = (d + 1) % 7; // lunes=0 ... domingo=6
+    const slots = daySlots.get(dayIndex) || [];
+    const isClosed = slots.length === 0;
+    week.push({
+      day: dayIndex,
+      label: DAY_LONG[dayIndex],
+      short: DAY_SHORT[dayIndex],
+      slots,
+      isClosed,
+      isToday: dayIndex === today,
+      isFuture: dayIndex !== today,
+    });
+  }
+
+  // Hoy
+  const todayInfo = week.find(w => w.isToday) || week[0];
+
+  // Agrupación para resumen compacto (días consecutivos con mismos slots)
+  const grouped = [];
+  let currentGroup = null;
+  for (const w of week) {
+    const slotsKey = w.slots.map(s => `${s.from}-${s.to}`).join(",");
+    if (currentGroup && currentGroup.slotsKey === slotsKey) {
+      currentGroup.days.push(w.day);
+    } else {
+      if (currentGroup) grouped.push({ days: currentGroup.days, label: currentGroup.label, slots: currentGroup.slots });
+      currentGroup = { days: [w.day], label: w.label, slots: w.slots, slotsKey };
+    }
+  }
+  if (currentGroup) grouped.push({ days: currentGroup.days, label: currentGroup.label, slots: currentGroup.slots });
+
+  return { today: todayInfo, week, grouped };
 }
 
 // Fallback a branches.js
