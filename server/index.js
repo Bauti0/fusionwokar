@@ -941,14 +941,17 @@ async function validateOrderBody(body, { requireEmail = false, requirePhone = tr
       return { error: "La fecha programada no puede superar los 7 días" };
     }
     // El pedido programado debe caer dentro de la apertura de la sucursal
-    // (ventanas definidas en src/data/branches.js, hora local argentina)
+    // (ventanas definidas en branch_hours, hora local argentina)
     if (!(await isOpenAtTime(db, branch, toWallclock(iso, "America/Argentina/Buenos_Aires")))) {
-      // El texto se arma desde openWindows de la sucursal (ver BUG-04 en
-      // src/utils/schedule.js): no hay horarios escritos a mano acá.
-      return { error: await outsideHoursMessage(branch) };
+      // El texto se arma desde las ventanas de la BD (ver hoursCore.js): no hay horarios escritos a mano acá.
+      return { error: await outsideHoursMessage(db, branch) };
     }
     scheduled = iso.toISOString();
   }
+
+  // [B] DECISIÓN DE PRODUCTO: pedidos inmediatos (sin scheduledFor) NO se validan contra horarios.
+  // Entran aunque el local esté cerrado en ese momento. El checkout solo muestra estado informativo.
+  // La carga manual desde el panel (POST /api/admin/orders/manual) tampoco se bloquea por horarios.
   const menu = catalog[branch];
   const cleanItems = [];
   let total = 0;
@@ -3764,28 +3767,36 @@ app.put("/api/admin/branch-pause", requireAdmin, async (req, res) => {
 
 // ---------- horarios por sucursal (público: solo lectura) ----------
 // GET /api/branch-hours/:branchId → horarios de una sucursal para el cliente
-// Usa BD con respaldo a branches.js. Nunca falla mostrando todo cerrado.
+// Contrato: { source: "db" | "fallback", days: [...] }
+// - source = "db": la sucursal tiene filas en branch_hours (aunque estén todas cerradas)
+// - source = "fallback": 0 filas en BD o error de BD → usa branches.js
 // Cache-Control corto: el cliente re-pide cada 2-3 min y al enfocar la pestaña.
 app.get("/api/branch-hours/:branchId", async (req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   const branchId = String(req.params.branchId || "").trim();
+  if (!BRANCHES[branchId]) return res.status(404).json({ error: "Sucursal no encontrada" });
+
   try {
-    if (!BRANCHES[branchId]) return res.status(404).json({ error: "Sucursal no encontrada" });
-    const hours = await getBranchHoursForAdmin(db, branchId);
-    // Convertir a formato simple para el cliente
-    const days = [];
-    for (let d = 0; d < 7; d++) {
-      const day = hours[d] || { closed: true, slots: [] };
-      days.push({
-        dayOfWeek: d,
-        closed: day.closed,
-        slots: day.slots.map((s) => ({ open: s.open, close: s.close })),
-      });
+    const rows = await db
+      .prepare("SELECT * FROM branch_hours WHERE branch = ? ORDER BY day_of_week, slot")
+      .all(branchId);
+
+    if (rows.length > 0) {
+      // Sucursal con filas en BD: usar EXCLUSIVAMENTE la BD (aunque todas estén cerradas)
+      const hours = await getBranchHoursForAdmin(db, branchId);
+      const days = [];
+      for (let d = 0; d < 7; d++) {
+        const day = hours[d] || { closed: true, slots: [] };
+        days.push({
+          dayOfWeek: d,
+          closed: day.closed,
+          slots: day.slots.map((s) => ({ open: s.open, close: s.close })),
+        });
+      }
+      return res.json({ source: "db", days });
     }
-    res.json({ branch: branchId, days });
-  } catch (err) {
-    console.error("GET /api/branch-hours/:branchId:", err.message);
-    // Respaldo: devolver horarios de branches.js para no romper el cliente
+
+    // 0 filas en BD → fallback a branches.js
     const b = BRANCHES[branchId];
     if (b?.openWindows) {
       const days = [];
@@ -3793,9 +3804,27 @@ app.get("/api/branch-hours/:branchId", async (req, res) => {
         const slots = b.openWindows.filter((w) => w.days.includes(d)).map((w) => ({ open: w.from, close: w.to }));
         days.push({ dayOfWeek: d, closed: slots.length === 0, slots });
       }
-      return res.json({ branch: branchId, days, fallback: true });
+      return res.json({ source: "fallback", days });
     }
-    res.status(500).json({ error: "Error interno" });
+
+    // Sin datos en ningún lado → abierto (compatibilidad)
+    const days = Array.from({ length: 7 }, (_, d) => ({ dayOfWeek: d, closed: false, slots: [] }));
+    return res.json({ source: "fallback", days });
+  } catch (err) {
+    console.error("GET /api/branch-hours/:branchId:", err.message);
+    // Error de BD → fallback a branches.js
+    const b = BRANCHES[branchId];
+    if (b?.openWindows) {
+      const days = [];
+      for (let d = 0; d < 7; d++) {
+        const slots = b.openWindows.filter((w) => w.days.includes(d)).map((w) => ({ open: w.from, close: w.to }));
+        days.push({ dayOfWeek: d, closed: slots.length === 0, slots });
+      }
+      return res.json({ source: "fallback", days });
+    }
+    // Sin datos en ningún lado → abierto
+    const days = Array.from({ length: 7 }, (_, d) => ({ dayOfWeek: d, closed: false, slots: [] }));
+    return res.json({ source: "fallback", days });
   }
 });
 

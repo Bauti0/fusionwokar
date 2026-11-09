@@ -1,86 +1,43 @@
 // ============================================================
 // Horarios de apertura por sucursal — Lado SERVER
 // Funciones puras que leen de la BD (branch_hours) con respaldo.
+// Usa el núcleo compartido de src/utils/hoursCore.js
 // ============================================================
 import { BRANCHES } from "../src/data/branches.js";
+import {
+  toWallclock,
+  isOpenAt,
+  nextOpening as coreNextOpening,
+  closedLabel as coreClosedLabel,
+  hoursSummary as coreHoursSummary,
+  outsideHoursMessage as coreOutsideHoursMessage,
+  rowsToWindows,
+  branchWindowsFallback,
+} from "../src/utils/hoursCore.js";
 
-function minutesOf(hhmm) {
-  const [h, m] = String(hhmm || "").split(":").map(Number);
-  if (Number.isNaN(h) || Number.isNaN(m)) return null;
-  return h * 60 + m;
+export { toWallclock, isOpenAt, rowsToWindows, branchWindowsFallback };
+
+// Validación de HH:MM (0-23:0-59)
+export function isValidHHMM(hhmm) {
+  if (typeof hhmm !== "string") return false;
+  const m = hhmm.match(/^(\d{2}):(\d{2})$/);
+  if (!m) return false;
+  const h = Number(m[1]);
+  const m2 = Number(m[2]);
+  return h >= 0 && h <= 23 && m2 >= 0 && m2 <= 59;
 }
 
-function rowsToWindows(rows) {
-  if (!rows?.length) return null;
-  const byDay = new Map();
-  for (const r of rows) {
-    const day = Number(r.day_of_week);
-    if (!Number.isInteger(day) || day < 0 || day > 6) continue;
-    if (!byDay.has(day)) byDay.set(day, []);
-    const from = minutesOf(r.open_time);
-    const to = minutesOf(r.close_time);
-    if (from === null || to === null) continue;
-    byDay.get(day).push({
-      from: r.open_time,
-      to: r.close_time,
-      closed: r.closed === 1,
-      slot: r.slot,
-    });
-  }
-  for (const arr of byDay.values()) {
-    arr.sort((a, b) => a.slot - b.slot);
-  }
-  const windows = [];
-  for (const [day, slots] of byDay) {
-    for (const s of slots) {
-      if (s.closed) continue;
-      windows.push({ days: [day], from: s.from, to: s.to });
-    }
-  }
-  return windows.length ? windows : null;
+// ¿La fecha está dentro de alguna ventana de apertura? (server)
+// date se evalúa SIEMPRE en America/Argentina/Buenos_Aires
+export async function isOpenAtTime(db, branchId, date) {
+  const arDate = toWallclock(date);
+  const windows = await getBranchWindows(db, branchId);
+  const finalWindows = windows ?? branchWindowsFallback(branchId, BRANCHES);
+  if (!finalWindows) return true;
+  return isOpenAt(arDate, finalWindows);
 }
 
-// Convierte un Date a wall clock en zona Argentina
-export function toWallclock(date, timeZone = "America/Argentina/Buenos_Aires") {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-  const get = (t) => Number(parts.find((p) => p.type === t)?.value);
-  let h = get("hour");
-  if (h === 24) h = 0;
-  return new Date(get("year"), get("month") - 1, get("day"), h, get("minute"), get("second"));
-}
-
-function isOpenAt(date, windows) {
-  const day = date.getDay();
-  const mins = date.getHours() * 60 + date.getMinutes();
-  for (const w of windows) {
-    const from = minutesOf(w.from);
-    const to = minutesOf(w.to);
-    if (from === null || to === null) continue;
-    if (from > to) {
-      if (w.days.includes(day) && mins >= from) return true;
-      const prevDay = (day + 6) % 7;
-      if (w.days.includes(prevDay) && mins < to) return true;
-    } else {
-      if (w.days.includes(day) && mins >= from && mins < to) return true;
-    }
-  }
-  return false;
-}
-
-function branchWindowsFallback(branchId) {
-  const b = BRANCHES[branchId];
-  return b && Array.isArray(b.openWindows) && b.openWindows.length ? b.openWindows : null;
-}
-
+// Obtiene ventanas desde la BD
 export async function getBranchWindows(db, branchId) {
   try {
     const rows = await db
@@ -92,59 +49,20 @@ export async function getBranchWindows(db, branchId) {
   }
 }
 
-// ¿La fecha está dentro de alguna ventana de apertura? (server)
-// date se evalúa SIEMPRE en America/Argentina/Buenos_Aires
-export async function isOpenAtTime(db, branchId, date) {
-  const arDate = toWallclock(date);
-  const windows = await getBranchWindows(db, branchId);
-  const finalWindows = windows ?? branchWindowsFallback(branchId);
-  if (!finalWindows) return true;
-  return isOpenAt(arDate, finalWindows);
-}
-
 // Próxima apertura
 export async function nextOpening(db, branchId, from = new Date()) {
-  const arFrom = toWallclock(from);
   const windows = await getBranchWindows(db, branchId);
-  const finalWindows = windows ?? branchWindowsFallback(branchId);
+  const finalWindows = windows ?? branchWindowsFallback(branchId, BRANCHES);
   if (!finalWindows) return null;
-  const start = new Date(arFrom);
-  start.setSeconds(0, 0);
-  const startMs = start.getTime();
-  for (let d = 0; d < 14; d++) {
-    const day = (start.getDay() + d) % 7;
-    const base = new Date(start.getFullYear(), start.getMonth(), start.getDate() + d, 0, 0, 0, 0);
-    for (const w of finalWindows) {
-      const fromMin = minutesOf(w.from);
-      if (fromMin === null || !w.days.includes(day)) continue;
-      const next = new Date(base);
-      next.setHours(Math.floor(fromMin / 60), fromMin % 60, 0, 0);
-      if (next.getTime() > startMs) return next;
-    }
-  }
-  return null;
+  return coreNextOpening(finalWindows, from);
 }
 
 // Etiqueta "Cerrado ahora · Abrimos …"
 export async function closedLabel(db, branchId, now = new Date()) {
-  if (await isOpenAtTime(db, branchId, now)) return null;
-  const next = await nextOpening(db, branchId, now);
-  if (!next) return null;
-  const sameDay = next.toDateString() === now.toDateString();
-  const time = next.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
-  if (sameDay) return `Cerrado ahora · Abrimos hoy a las ${time}`;
-  const day = next.toLocaleDateString("es-AR", { weekday: "long" });
-  return `Cerrado ahora · Abrimos ${day} a las ${time}`;
-}
-
-// Validación de HH:MM (0-23:0-59)
-export function isValidHHMM(hhmm) {
-  if (typeof hhmm !== "string") return false;
-  const m = hhmm.match(/^(\d{2}):(\d{2})$/);
-  if (!m) return false;
-  const h = Number(m[1]);
-  const m2 = Number(m[2]);
-  return h >= 0 && h <= 23 && m2 >= 0 && m2 <= 59;
+  const windows = await getBranchWindows(db, branchId);
+  const finalWindows = windows ?? branchWindowsFallback(branchId, BRANCHES);
+  if (!finalWindows) return null;
+  return coreClosedLabel(finalWindows, now);
 }
 
 // Validación completa de horarios de una sucursal
@@ -275,65 +193,35 @@ export async function getBranchHoursForAdmin(db, branchId) {
 
   // Ordenar slots por slot
   for (const d of Object.values(byDay)) {
-    if (d.slots) d.slots.sort((a, b) => {
-      const ao = minutesOf(a.open), ac = minutesOf(a.close);
-      const bo = minutesOf(b.open), bc = minutesOf(b.close);
-      return ao - bo || ac - bc;
-    });
+    if (d.slots)
+      d.slots.sort((a, b) => {
+        const ao = minutesOf(a.open),
+          ac = minutesOf(a.close);
+        const bo = minutesOf(b.open),
+          bc = minutesOf(b.close);
+        return ao - bo || ac - bc;
+      });
   }
 
   return byDay;
 }
 
-const DAY_SHORT = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-const DAY_LONG = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
-
-function daysLabel(days) {
-  const set = new Set(days);
-  if (set.size === 7) return "todos los días";
-  const tramos = [];
-  let actual = null;
-  for (let d = 0; d < 7; d++) {
-    if (set.has(d)) {
-      if (actual) actual[1] = d;
-      else actual = [d, d];
-    } else if (actual) {
-      tramos.push(actual);
-      actual = null;
-    }
-  }
-  if (actual) tramos.push(actual);
-  if (tramos.length === 1 && tramos[0][0] === tramos[0][1]) return DAY_LONG[tramos[0][0]];
-  return tramos
-    .map(([a, b]) => {
-      if (a === b) return DAY_SHORT[a];
-      return b - a === 1 ? `${DAY_SHORT[a]} y ${DAY_SHORT[b]}` : `${DAY_SHORT[a]}–${DAY_SHORT[b]}`;
-    })
-    .join(" y ");
-}
-
-async function getBranchHoursForSummary(db, branchId) {
-  const windows = await getBranchWindows(db, branchId);
-  return windows ?? branchWindowsFallback(branchId);
-}
-
+// Convierte una fila de products en el objeto de producto del menú
 export async function hoursSummary(db, branchId) {
-  const windows = await getBranchHoursForSummary(db, branchId);
-  if (!windows) return "";
-  const grupos = [];
-  for (const w of windows) {
-    const dias = [...new Set(w.days)].sort((a, b) => a - b).join(",");
-    const rango = `${w.from} a ${w.to}`;
-    const grupo = grupos.find((g) => g.dias === dias);
-    if (grupo) grupo.rangos.push(rango);
-    else grupos.push({ dias, etiqueta: daysLabel(w.days), rangos: [rango] });
-  }
-  return grupos.map((g) => `${g.etiqueta} ${g.rangos.join(" y ")}`).join(" · ");
+  const windows = await getBranchWindows(db, branchId);
+  const finalWindows = windows ?? branchWindowsFallback(branchId, BRANCHES);
+  return coreHoursSummary(finalWindows);
 }
 
 export async function outsideHoursMessage(db, branchId) {
-  const base = "Elegí una fecha y hora dentro de nuestros horarios.";
-  const resumen = await hoursSummary(db, branchId);
-  if (!resumen) return base;
-  return `${base} Podemos recibir tu pedido ${resumen}.`;
+  const windows = await getBranchWindows(db, branchId);
+  const finalWindows = windows ?? branchWindowsFallback(branchId, BRANCHES);
+  return coreOutsideHoursMessage(finalWindows);
+}
+
+// Helper local para validación
+function minutesOf(hhmm) {
+  const [h, m] = String(hhmm || "").split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
 }
