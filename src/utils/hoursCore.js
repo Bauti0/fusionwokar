@@ -140,6 +140,29 @@ export function closedLabel(windows, now = new Date()) {
   return `Cerrado ahora · Abrimos ${day} a las ${time}`;
 }
 
+// Próxima apertura para un día específico (o null si no hay)
+export function getNextOpeningForDay(windows, dayIndex, from = new Date()) {
+  if (!windows?.length) return null;
+  const arFrom = toWallclock(from);
+  const start = new Date(arFrom);
+  start.setSeconds(0, 0);
+  const startMs = start.getTime();
+  // Buscar en los próximos 14 días
+  for (let d = 0; d < 14; d++) {
+    const day = (start.getDay() + d) % 7;
+    if (day !== dayIndex) continue;
+    const base = new Date(start.getFullYear(), start.getMonth(), start.getDate() + d, 0, 0, 0, 0);
+    for (const w of windows) {
+      const fromMin = minutesOf(w.from);
+      if (fromMin === null || !w.days.includes(day)) continue;
+      const next = new Date(base);
+      next.setHours(Math.floor(fromMin / 60), fromMin % 60, 0, 0);
+      if (next.getTime() > startMs) return next;
+    }
+  }
+  return null;
+}
+
 // Convierte filas de branch_hours (DB) al formato de ventanas
 // rows: [{ day_of_week, slot, open_time, close_time, closed }]
 export function rowsToWindows(rows) {
@@ -223,12 +246,14 @@ export function getStructuredHours(windows, now = new Date()) {
     const dayIndex = (d + 1) % 7; // lunes=0 ... domingo=6
     const slots = daySlots.get(dayIndex) || [];
     const isClosed = slots.length === 0;
+    const isNowOpen = !isClosed && isOpenAt(arNow, [{ days: [dayIndex], from: slots[0]?.from || "00:00", to: slots[slots.length - 1]?.to || "23:59" }]);
     week.push({
       day: dayIndex,
       label: DAY_LONG[dayIndex],
       short: DAY_SHORT[dayIndex],
       slots,
-      isClosed,
+      isClosed, // día sin franjas (cerrado todo el día)
+      isNowOpen, // está abierto AHORA
       isToday: dayIndex === today,
       isFuture: dayIndex !== today,
     });
@@ -236,6 +261,11 @@ export function getStructuredHours(windows, now = new Date()) {
 
   // Hoy
   const todayInfo = week.find(w => w.isToday) || week[0];
+
+  // Próxima apertura para hoy (si está cerrado ahora pero tiene franjas)
+  const nextOpeningForToday = !todayInfo.isClosed && !todayInfo.isNowOpen
+    ? getNextOpeningForDay(windows, todayInfo.day, now)
+    : null;
 
   // Agrupación para resumen compacto (días consecutivos con mismos slots)
   const grouped = [];
@@ -251,7 +281,7 @@ export function getStructuredHours(windows, now = new Date()) {
   }
   if (currentGroup) grouped.push({ days: currentGroup.days, label: currentGroup.label, slots: currentGroup.slots });
 
-  return { today: todayInfo, week, grouped };
+  return { today: { ...todayInfo, nextOpening: nextOpeningForToday }, week, grouped };
 }
 
 // Fallback a branches.js

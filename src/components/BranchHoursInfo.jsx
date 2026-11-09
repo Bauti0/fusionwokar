@@ -34,7 +34,15 @@ function getStatusLabel(branch, pause, structuredHours) {
   if (structuredHours.today.isClosed) {
     return { label: "Cerrado", variant: "closed" };
   }
-  return { label: "Abierto ahora", variant: "open" };
+  if (structuredHours.today.isNowOpen) {
+    return { label: "Abierto ahora", variant: "open" };
+  }
+  // Tiene franjas pero está cerrado ahora -> mostrar próxima apertura
+  if (structuredHours.today.nextOpening) {
+    const time = structuredHours.today.nextOpening.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
+    return { label: `Abre a las ${time}`, variant: "closed" };
+  }
+  return { label: "Cerrado", variant: "closed" };
 }
 
 export default function BranchHoursInfo({
@@ -51,10 +59,8 @@ export default function BranchHoursInfo({
 
   const togglePanel = () => setIsOpen(!isOpen);
 
-  // Panel cerrado por defecto, se cierra al cambiar de sucursal
-  // (el key en el padre hará que se remonte si cambia branch)
-
-  const hasPanelContent = grouped.length > 0 || (today?.isClosed ?? false);
+  // Panel content exists if there are grouped days OR if today has slots (even if currently closed)
+  const hasPanelContent = grouped.length > 0 || (today?.slots?.length ?? 0) > 0;
 
   if (!today && !mode && !pause) {
     return null;
@@ -84,6 +90,11 @@ export default function BranchHoursInfo({
             </>
           ) : (
             <span className="hours-info__slots">Sin datos</span>
+          )}
+          {today && !today.isClosed && !today.isNowOpen && today.nextOpening && (
+            <span className="hours-info__next-opening">
+              Abre a las {today.nextOpening.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false })}
+            </span>
           )}
           <span className={`hours-info__status hours-info__status--${status.variant}`}>
             <span className="hours-info__status-dot" aria-hidden="true" />
