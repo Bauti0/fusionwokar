@@ -12,7 +12,7 @@
 // "schedule") que el checkout mapea al elemento del DOM a enfocar.
 // ============================================================
 import { isValidPhone, isValidEmail } from "./validation.js";
-import { isOpenAtTime } from "./schedule.js";
+import { toWallclock, isOpenAt, branchWindowsFallback } from "./hoursCore.js";
 // El ejemplo del celular va por sucursal (2262 en Necochea, 249 en Tandil):
 // estaba fijo en "Ej: 2262 555555" y le mostrábamos el código de área de
 // Necochea a los clientes de Tandil. Cae en el de Necochea si no hay sucursal.
@@ -32,6 +32,9 @@ export function validateCheckoutForm(
     shippingError = "",
     scheduleMode = "asap",
     scheduledAt = "",
+    // Ventanas de apertura calculadas con zona Argentina (desde useBranchHours).
+    // Si no se pasan, se usa branches.js como respaldo con zona Argentina.
+    branchWindows = null,
   },
   now = Date.now()
 ) {
@@ -40,6 +43,9 @@ export function validateCheckoutForm(
   // La cotización automática del envío existe en sucursales con config de envío.
   const branch = BRANCHES[branchId];
   const quotesShipping = branch?.supportsDelivery && branch?.shippingConfig;
+
+  // Ventanas efectivas: las pasadas por parámetro (desde hook) o fallback a branches.js
+  const windows = branchWindows ?? branchWindowsFallback(branchId, BRANCHES);
 
   // El orden ES el orden del formulario: con varios problemas a la vez,
   // se reporta el primero para que el checkout scrollee hasta ahí.
@@ -91,7 +97,9 @@ export function validateCheckoutForm(
     if (when.getTime() < now + 10 * 60000) {
       return { field: "schedule", message: "Elegí una hora con al menos 10 minutos de anticipación." };
     }
-    if (!isOpenAtTime(branchId, when)) {
+    // Validar contra horarios con zona Argentina
+    const arWhen = toWallclock(when);
+    if (windows && !isOpenAt(arWhen, windows)) {
       return { field: "schedule", message: "Elegí una hora dentro de nuestra apertura para programar el pedido." };
     }
   }
