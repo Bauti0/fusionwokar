@@ -241,6 +241,40 @@ describe("authenticateAdmin", () => {
     const serializadas = respuestas.map((r) => JSON.stringify(r));
     assert.ok(serializadas.every((s) => s === serializadas[0]), `respuestas distintas: ${serializadas}`);
   });
+
+  it("sin ADMIN_PASSWORD no hay fallback a contraseña por defecto: login del superadmin falla", async () => {
+    // F-003: al remover el fallback `|| "fusionwok"` de server/index.js:183,
+    // cuando ADMIN_PASSWORD no está definido, incluso la contraseña vieja
+    // por defecto no debe autenticar. Fail-closed: sin variable de entorno,
+    // no hay superadmin.
+    const r = await authenticateAdmin(db, {
+      username: "admin",
+      password: "fusionwok",
+      envUser: "admin",
+      envPassword: undefined,
+    });
+    assert.equal(r.ok, false);
+  });
+
+  it("authenticateAdmin no escribe el resultado en console.error (no filtra rol/branch/userId a logs del servidor)", async () => {
+    // F-001: se removió el console.error que volcaba el objeto completo de
+    // authenticateAdmin a stderr en cada login (server/index.js:2582).
+    // Verificamos que authenticateAdmin no llame a console con datos sensibles.
+    const logCalls = [];
+    const originalError = console.error;
+    console.error = (...args) => logCalls.push(args);
+    try {
+      await authenticateAdmin(db, {
+        username: "admin",
+        password: "clave-del-env",
+        envUser: "admin",
+        envPassword: "clave-del-env",
+      });
+    } finally {
+      console.error = originalError;
+    }
+    assert.equal(logCalls.length, 0, `console.error no debe llamarse: ${JSON.stringify(logCalls)}`);
+  });
 });
 
 describe("resolveAdminFromToken", () => {

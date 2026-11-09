@@ -129,12 +129,16 @@ export default function BranchHoursInfo({
               <div key={idx} className="hours-info__group">
                 <dt className="hours-info__day-label">{formatDayRange(group.days)}</dt>
                 <dd className="hours-info__day-slots">
-                  {group.slots.map((s, si) => (
-                    <span key={si} className="hours-info__slot">
-                      {s.from} – {s.to}
-                      {si < group.slots.length - 1 && <span className="hours-info__slot-sep">·</span>}
-                    </span>
-                  ))}
+                  {group.slots.length ? (
+                    group.slots.map((s, si) => (
+                      <span key={si} className="hours-info__slot">
+                        {s.from} – {s.to}
+                        {si < group.slots.length - 1 && <span className="hours-info__slot-sep">·</span>}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="hours-info__slot hours-info__slot--closed">Cerrado</span>
+                  )}
                 </dd>
               </div>
             ))}

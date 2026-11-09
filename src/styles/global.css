@@ -1807,8 +1807,13 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .hours-info {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   font-size: 14px;
+  font-family: var(--font-body);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  padding: 14px 16px;
 }
 
 /* Separación del título "NUESTRO MENÚ" en la vista Menu */
@@ -1819,15 +1824,15 @@ body:has(.admin-login) { background: var(--color-secondary); }
 /* Fila base: icono fijo 20px + contenido flexible */
 .hours-info__row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
+  font-family: var(--font-body);
 }
 .hours-info__icon {
   width: 20px;
   height: 20px;
   flex-shrink: 0;
   color: var(--color-text-soft);
-  margin-top: 2px;
 }
 
 /* Fila principal: horarios de hoy + estado + toggle — en su propia línea */
@@ -1871,10 +1876,11 @@ body:has(.admin-login) { background: var(--color-secondary); }
   gap: 6px;
   padding: 3px 10px;
   border-radius: 999px;
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
   flex-shrink: 0;
+  font-family: var(--font-body);
 }
 .hours-info__status-dot {
   width: 7px;
@@ -1915,10 +1921,11 @@ body:has(.admin-login) { background: var(--color-secondary); }
   background: transparent;
   border: none;
   color: var(--color-text-soft);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1;
   border-radius: var(--radius-sm);
+  font-family: var(--font-body);
   min-height: 40px;
   min-width: 40px;
   transition: color 0.15s var(--ease), background 0.15s var(--ease);
@@ -1949,7 +1956,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   padding: 3px 10px;
   background: var(--color-primary-soft);
   color: var(--color-primary);
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 600;
   border-radius: var(--radius-sm);
   white-space: nowrap;
@@ -1997,7 +2004,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .hours-info__day-label {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text);
   display: flex;
   align-items: center;
@@ -2009,7 +2016,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 8px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text-soft);
 }
 .hours-info__slot {
@@ -2019,6 +2026,7 @@ body:has(.admin-login) { background: var(--color-secondary); }
 .hours-info__slot-sep {
   color: var(--color-text-soft);
   opacity: 0.5;
+  margin: 0 4px;
 }
 .hours-info__slot--closed {
   color: var(--color-text-mute);
@@ -2055,9 +2063,10 @@ body:has(.admin-login) { background: var(--color-secondary); }
 /* Dirección y envío — filas propias debajo del panel */
 .hours-info__address,
 .hours-info__delivery {
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--color-text-soft);
   line-height: 1.4;
+  font-family: var(--font-body);
 }
 .hours-info__address,
 .hours-info__delivery {
@@ -2075,9 +2084,10 @@ body:has(.admin-login) { background: var(--color-secondary); }
 }
 .hours-info__pause {
   flex: 1;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-danger-text);
   line-height: 1.4;
+  font-family: var(--font-body);
 }
 
 /* Responsive */
@@ -2093,20 +2103,20 @@ body:has(.admin-login) { background: var(--color-secondary); }
   }
   .hours-info__status {
     padding: 2px 8px;
-    font-size: 12px;
+    font-size: 13.5px;
   }
   .hours-info__toggle {
-    font-size: 12.5px;
+    font-size: 13.5px;
   }
   .hours-info__week {
     grid-template-columns: 80px 1fr;
     gap: 6px 10px;
   }
   .hours-info__day-label {
-    font-size: 12.5px;
+    font-size: 13.5px;
   }
   .hours-info__day-slots {
-    font-size: 12.5px;
+    font-size: 13.5px;
   }
   /* En móvil: etiqueta y botón en segunda línea de la misma fila */
   .hours-info__content {
@@ -4394,6 +4404,65 @@ body:has(.admin-login) { background: var(--color-secondary); }
   .admin-nav__btn { width: 100%; text-align: left; }
   .admin__body { flex: 1; min-width: 0; max-width: none; padding-bottom: 8px; }
 }
+
+	/* Sidebar del admin colapsable: achica el ancho y oculta etiquetas/grupos */
+	.admin-nav--collapsed {
+	  width: 64px;
+	}
+	.admin-nav--collapsed .admin-nav__btn {
+	  display: flex;
+	  align-items: center;
+	  justify-content: center;
+	  flex-direction: column;
+	  width: 100%;
+	  padding: 10px 0;
+	  text-align: center;
+	}
+	.admin-nav--collapsed .admin-nav__label,
+	.admin-nav--collapsed .admin-nav__group {
+	  display: none;
+	}
+	.admin-nav--collapsed .admin-nav__badge,
+	.admin-nav--collapsed .admin-nav__commit {
+	  display: none;
+	}
+	.admin-nav__collapse-icon {
+	  transition: transform 0.2s var(--ease);
+	}
+	.admin-nav--collapsed .admin-nav__collapse-icon {
+	  transform: rotate(-90deg);
+	}
+	/* Botón de contraer/expandir sidebar: mínimo espacio, solo el ícono */
+	.admin-nav__collapse {
+	  display: inline-flex;
+	  align-items: center;
+	  justify-content: center;
+	  width: 24px;
+	  height: 24px;
+	  margin: 0 auto 6px;
+	  border: 1px solid var(--color-border);
+	  border-radius: var(--radius-full);
+	  background: var(--color-surface);
+	  color: var(--color-text-soft);
+	  cursor: pointer;
+	  transition: background 0.15s var(--ease), color 0.15s var(--ease), border-color 0.15s var(--ease);
+	}
+	.admin-nav__collapse:hover {
+	  background: var(--color-primary);
+	  color: #fff;
+	  border-color: var(--color-primary);
+	}
+	.admin-nav__collapse:focus-visible {
+	  outline: none;
+	  box-shadow: var(--ring);
+	}
+	.admin-nav__collapse svg {
+	  width: 12px;
+	  height: 12px;
+	}
+	.admin-nav--collapsed .admin-nav__collapse {
+	  margin-bottom: 3px;
+	}
 
 @media (min-width: 1100px) {
   .admin__header-inner { max-width: 1280px; }

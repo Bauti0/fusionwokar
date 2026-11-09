@@ -1,0 +1,47 @@
+{
+  "run_id": "run-1",
+  "units": [
+    {
+      "id": "unit-auth-login",
+      "subsystem": "server/auth.js + server/index.js (POST /api/admin/login)",
+      "boundary": "client -> admin panel authentication",
+      "attack_class": "information_disclosure_via_debug_logging",
+      "status": "fixed",
+      "fingerprint": "auth-debug-log-2582"
+    },
+    {
+      "id": "unit-admin-products-debug",
+      "subsystem": "server/index.js (POST /api/admin/products)",
+      "boundary": "client -> admin API response",
+      "attack_class": "information_disclosure_via_debug_header",
+      "status": "fixed",
+      "fingerprint": "products-debug-header-4004"
+    },
+    {
+      "id": "unit-default-admin-password",
+      "subsystem": "server/index.js (line 183) + server/config.js (validateConfig)",
+      "boundary": "client -> admin panel (default credentials)",
+      "attack_class": "weak_default_credentials",
+      "status": "fixed",
+      "fingerprint": "default-admin-password-183"
+    },
+    {
+      "id": "unit-webhook-timestamp",
+      "subsystem": "server/mp.js (verifyWebhookSignature)",
+      "boundary": "external -> payment webhook",
+      "attack_class": "replay_attack",
+      "status": "deferred",
+      "fingerprint": "webhook-timestamp-no-age-validation",
+      "reason": "Documented design decision with mitigating controls (state re-read from MP API). Needs owner confirmation before classifying."
+    },
+    {
+      "id": "unit-by-phone-enumeration",
+      "subsystem": "server/index.js (GET /api/orders/by-phone/:phone)",
+      "boundary": "client -> order data by phone",
+      "attack_class": "information_disclosure",
+      "status": "deferred",
+      "fingerprint": "by-phone-order-listing",
+      "reason": "Documented rate-limited endpoint; known limitation per code comments. Needs owner confirmation before classifying."
+    }
+  ]
+}

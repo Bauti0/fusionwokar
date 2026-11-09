@@ -30,7 +30,7 @@ import { previewOrderEdit, formatAuditEdits } from "../utils/orderEdit.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import { startNewOrderLoop, stopNewOrderLoop, playConfirmBeep, unlockAudio, loadAudioEnabled, saveAudioEnabled, shouldPlayAlert, shouldShowUnlockBanner } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
-import { IconEmptySearch, IconRepeat, IconPlus, IconLocation, IconVolume2, IconVolumeX, IconAlertCircle, IconCart, IconChart, IconMoney, IconBowlSteam, IconChopsticks, IconTag, IconUser, IconLock, IconBell, IconSearch, IconChat, IconDelivery, IconClock, IconCard, IconCash, IconBank, IconTakeout, IconX, IconReceipt, IconOrderStatus } from "./ui/icons.jsx";
+import { IconEmptySearch, IconRepeat, IconPlus, IconLocation, IconVolume2, IconVolumeX, IconAlertCircle, IconCart, IconChart, IconMoney, IconBowlSteam, IconChopsticks, IconTag, IconUser, IconLock, IconBell, IconSearch, IconChat, IconDelivery, IconClock, IconCard, IconCash, IconBank, IconTakeout, IconX, IconReceipt, IconOrderStatus, IconChevronDown } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
@@ -164,6 +164,7 @@ function editDraftFrom(order) {
 
 export default function AdminPanel({ me, onLogout }) {
   const [section, setSection] = useState("orders"); // "orders" | "stats" | "products" | "coupons"
+  const [navCollapsed, setNavCollapsed] = useState(false);
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -758,7 +759,15 @@ export default function AdminPanel({ me, onLogout }) {
       )}
 
       <div className="admin-layout">
-        <nav className="admin-nav">
+        <nav className={`admin-nav ${navCollapsed ? "admin-nav--collapsed" : ""}`}>
+          <button
+            type="button"
+            className="admin-nav__collapse"
+            aria-label={navCollapsed ? "Expandir menú" : "Contraer menú"}
+            onClick={() => setNavCollapsed(!navCollapsed)}
+          >
+            <IconChevronDown className="admin-nav__collapse-icon" width="16" height="16" />
+          </button>
           {/* Los rótulos de grupo se ven solo en desktop (sidebar):
               en móvil son display:none y la nav sigue de píldoras. */}
           <span className="admin-nav__group">Operación</span>
@@ -767,22 +776,26 @@ export default function AdminPanel({ me, onLogout }) {
             className={`admin-nav__btn ${section === "orders" ? "is-active" : ""}`}
             onClick={() => setSection("orders")}
           >
-            <IconCart /> Pedidos
+            <IconCart />
+            <span className="admin-nav__label">Pedidos</span>
             {unseenIds.size > 0 && <span className="admin-nav__badge">{unseenIds.size}</span>}
           </button>
+          <span className="admin-nav__group">Ventas y estadísticas</span>
           <button
             data-testid="nav-stats"
             className={`admin-nav__btn ${section === "stats" ? "is-active" : ""}`}
             onClick={() => setSection("stats")}
           >
-            <IconChart /> Estadísticas
+            <IconChart />
+            <span className="admin-nav__label">Estadísticas</span>
           </button>
           <button
             data-testid="nav-sales"
             className={`admin-nav__btn ${section === "sales" ? "is-active" : ""}`}
             onClick={() => setSection("sales")}
           >
-            <IconMoney /> Ventas
+            <IconMoney />
+            <span className="admin-nav__label">Ventas</span>
           </button>
           <span className="admin-nav__group">Catálogo</span>
           <button
@@ -790,21 +803,24 @@ export default function AdminPanel({ me, onLogout }) {
             className={`admin-nav__btn ${section === "products" ? "is-active" : ""}`}
             onClick={() => setSection("products")}
           >
-            <IconBowlSteam /> Productos
+            <IconBowlSteam />
+            <span className="admin-nav__label">Productos</span>
           </button>
           <button
             data-testid="nav-extras"
             className={`admin-nav__btn ${section === "extras" ? "is-active" : ""}`}
             onClick={() => setSection("extras")}
           >
-            <IconChopsticks /> Adicionales
+            <IconChopsticks />
+            <span className="admin-nav__label">Adicionales</span>
           </button>
           <button
             data-testid="nav-coupons"
             className={`admin-nav__btn ${section === "coupons" ? "is-active" : ""}`}
             onClick={() => setSection("coupons")}
           >
-            <IconTag /> Cupones
+            <IconTag />
+            <span className="admin-nav__label">Cupones</span>
           </button>
           <span className="admin-nav__group">Administración</span>
           <button
@@ -812,7 +828,8 @@ export default function AdminPanel({ me, onLogout }) {
             className={`admin-nav__btn ${section === "customers" ? "is-active" : ""}`}
             onClick={() => setSection("customers")}
           >
-            <IconUser /> Clientes
+            <IconUser />
+            <span className="admin-nav__label">Clientes</span>
           </button>
           {me?.role === "superadmin" && (
             <button
@@ -820,7 +837,8 @@ export default function AdminPanel({ me, onLogout }) {
               className={`admin-nav__btn ${section === "users" ? "is-active" : ""}`}
               onClick={() => setSection("users")}
             >
-              <IconLock /> Cuentas
+              <IconLock />
+              <span className="admin-nav__label">Cuentas</span>
             </button>
           )}
           <button
@@ -828,7 +846,8 @@ export default function AdminPanel({ me, onLogout }) {
             className={`admin-nav__btn ${section === "horarios" ? "is-active" : ""}`}
             onClick={() => setSection("horarios")}
           >
-            <IconClock /> Horarios
+            <IconClock />
+            <span className="admin-nav__label">Horarios</span>
           </button>
           {/* Commit con el que se compiló la app (lo inyecta vite.config.js
               al hacer el build). Sirve para saber de un vistazo qué versión

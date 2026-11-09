@@ -1,0 +1,22 @@
+{
+  "run_id": "run-1",
+  "repo": "wok",
+  "target": "/c/Users/Administrator/Desktop/wok",
+  "source_ref": "branch fix/horarios-fuente-unica, dirty worktree",
+  "profile": "standard",
+  "scope_paths": ["server/", "src/"],
+  "budget": null,
+  "execution_policy": "sandboxed-source-and-local-only",
+  "shared_file_owners": {
+    "run-metadata.json": "parent",
+    "architecture.md": "parent",
+    "coverage-ledger.json": "parent",
+    "findings.json": "parent",
+    "REPORT.md": "parent",
+    "FINDINGS-DETAIL.md": "parent",
+    "NEEDS-VALIDATION.md": "parent"
+  },
+  "run_status": "in_progress",
+  "created_at": "2026-11-09T00:00:00Z",
+  "notes": "Security audit of Fusión Wok codebase. Reconnaissance complete. Hunting findings from static analysis."
+}

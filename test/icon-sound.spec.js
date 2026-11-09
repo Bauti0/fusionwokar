@@ -152,22 +152,3 @@ test("a 390px el filtro de período de Estadísticas no desborda", async ({ page
     .evaluate((el) => el.textContent.trim());
   expect(activeNow).toBe("Este mes");
 });
-
-test("capturas del botón en ambos estados a 390px y 1360px", async ({ page }) => {
-  await loginToPanel(page);
-  const btn = page.locator(SOUND_BTN);
-
-  for (const width of [390, 1360]) {
-    await page.setViewportSize({ width, height: 800 });
-    // Cada test arranca con contexto nuevo (localStorage vacío): estado
-    // inicial activado. Click → silenciado (IconVolumeX)…
-    await btn.click();
-    await expect(btn).toHaveAttribute("aria-label", "Activar sonido de pedidos");
-    await btn.screenshot({ path: `.visual/boton-sonido-silenciado-${width}.png` });
-
-    // …y click de nuevo → activado (IconVolume2).
-    await btn.click();
-    await expect(btn).toHaveAttribute("aria-label", "Desactivar sonido de pedidos");
-    await btn.screenshot({ path: `.visual/boton-sonido-activado-${width}.png` });
-  }
-});

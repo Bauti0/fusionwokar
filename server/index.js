@@ -180,7 +180,7 @@ app.set("trust proxy", 1);
 // sin arrancar el server ni tocar la base real. Acá solo se ejecuta: imprime
 // el informe y, si en producción hay algo que va a romper el arranque, corta.
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "fusionwok";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 function runConfigCheck() {
   const report = validateConfig(process.env);
@@ -2579,7 +2579,7 @@ app.post(
         envUser: ADMIN_USER,
         envPassword: ADMIN_PASSWORD,
       });
-      console.error('[DEBUG LOGIN] authenticateAdmin result:', admin);
+      // Sin logging del resultado de autenticación: evita filtrar rol/branch/userId a los logs del servidor.
       if (!admin.ok) {
         recordLoginFailure(req);
         return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
@@ -4000,18 +4000,12 @@ app.post("/api/admin/products", requireAdmin, async (req, res) => {
     const isBranchAdmin = req.admin?.role === "branch_admin";
     const bodyBranch = branch;
     const adminBranch = req.admin?.branch;
-    const checkResult = { isBranchAdmin, bodyBranch, adminBranch, different: bodyBranch && bodyBranch !== adminBranch };
-    console.error('[DEBUG-PRODUCTS] CHECK:', checkResult);
     if (isBranchAdmin && bodyBranch && bodyBranch !== adminBranch) {
-      console.error('[DEBUG-PRODUCTS] REJECTING - branch_admin tried to create in different branch:', { bodyBranch, adminBranch });
-      return res.status(403).json({ error: "No autorizado para esta sucursal", test: "REJECTED-v2", debug: checkResult });
+      return res.status(403).json({ error: "No autorizado para esta sucursal" });
     }
-    // Always include debug info in response for testing
     const branchResult = effectiveBranch(req.admin, branch);
     if (branchResult.error) return res.status(400).json({ error: branchResult.error });
     const branchId = branchResult.branch;
-    // Add debug info to all responses for testing
-    res.setHeader('X-Debug-Check', JSON.stringify(checkResult));
     // Si no se manda categoryId pero sí categoryName, se genera el slug
     if (!rest.categoryId && rest.categoryName) {
       rest.categoryId = slugify(rest.categoryName);
