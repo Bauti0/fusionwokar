@@ -244,9 +244,9 @@ describe("FIND-008: login HTTP integration - token guardado como hash SHA-256 (a
     assert.ok(!setCookie.includes("Secure"), "en HTTP no debe tener Secure");
   });
 
-  // MUTATION TEST: Este test DEBE FALLAR si se revierte el fix (guarda token plano)
-  // El endpoint guarda el token en texto plano en lugar de hashToken(token).
-  it("MUTATION TEST: login guarda token plano (bug) falla", async () => {
+  // MUTATION TEST: verifica que el FIX guarda el token como hash (no en texto plano).
+  // Si se revierte el fix, este test FALLA porque el token se guardaría en plano.
+  it("MUTATION TEST: login guarda token como hash (fix)", async () => {
     // Hacer login
     const loginRes = await fetch(`http://localhost:${PORT}/api/admin/login`, {
       method: "POST",
@@ -264,19 +264,19 @@ describe("FIND-008: login HTTP integration - token guardado como hash SHA-256 (a
     const tokenMatch = setCookie.match(/fw_admin_token=([^;]+)/);
     const cookieToken = tokenMatch[1];
 
-    // Verificar en DB: con BUG guardaría el token plano (igual a cookieToken)
-    // Con FIX guarda hashToken(cookieToken)
+    // Verificar en DB: con FIX guarda hashToken(cookieToken)
+    // Con BUG guardaría el token plano (igual a cookieToken)
     const rows = await db.prepare("SELECT token FROM admin_tokens").all();
     assert.equal(rows.length, 1);
     const storedToken = rows[0].token;
 
-    // Con el BUG: storedToken === cookieToken (texto plano)
     // Con el FIX: storedToken === hashToken(cookieToken) (64 chars hex)
-    const isPlaintext = storedToken === cookieToken;
+    // Con el BUG: storedToken === cookieToken (texto plano)
     const isHashed = storedToken === hashToken(cookieToken);
+    const isPlaintext = storedToken === cookieToken;
 
-    // Este test DEBE FALLAR con el fix aplicado (isHashed = true)
-    // y PASAR si se revierte el fix (isPlaintext = true)
-    assert.equal(isPlaintext, true, "MUTATION TEST: con el fix aplicado, token debe ser hash (isPlaintext=false). Si ves este fallo, el fix está funcionando.");
+    // Con el fix aplicado, el token DEBE ser hash (no texto plano)
+    assert.equal(isHashed, true, "MUTATION TEST: token debe guardarse como hash (isHashed=true). Si falla, se revirtió el fix FIND-008.");
+    assert.equal(isPlaintext, false, "MUTATION TEST: token NO debe guardarse en texto plano (isPlaintext=false). Si falla, se revirtió el fix FIND-008.");
   });
 });

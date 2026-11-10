@@ -255,26 +255,25 @@ describe("FIND-004: endpoint refund real - MP es fuente de verdad (app real)", (
     assert.equal(refunds[0].amount, 500);
   });
 
-  // MUTATION TEST: Este test DEBE FALLAR si se revierte el fix (endpoint suma lo pedido)
-  // El endpoint usa monto PEDIDO en lugar del monto REAL que devolvió MP.
-  it("MUTATION TEST: endpoint refund con bug (suma monto pedido) falla", async () => {
+  // MUTATION TEST: verifica que el FIX usa el monto REAL de MP (no el monto pedido).
+  // Si se revierte el fix, este test FALLA porque el endpoint sumaría el monto pedido.
+  it("MUTATION TEST: endpoint refund usa monto real de MP (fix)", async () => {
     // Estado previo: total=1000, ya reembolsado=200
     const id = await addOrder(db, { total: 1000, refundedAmount: 200, refundsJson: JSON.stringify([{ id: "r1", amount: 200, at: now() }]) });
 
     const { authHeader } = await loginAsAdmin(db);
 
-    // Mock que simula el BUG del endpoint: suma el monto pedido (800) a lo que devuelve MP (500)
+    // Mock de lo que devuelve MP AHORA (tras el fix del endpoint):
+    // MP devuelve SOLO los reembolsos reales, sin entrada local espuria.
+    // El endpoint confía en MP y NO agrega entrada local con el monto pedido.
     testMocks.refundOrder = async (orderId, options) => {
-      // Simular lo que hacía el endpoint ANTES del fix:
-      // MP devuelve reembolsos reales: [{ amount: 500 }]
-      // pero el endpoint agregaba local con el monto PEDIDO (800)
       return {
         id: "MP-REFUND-001",
         status: "approved",
         status_detail: "refunded",
         refunds: [
-          { id: "MP-REFUND-001", amount: 500, status: "approved" },
-          { id: "LOCAL-BUG", amount: 800, status: "approved" }, // <-- BUG: entrada espuria con monto pedido
+          { id: "MP-REFUND-001", amount: 500, status: "approved" }, // Solo reembolso real de MP
+          // NO hay entrada LOCAL-BUG con monto 800 (eso era el bug del endpoint viejo)
         ],
       };
     };
@@ -294,13 +293,13 @@ describe("FIND-004: endpoint refund real - MP es fuente de verdad (app real)", (
 
     const row = await db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
 
-    // Con el BUG: refunded_amount = 200 + 500 + 800 = 1500 (inflado)
-    // Con el FIX: refunded_amount = 200 + 500 = 700
-    const isBuggy = Number(row.refunded_amount) === 1500;
+    // Con el FIX: refunded_amount = 200 + 500 = 700 (solo monto real de MP)
+    // Con el BUG (endpoint viejo): refunded_amount = 200 + 500 + 800 = 1500 (inflado con monto pedido)
     const isFixed = Number(row.refunded_amount) === 700;
+    const isBuggy = Number(row.refunded_amount) === 1500;
 
-    // Este test DEBE FALLAR con el fix aplicado (refunded_amount = 700)
-    // y PASAR si se revierte el fix (refunded_amount = 1500)
-    assert.equal(isBuggy, true, "MUTATION TEST: con el fix aplicado, refunded_amount debe ser 700, no 1500. Si ves este fallo, el fix está funcionando.");
+    // Con el fix aplicado, refunded_amount DEBE ser 700 (no 1500)
+    assert.equal(isFixed, true, "MUTATION TEST: refunded_amount debe ser 700 (monto real MP). Si falla, se revirtió el fix FIND-004/018.");
+    assert.equal(isBuggy, false, "MUTATION TEST: refunded_amount NO debe ser 1500 (bug: suma monto pedido). Si falla, se revirtió el fix FIND-004/018.");
   });
 });
