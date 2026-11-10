@@ -4,6 +4,7 @@ import { createClient } from "@libsql/client";
 import { createDb } from "../server/sqlite.js";
 import { applyRefunds, mergeRefunds, parseRefunds, refundableAmount, cleanRefundedBy } from "../server/refunds.js";
 import { toPublicOrder } from "../server/public-order.js";
+import { refundOrder } from "../server/mp.js";
 
 function now() {
   return new Date().toISOString();
@@ -432,5 +433,70 @@ describe("FIND-018: CAS incluye total para evitar devolución sobre total viejo"
     });
     assert.equal(result.ok, true, "debe funcionar con maxAttempts=1");
     assert.ok(result.attempts >= 1);
+  });
+
+  // TEST DE COMPORTAMIENTO FIND-018: maxAttempts permite reintentos en conflicto CAS
+  // Simula conflicto CAS forzando que la primera tentativa falle (changes=0).
+  // Con fix (total en CAS): si el total cambia concurrentemente, el CAS falla
+  // y applyRefunds reintenta hasta maxAttempts.
+  it("BEHAVIOR TEST: maxAttempts maneja conflicto CAS (simulado)", async () => {
+    const db = await makeDb();
+    const id = await addOrder(db, 1000);
+    await applyRefunds(db, id, { mpRefunds: [{ id: "r1", amount: 200 }], patch: endpointPatch });
+
+    // Forzar conflicto CAS: preparamos un UPDATE que no matchea (WHERE total = 999 inexistente)
+    // applyRefunds leerá total=1000, pero nosotros interceptamos para forzar fallo
+    let attemptCount = 0;
+    const originalPrepare = db.prepare.bind(db);
+    db.prepare = (sql) => {
+      if (sql.startsWith("UPDATE orders SET") && sql.includes("total = ?")) {
+        attemptCount++;
+        if (attemptCount === 1) {
+          // Primera vez: cambiar SQL para que NO matchee (simula total cambiado)
+          sql = sql.replace("total = ?", "total = 999");
+        }
+      }
+      return originalPrepare(sql);
+    };
+
+    const result = await applyRefunds(db, id, {
+      mpRefunds: [{ id: "r2", amount: 300 }],
+      patch: endpointPatch,
+      maxAttempts: 3,
+    });
+
+    // Con fix: reintenta y en segundo intento (sin interceptar) el CAS matchea
+    assert.equal(result.ok, true, "debe reintentar y tener éxito");
+    assert.ok(attemptCount >= 1, "debe haber intentado al menos una vez");
+  });
+
+  // TEST DE RACE CONDITION REAL FIND-018: total cambia entre SELECT y UPDATE
+  // Nota: libSQL con múltiples conexiones no comparte estado en memoria de forma
+  // fiable para tests. El test de comportamiento (BEHAVIOR TEST) arriba verifica
+  // la lógica de reintento interceptando el SQL. El MUTATION TEST verifica que
+  // el CAS incluye total. Juntos cubren la corrección del fix FIND-018.
+  // Si se necesita un test de integración real con concurrencia, requeriría
+  // un servidor SQLite externo o un hook de test en applyRefunds (fora de scope).
+});
+
+// ---------------------------------------------------------------------
+// FIND-013: refundOrder sin idempotencyKey lanza error
+// El caller DEBE proveer idempotencyKey para evitar colisiones entre
+// devoluciones parciales distintas del mismo monto (FIND-013/017).
+// Antes había un fallback que solo usaba orderId + amount (sin refunded_amount),
+// lo que causaba colisiones.
+// ---------------------------------------------------------------------
+describe("FIND-013: refundOrder requiere idempotencyKey", () => {
+  it("llamar refundOrder sin idempotencyKey lanza Error", async () => {
+    // La validación de idempotencyKey se ejecuta ANTES de cualquier llamada a MP.
+    // Por eso podemos probarla sin mocks de red ni credenciales.
+    await assert.rejects(
+      refundOrder("ORD-TEST", { amount: 500 }), // sin idempotencyKey
+      (err) => {
+        assert.equal(err.message, "idempotencyKey es obligatorio en refundOrder (FIND-013/017)");
+        return true;
+      },
+      "debe lanzar Error con mensaje específico"
+    );
   });
 });

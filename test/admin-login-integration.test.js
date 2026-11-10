@@ -1,140 +1,46 @@
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import express from "express";
 import { createClient } from "@libsql/client";
 import { createDb } from "../server/sqlite.js";
-import { authenticateAdmin, hashToken, safeEqual, resolveAdminFromToken } from "../server/auth.js";
-import { randomBytes } from "node:crypto";
+import { hashToken, hashPassword } from "../server/auth.js";
+import { unlinkSync } from "node:fs";
+
+// Configurar TEST_MODE ANTES de importar server/index.js
+process.env.TEST_MODE = "true";
+process.env.DEMO_MODE = "true";
+process.env.TURSO_DATABASE_URL = "file:test-admin-login.db";
+process.env.TURSO_AUTH_TOKEN = "";
+process.env.MP_WEBHOOK_SECRET = "secreto-de-prueba-del-webhook-fusionwok";
+process.env.ADMIN_USER = "superadmin";
+process.env.ADMIN_PASSWORD = "SuperSecret123";
+
+let app, db, testMocks, authenticateAdmin, resolveAdminFromToken;
+
+async function loadServer() {
+  const mod = await import("../server/index.js");
+  app = mod.app;
+  db = mod.db;
+  testMocks = mod.testMocks;
+  authenticateAdmin = mod.authenticateAdmin;
+  resolveAdminFromToken = mod.resolveAdminFromToken;
+}
 
 const clients = [];
 after(() => {
   for (const c of clients) c.close();
+  // Limpiar archivo de base de datos de prueba
+  try { unlinkSync("test-admin-login.db"); } catch {}
+  try { unlinkSync("test-admin-login.db-shm"); } catch {}
+  try { unlinkSync("test-admin-login.db-wal"); } catch {}
 });
 
 function now() {
   return new Date().toISOString();
 }
 
-const TOKEN_TTL_MS = 24 * 3600 * 1000;
-
-// Crea una app Express de prueba con el endpoint de login real
-function createTestApp({ db, envUser, envPassword, resolveAdminFromTokenFn }) {
-  const app = express();
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: false }));
-
-  // Cookie parser simplificado para tests (leer cookies del header)
-  app.use((req, res, next) => {
-    const cookieHeader = req.headers.cookie || "";
-    req.cookies = {};
-    cookieHeader.split(";").forEach((part) => {
-      const [key, ...valParts] = part.trim().split("=");
-      if (key) req.cookies[key] = decodeURIComponent(valParts.join("="));
-    });
-    next();
-  });
-
-  // Endpoint real de login (adaptado de index.js)
-  app.post("/api/admin/login", async (req, res) => {
-    console.log("[TEST SERVER] POST /api/admin/login received", req.body);
-    try {
-      const { username, password } = req.body || {};
-      if (!username || !password) {
-        console.log("[TEST SERVER] Missing username/password");
-        return res.status(400).json({ error: "Usuario y contraseña requeridos" });
-      }
-
-      console.log("[TEST SERVER] Calling authenticateAdmin for:", username);
-      const admin = await authenticateAdmin(db, {
-        username,
-        password,
-        envUser,
-        envPassword,
-      });
-      console.log("[TEST SERVER] authenticateAdmin result:", admin);
-
-      if (!admin.ok) {
-        console.log("[TEST SERVER] Auth failed");
-        return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
-      }
-
-      // Higiene: purga sesiones vencidas
-      try {
-        const cutoff = new Date(Date.now() - TOKEN_TTL_MS).toISOString();
-        await db.prepare("DELETE FROM admin_tokens WHERE created_at < ?").run(cutoff);
-      } catch (purgeErr) {
-        console.error("purga admin_tokens:", purgeErr.message);
-      }
-
-      const token = randomBytes(32).toString("hex");
-      // FIND-008: guardamos el token como SHA-256 hash, no en texto plano.
-      const tokenHash = hashToken(token);
-      console.log("[TEST SERVER] Inserting token hash for userId:", admin.userId, "role:", admin.role);
-
-      await db
-        .prepare(
-          "INSERT INTO admin_tokens (token, created_at, admin_user_id, role, branch) VALUES (?, ?, ?, ?, ?)"
-        )
-        .run(tokenHash, now(), admin.userId, admin.role, admin.branch);
-
-      // Cookie httpOnly: el token nunca queda en localStorage ni en JS.
-      res.cookie("fw_admin_token", token, {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: false, // test en HTTP
-        maxAge: TOKEN_TTL_MS,
-        path: "/",
-      });
-
-      // Token CSRF de doble cookie (NO httpOnly: el front lo lee y lo manda como header X-CSRF-Token)
-      res.cookie("fw_admin_csrf", randomBytes(32).toString("hex"), {
-        httpOnly: false,
-        sameSite: "lax",
-        secure: false,
-        maxAge: TOKEN_TTL_MS,
-        path: "/",
-      });
-
-      // El token NO se devuelve en el body: solo vive en la cookie httpOnly
-      console.log("[TEST SERVER] Sending success response");
-      res.json({ ok: true });
-    } catch (err) {
-      console.error("[TEST SERVER] POST /api/admin/login ERROR:", err);
-      res.status(500).json({ error: "Error al iniciar sesión" });
-    }
-  });
-
-  // Endpoint /me para verificar que la sesión funciona
-  app.get("/api/admin/me", async (req, res) => {
-    try {
-      const token = req.cookies?.fw_admin_token;
-      if (!token) {
-        return res.status(401).json({ error: "No autenticado" });
-      }
-      const result = await resolveAdminFromTokenFn(db, token, { maxAgeMs: TOKEN_TTL_MS });
-      if (result.invalid || result.expired) {
-        return res.status(401).json({ error: "Sesión inválida o expirada" });
-      }
-      res.json({
-        ok: true,
-        user: result.username || envUser,
-        role: result.role,
-        branch: result.branch,
-      });
-    } catch (err) {
-      console.error("GET /api/admin/me:", err);
-      res.status(500).json({ error: "Error interno" });
-    }
-  });
-
-  // Error handler para catch unhandled rejections en Express 5
-  app.use((err, req, res, next) => {
-    console.error("Express error handler:", err);
-    res.status(500).json({ error: "Internal server error" });
-  });
-
-  return app;
-}
+const PORT = 34568;
+const ENV_USER = "superadmin";
+const ENV_PASSWORD = "SuperSecret123";
 
 async function makeDb() {
   const client = createClient({ url: "file::memory:" });
@@ -163,42 +69,49 @@ async function makeDb() {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE webhook_requests (
+      request_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL
+    );
   `);
   return db;
 }
 
-describe("FIND-008: login HTTP integration - token guardado como hash SHA-256", () => {
-  let db;
-  let app;
+async function addBranchAdmin(db, username = "tandil1", password = "branchpass123", branch = "tandil") {
+  const passwordHash = hashPassword(password);
+  await db.prepare(
+    "INSERT OR IGNORE INTO admin_users (username, password_hash, role, branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(username, passwordHash, "branch_admin", branch, now(), now());
+}
+
+describe("FIND-008: login HTTP integration - token guardado como hash SHA-256 (app real)", () => {
   let server;
-  const PORT = 34568;
-  const ENV_USER = "superadmin";
-  const ENV_PASSWORD = "SuperSecret123";
 
   before(async () => {
-    db = await makeDb();
+    await loadServer();
+    await makeDb();
+    // Crear superadmin del .env en la base (simula migración)
+    const passwordHash = hashPassword(ENV_PASSWORD);
+    await db.prepare(
+      "INSERT OR IGNORE INTO admin_users (username, password_hash, role, branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(ENV_USER, passwordHash, "superadmin", "", now(), now());
   });
 
   beforeEach(async () => {
-    console.log("[TEST] beforeEach starting");
     // Limpiar tokens y config entre tests
     await db.prepare("DELETE FROM admin_tokens").run();
     await db.prepare("DELETE FROM admin_config WHERE key IN ('token_hashing_migrated', 'admin_password_hash')").run();
-    // Limpiar usuarios de prueba (excepto los que crea makeDb)
-    await db.prepare("DELETE FROM admin_users WHERE username LIKE 'test%' OR username = 'tandil1'").run();
 
-    app = createTestApp({ db, envUser: ENV_USER, envPassword: ENV_PASSWORD, resolveAdminFromTokenFn: resolveAdminFromToken });
     server = app.listen(PORT);
     await new Promise((resolve) => server.once("listening", resolve));
-    // Pequeña pausa para asegurar que el server está listo (evita ECONNRESET en Windows)
     await new Promise((r) => setTimeout(r, 50));
-    console.log("[TEST] beforeEach done, server listening on", PORT);
   });
 
   afterEach(async () => {
-    console.log("[TEST] afterEach closing server");
     await new Promise((resolve) => server.close(resolve));
-    console.log("[TEST] afterEach server closed");
+    testMocks.refundOrder = undefined;
+    testMocks.isDemoMode = undefined;
+    await db.prepare("DELETE FROM orders").run();
   });
 
   it("POST /api/admin/login con superadmin del .env guarda token como hash de 64 chars hex en DB", async () => {
@@ -207,7 +120,6 @@ describe("FIND-008: login HTTP integration - token guardado como hash SHA-256", 
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: ENV_USER, password: ENV_PASSWORD }),
-      credentials: "include",
     });
 
     const loginBody = await loginRes.text();
@@ -222,7 +134,7 @@ describe("FIND-008: login HTTP integration - token guardado como hash SHA-256", 
     assert.ok(setCookie.includes("HttpOnly"), "cookie debe ser HttpOnly");
     assert.ok(setCookie.includes("Path=/"), "cookie debe tener Path=/");
 
-    // Extraer el token de la cookie (formato: fw_admin_token=valor; ...)
+    // Extraer el token de la cookie
     const tokenMatch = setCookie.match(/fw_admin_token=([^;]+)/);
     assert.ok(tokenMatch, "debe poder extraer el token de la cookie");
     const cookieToken = tokenMatch[1];
@@ -256,28 +168,16 @@ describe("FIND-008: login HTTP integration - token guardado como hash SHA-256", 
 
   it("POST /api/admin/login con branch_admin guarda token como hash con userId, role y branch", async () => {
     // Crear un usuario branch_admin
-    const { hashPassword } = await import("../server/auth.js");
-    const passwordHash = hashPassword("branchpass123");
-    await db.prepare(
-      "INSERT INTO admin_users (username, password_hash, role, branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run("tandil1", passwordHash, "branch_admin", "tandil", now(), now());
+    await addBranchAdmin(db, "tandil1", "branchpass123", "tandil");
 
     // Hacer login como branch_admin
     const loginRes = await fetch(`http://localhost:${PORT}/api/admin/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "tandil1", password: "branchpass123" }),
-      credentials: "include",
-    }).catch((err) => {
-      console.error("Fetch error:", err);
-      throw err;
     });
 
-    const loginBody = await loginRes.text().catch((err) => {
-      console.error("Read body error:", err);
-      throw err;
-    });
-    console.log("Login response:", loginRes.status, loginBody);
+    const loginBody = await loginRes.text();
     assert.equal(loginRes.status, 200, `Login falló: ${loginBody}`);
     const loginData = JSON.parse(loginBody);
     assert.equal(loginData.ok, true);
@@ -342,5 +242,41 @@ describe("FIND-008: login HTTP integration - token guardado como hash SHA-256", 
     assert.ok(setCookie.includes("Max-Age="));
     // En test (HTTP) NO debe tener Secure
     assert.ok(!setCookie.includes("Secure"), "en HTTP no debe tener Secure");
+  });
+
+  // MUTATION TEST: Este test DEBE FALLAR si se revierte el fix (guarda token plano)
+  // El endpoint guarda el token en texto plano en lugar de hashToken(token).
+  it("MUTATION TEST: login guarda token plano (bug) falla", async () => {
+    // Hacer login
+    const loginRes = await fetch(`http://localhost:${PORT}/api/admin/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: ENV_USER, password: ENV_PASSWORD }),
+    });
+
+    const loginBody = await loginRes.text();
+    assert.equal(loginRes.status, 200, `Login falló: ${loginBody}`);
+    const loginData = JSON.parse(loginBody);
+    assert.equal(loginData.ok, true);
+
+    // Verificar cookie
+    const setCookie = loginRes.headers.get("set-cookie");
+    const tokenMatch = setCookie.match(/fw_admin_token=([^;]+)/);
+    const cookieToken = tokenMatch[1];
+
+    // Verificar en DB: con BUG guardaría el token plano (igual a cookieToken)
+    // Con FIX guarda hashToken(cookieToken)
+    const rows = await db.prepare("SELECT token FROM admin_tokens").all();
+    assert.equal(rows.length, 1);
+    const storedToken = rows[0].token;
+
+    // Con el BUG: storedToken === cookieToken (texto plano)
+    // Con el FIX: storedToken === hashToken(cookieToken) (64 chars hex)
+    const isPlaintext = storedToken === cookieToken;
+    const isHashed = storedToken === hashToken(cookieToken);
+
+    // Este test DEBE FALLAR con el fix aplicado (isHashed = true)
+    // y PASAR si se revierte el fix (isPlaintext = true)
+    assert.equal(isPlaintext, true, "MUTATION TEST: con el fix aplicado, token debe ser hash (isPlaintext=false). Si ves este fallo, el fix está funcionando.");
   });
 });

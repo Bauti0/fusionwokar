@@ -101,6 +101,18 @@ import { authenticateAdmin, resolveAdminFromToken, safeEqual, migrateTokenHashin
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from "../src/utils/validation.js";
 import { getBranchWindows, isOpenAtTime, validateBranchHours, replaceBranchHours, getBranchHoursForAdmin, outsideHoursMessage } from "./branch-hours.js";
+import {
+  decideVerifiedDeliveryResponse,
+  checkOrderRateLimit,
+  recordOrderFailure,
+  recordOrderSuccess,
+  isValidOrderNumberFormat,
+  GENERIC_FAILURE_RESPONSE,
+  GENERIC_FAILURE_STATUS,
+} from "./public-order.js";
+
+// Estado de salud de credenciales MP (accesible desde handlers y tests via testMocks)
+let mpAuthBroken = false;
 
 // ============================================================
 // FUSIÓN WOK — API + servidor de producción
@@ -169,6 +181,26 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
 const app = express();
 
+// Objeto mutable para tests: permite mockear funciones internas sin tocar
+// los bindings exportados (ESM no permite reasignar imports).
+// En tests: import { testMocks } from '../server/index.js'; testMocks.getOrder = mockFn;
+const testMocks = {
+  getOrder: null,
+  refundOrder: null,
+  createOrder: null,
+  createMpOrderForOrder: null,
+  verifyWebhookSignature: null,
+  applyMpOrderState: null,
+  shouldReconcile: null,
+  reconcilePendingOrder: null,
+  sweepGetOrder: null,
+  runSweepWithLock: null,
+  mpAuthBroken: null,
+  mpAuthError: null,
+  isDemoMode: null,
+  checkMpCredentials: null,
+};
+
 // Estamos detrás del proxy de Render (terminación TLS). Sin esto, req.ip es la
 // IP del proxy: TODOS los rate limits y el bloqueo progresivo de login se
 // llavearían con la MISMA clave → un atacante agota los buckets de todos
@@ -224,27 +256,34 @@ async function seedTestData() {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run("FW-00001", "tandil", "Test User", "1111111111", "pickup", "cash", "pending", "pending_payment", JSON.stringify([{productId: "wok-pollo", name: "Wok Pollo", qty: 1, unitPrice: 18900}]), 18900, now, now);
 }
-runConfigCheck();
 
-// FIND-002: invalidar tokens de superadmin si cambió ADMIN_PASSWORD.
-await checkAdminPasswordChange(db, ADMIN_PASSWORD);
+// ============================================================
+// ARRANQUE DEL SERVER (solo en producción/dev, NO en tests)
+// ============================================================
+if (!process.env.TEST_MODE) {
+  (async () => {
+    runConfigCheck();
 
-// FIND-008: migrar tokens existentes a SHA-256 hash (corre una sola vez).
-await migrateTokenHashing(db);
+    // FIND-002: invalidar tokens de superadmin si cambió ADMIN_PASSWORD.
+    await checkAdminPasswordChange(db, ADMIN_PASSWORD);
 
-// Siembra el menú y las categorías en la BD (solo la primera vez).
-// Va DESPUÉS de la validación: si el .env está roto no tiene sentido que
-// escribamos 97 productos en la base antes de descubrirlo.
-await seedProducts(MENUS);
-await seedCategories(MENUS);
-await seedBranchHours();
+    // FIND-008: migrar tokens existentes a SHA-256 hash (corre una sola vez).
+    await migrateTokenHashing(db);
 
-// En modo test, sembramos datos de prueba adicionales (pedido pendiente, admins, etc.)
-if (process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true") {
-  await seedTestData();
-}
+    // Siembra el menú y las categorías en la BD (solo la primera vez).
+    // Va DESPUÉS de la validación: si el .env está roto no tiene sentido que
+    // escribamos 97 productos en la base antes de descubrirlo.
+    await seedProducts(MENUS);
+    await seedCategories(MENUS);
+    await seedBranchHours();
 
-// ---------- salud de las credenciales de Mercado Pago ----------
+    // En modo test, sembramos datos de prueba adicionales (pedido pendiente, admins, etc.)
+    if (process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true") {
+      await seedTestData();
+    }
+
+    // ---------- salud de las credenciales de Mercado Pago ----------
+  })();
 // MP_ACCESS_TOKEN "estar presente" no significa "ser válido": un token revocado,
 // caducado o sin la policy de Orders pasa la validación de arriba y recién
 // falla cuando un cliente intenta pagar. Se chequea una vez al arrancar para
@@ -254,7 +293,6 @@ if (process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true") {
 // WhatsApp funcionan igual. Solo el pago con MP queda caido hasta que se
 // regenere el token (el proceso no se reinicia solo: Render lo reiniciaría en
 // bucle sin resolver la causa).
-let mpAuthBroken = false;
 
 async function probeMpCredentials() {
   if (isDemoMode()) return;
@@ -291,6 +329,7 @@ async function probeMpCredentials() {
   }
 }
 probeMpCredentials().catch(() => {});
+}
 
 // Crea la order de MP para un pedido ya guardado, o lanza MpError. Si el token
 // quedó marcado como roto se corta acá: es el mismo error que devolvería MP,
@@ -2157,16 +2196,6 @@ app.get("/api/orders/number/:orderNumber", trackingRateLimit, async (req, res) =
 // no existe, orderNumber inválido, teléfono inválido, mismatch, retiro, sin teléfono,
 // límite por pedido, límite tel+IP, error interno.
 // Solo acierto: 200 + { address: "<dirección>" }
-import {
-  decideVerifiedDeliveryResponse,
-  checkOrderRateLimit,
-  recordOrderFailure,
-  recordOrderSuccess,
-  isValidOrderNumberFormat,
-  GENERIC_FAILURE_RESPONSE,
-  GENERIC_FAILURE_STATUS,
-} from "./public-order.js";
-
 app.post(
   "/api/orders/number/:orderNumber/details",
   rateLimit({
@@ -2443,7 +2472,9 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
       // El estado se lee SIEMPRE de la API y no del cuerpo de la notificación:
       // así una devolución hecha desde el panel de MP (o un contracargo) queda
       // reflejada aunque la notificación no traiga el detalle completo.
-      const mpOrder = await getOrder(mpOrderId);
+      // En tests, testMocks.getOrder permite mockear la respuesta de MP.
+      const getOrderFn = testMocks.getOrder ?? getOrder;
+      const mpOrder = await getOrderFn(mpOrderId);
       let row = await db.prepare("SELECT * FROM orders WHERE mp_order_id = ?").get(mpOrderId);
       if (!row && mpOrder.externalReference) {
         row = await db
@@ -2454,7 +2485,8 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
         console.warn("Webhook de order sin pedido local:", mpOrderId);
         return res.sendStatus(200);
       }
-      await applyMpOrderState(row, mpOrder);
+      const applyMpOrderStateFn = testMocks.applyMpOrderState ?? applyMpOrderState;
+      await applyMpOrderStateFn(row, mpOrder);
       // FIND-001: marcar request-id como procesado SOLO tras éxito
       if (requestId) await db.prepare("INSERT OR IGNORE INTO webhook_requests (request_id, created_at) VALUES (?, ?)").run(requestId, now());
       return res.sendStatus(200);
@@ -2990,7 +3022,9 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
 
     // Demo: sin credenciales no hay a quién devolverle, pero el flujo del panel
     // tiene que poder probarse igual. Se anota la devolución y se responde.
-    if (isDemoMode()) {
+    // En tests, testMocks.isDemoMode permite forzar el path real de MP.
+    const isDemoModeFn = testMocks.isDemoMode ?? isDemoMode;
+    if (isDemoModeFn()) {
       await applyRefunds(db, id, {
         mpRefunds: [{ id: `demo-${randomBytes(6).toString("hex")}`, amount, ...refundMeta }],
         patch: markIfFullyRefunded,
@@ -3025,7 +3059,9 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
       // momentos distintos cambian el monto previo → claves distintas → se
       // ejecutan de verdad.
       const idempotencyKey = `ref-${row.id}-${row.refunded_amount || 0}-${amount}-${isFull ? "full" : "partial"}`;
-      result = await refundOrder(
+      // En tests, testMocks.refundOrder permite mockear la respuesta de MP.
+      const refundOrderFn = testMocks.refundOrder ?? refundOrder;
+      result = await refundOrderFn(
         row.mp_order_id,
         isFull ? { idempotencyKey } : { transactionId, amount, idempotencyKey }
       );
@@ -4993,18 +5029,121 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Error interno" });
 });
 
-app.listen(PORT, () => {
-  console.log(`🌱 Fusión Wok API corriendo en http://localhost:${PORT}`);
-  console.log(`   Modo demo: ${isDemoMode() ? "SÍ (sin credenciales reales)" : "NO (Mercado Pago real)"}`);
-});
+if (!process.env.TEST_MODE) {
+  app.listen(PORT, () => {
+    console.log(`🌱 Fusión Wok API corriendo en http://localhost:${PORT}`);
+    console.log(`   Modo demo: ${isDemoMode() ? "SÍ (sin credenciales reales)" : "NO (Mercado Pago real)"}`);
+  });
 
-process.on('unhandledRejection', (reason) => {
-  console.error('UNHANDLED REJECTION:', reason);
-});
+  process.on('unhandledRejection', (reason) => {
+    console.error('UNHANDLED REJECTION:', reason);
+  });
 
-process.on('uncaughtException', (err) => {
-  console.error('UNCAUGHT EXCEPTION:', err);
-});
+  process.on('uncaughtException', (err) => {
+    console.error('UNCAUGHT EXCEPTION:', err);
+  });
 
-// Keep process alive
-setInterval(() => {}, 1000);
+  // Keep process alive
+  setInterval(() => {}, 1000);
+}
+
+// ============================================================
+// EXPORTS PARA TESTS (disponibles cuando TEST_MODE=true)
+// Solo se exporta lo que se usa en tests o se necesita mockear.
+// ============================================================
+export {
+  // App y DB
+  app,
+  db,
+  // MP functions (para mockear en tests)
+  getOrder,
+  refundOrder,
+  createOrder,
+  createMpOrderForOrder,
+  verifyWebhookSignature,
+  applyMpOrderState,
+  mpAuthError,
+  isDemoMode,
+  checkMpCredentials,
+  buildOrderItems,
+  MpError,
+  // Auth
+  authenticateAdmin,
+  resolveAdminFromToken,
+  hashToken,
+  safeEqual,
+  migrateTokenHashing,
+  checkAdminPasswordChange,
+  requireAdmin,
+  requireSuperadmin,
+  adminScope,
+  // Orders
+  toPublicOrder,
+  toPublicOrderPublic,
+  toAdminOrder,
+  formatOrderNumber,
+  // Refunds
+  applyRefunds,
+  refundableAmount,
+  parseRefunds,
+  // Admin queries
+  listOrders,
+  getOrderScoped,
+  effectiveBranch,
+  getStats,
+  getSalesReport,
+  listCustomers,
+  getCashRegisterState,
+  openCashRegister,
+  closeCashRegister,
+  correctCashRegister,
+  deleteCashRegister,
+  getDeletedCashRegisters,
+  getCashCorrections,
+  listMenuForAdmin,
+  getScopedProduct,
+  getScopedCategory,
+  listCoupons,
+  getScopedCoupon,
+  isCouponCodeTaken,
+  listExtras,
+  updateExtra,
+  rowToCashRegister,
+  listAdminUsers,
+  createAdminUser,
+  setUserPassword,
+  setUserActive,
+  deleteAdminUser,
+  getBranchWindows,
+  isOpenAtTime,
+  validateBranchHours,
+  replaceBranchHours,
+  getBranchHoursForAdmin,
+  outsideHoursMessage,
+  getPause,
+  getAllPauses,
+  setPause,
+  clearPause,
+  parsePauseRequest,
+  pauseMessage,
+  // Validation
+  validateOrderBody,
+  isValidPhone,
+  isValidEmail,
+  isValidIdentification,
+  // Utils
+  now,
+  paramId,
+  TOKEN_TTL_MS,
+  // Rate limiting
+  rateLimit,
+  rateLimitByKey,
+  // Config
+  validateConfig,
+  // Seeds
+  seedProducts,
+  seedCategories,
+  seedBranchHours,
+  // Test mocks
+  testMocks,
+};

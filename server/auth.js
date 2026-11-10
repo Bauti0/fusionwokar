@@ -151,7 +151,7 @@ export async function checkAdminPasswordChange(db, adminPassword) {
   const currentHash = createHash("sha256").update(adminPassword).digest("hex");
   const row = await db.prepare("SELECT value FROM admin_config WHERE key = ?").get("admin_password_hash");
   if (!row) {
-    // Primer arranque con esta versión: guardamos el hash actual
+    // Primer arranque con esta versión: guardamos el fingerprint actual
     await db.prepare("INSERT INTO admin_config (key, value, updated_at) VALUES (?, ?, ?)")
       .run("admin_password_hash", currentHash, new Date().toISOString());
     return;
