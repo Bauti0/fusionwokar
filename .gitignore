@@ -6,6 +6,7 @@ dist/
 coverage/
 .agents/
 .opencode/
+.claude/
 .superpowers/
 .archify/
 docs/
