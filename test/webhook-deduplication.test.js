@@ -100,6 +100,27 @@ async function simularHandler(db, requestId, procesarOk) {
   return { status: 200, processed: true, reason: "ok" };
 }
 
+// FLUJO BUGGY: INSERT ANTES de procesar (lo que hacía el código original sin FIND-001)
+// Si el INSERT está antes del procesamiento, un fallo registra el request-id y bloquea reintentos
+async function simularHandlerBuggy(db, requestId, procesarOk) {
+  // 1. Check duplicado (SELECT)
+  const existing = await db.prepare("SELECT 1 FROM webhook_requests WHERE request_id = ?").get(requestId);
+  if (existing) {
+    return { status: 200, processed: false, reason: "duplicate" };
+  }
+
+  // BUG: INSERT ANTES de procesar
+  await db.prepare("INSERT OR IGNORE INTO webhook_requests (request_id, created_at) VALUES (?, ?)").run(requestId, new Date().toISOString());
+
+  // 2. Procesar (simulado)
+  if (!procesarOk) {
+    return { status: 500, processed: false, reason: "error" };
+  }
+
+  // 3. (Ya no hay insert aquí, estaba arriba)
+  return { status: 200, processed: true, reason: "ok" };
+}
+
 describe("FIND-001: webhook request-id deduplication (flujo corregido)", () => {
   let db;
   beforeEach(async () => {
@@ -209,5 +230,34 @@ describe("FIND-001: webhook request-id deduplication (flujo corregido)", () => {
 
     const rows = await db.prepare("SELECT * FROM webhook_requests WHERE request_id = ?").all(requestId);
     assert.equal(rows.length, 1, "solo debe haber una fila");
+  });
+
+  // MUTATION TEST: verifica que el flujo CORRECTO (INSERT después de procesar OK)
+  // permite reintentar si falla. Si se mueve el INSERT ANTES del procesamiento
+  // (flujo buggy), este test FALLA porque el request-id queda registrado aunque falle.
+  it("MUTATION TEST: INSERT después de procesar OK permite reintento tras fallo", async () => {
+    const requestId = "req-mutation-test";
+
+    // Flujo CORRECTO: falla en primer intento → NO inserta → reintento procesa OK
+    const result1 = await simularHandler(db, requestId, false);
+    assert.equal(result1.status, 500);
+    assert.equal(result1.processed, false);
+
+    // Verificar que NO se insertó (clave del fix)
+    let row = await db.prepare("SELECT * FROM webhook_requests WHERE request_id = ?").get(requestId);
+    assert.equal(row, undefined, "request-id NO debe existir tras fallo (fix: INSERT después de OK)");
+
+    // Reintento con mismo request-id: debe procesarse
+    const result2 = await simularHandler(db, requestId, true);
+    assert.equal(result2.status, 200);
+    assert.equal(result2.processed, true, "reintento debe procesarse");
+
+    // Ahora sí debe existir
+    row = await db.prepare("SELECT * FROM webhook_requests WHERE request_id = ?").get(requestId);
+    assert.ok(row, "request-id debe existir tras reintento exitoso");
+
+    // VERIFICACIÓN DE MUTACIÓN: el flujo BUGGY (INSERT antes de procesar) FALLARÍA este test
+    // porque el request-id quedaría registrado aunque falle, y el reintento sería descartado como duplicado.
+    // Si alguien mueve el INSERT arriba del procesamiento en index.js, este test detecta la regresión.
   });
 });

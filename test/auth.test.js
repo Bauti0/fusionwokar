@@ -2,6 +2,7 @@ import { describe, it, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient } from "@libsql/client";
 import { createDb } from "../server/sqlite.js";
+import { createHash } from "node:crypto";
 import {
   hashPassword,
   verifyPassword,
@@ -144,11 +145,13 @@ async function addToken(
   db,
   { token = "tok-1", userId = null, role = "superadmin", branch = "", ageMin = 0 } = {}
 ) {
+  // FIND-008: tokens se guardan como hash SHA-256
+  const tokenHash = createHash("sha256").update(token).digest("hex");
   await db
     .prepare(
       "INSERT INTO admin_tokens (token, created_at, admin_user_id, role, branch) VALUES (?, ?, ?, ?, ?)"
     )
-    .run(token, iso(-ageMin), userId, role, branch);
+    .run(tokenHash, iso(-ageMin), userId, role, branch);
 }
 
 async function countTokens(db) {

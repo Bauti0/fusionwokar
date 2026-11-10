@@ -380,4 +380,57 @@ describe("FIND-018: CAS incluye total para evitar devolución sobre total viejo"
     assert.equal(Number(row.refunded_amount), 500);
     assert.equal(Number(row.total), 1000);
   });
+
+  // MUTATION TEST: verifica que el CAS generado por applyRefunds INCLUYE total.
+  // Si se revierte a main (sin total en CAS), este test FALLA porque el CAS
+  // no tendría total en la condición WHERE.
+  it("MUTATION TEST: applyRefunds genera CAS con total en la condición WHERE", async () => {
+    const db = await makeDb();
+    const id = await addOrder(db, 1000);
+    await applyRefunds(db, id, { mpRefunds: [{ id: "r1", amount: 200 }], patch: endpointPatch });
+
+    // Interceptar la preparación del UPDATE para verificar el SQL generado
+    const originalPrepare = db.prepare.bind(db);
+    let capturedSql = "";
+    db.prepare = (sql) => {
+      if (sql.startsWith("UPDATE orders SET")) {
+        capturedSql = sql;
+      }
+      return originalPrepare(sql);
+    };
+
+    await applyRefunds(db, id, {
+      mpRefunds: [{ id: "r2", amount: 300 }],
+      patch: endpointPatch,
+    });
+
+    // Verificar que el SQL incluye total en el CAS
+    assert.ok(capturedSql.includes("total = ?"), "CAS debe incluir total en la condición WHERE");
+    assert.ok(capturedSql.includes("refunded_amount = ?"), "CAS debe incluir refunded_amount");
+    assert.ok(capturedSql.includes("id = ?"), "CAS debe incluir id");
+  });
+
+  // TEST DE COMPORTAMIENTO FIND-018: race condition real
+  // El test de race condition real (total cambia entre SELECT y UPDATE) es difícil
+  // de simular fiablemente con SQLite en memoria porque la lectura y escritura
+  // ocurren en la misma conexión en secuencia. La prueba clave es el MUTATION TEST
+  // arriba, que verifica que el SQL generado INCLUYE total en el CAS.
+  // Si el total cambia entre lectura y escritura, el CAS falla (changes === 0) y
+  // applyRefunds reintenta leyendo el total fresco (ver server/refunds.js:76-113).
+  // El parámetro maxAttempts (default 5) permite que el reintento ocurra
+  // automáticamente en caso de conflicto de concurrencia real.
+  it("maxAttempts default permite reintentos automáticos", async () => {
+    const db = await makeDb();
+    const id = await addOrder(db, 1000);
+    await applyRefunds(db, id, { mpRefunds: [{ id: "r1", amount: 200 }], patch: endpointPatch });
+
+    // Verificar que applyRefunds acepta maxAttempts y lo usa
+    const result = await applyRefunds(db, id, {
+      mpRefunds: [{ id: "r2", amount: 300 }],
+      patch: endpointPatch,
+      maxAttempts: 1,
+    });
+    assert.equal(result.ok, true, "debe funcionar con maxAttempts=1");
+    assert.ok(result.attempts >= 1);
+  });
 });

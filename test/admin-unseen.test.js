@@ -7,7 +7,7 @@ import express from "express";
 import { createClient } from "@libsql/client";
 import { createDb } from "../server/sqlite.js";
 import { getUnseenOrderIds } from "../server/admin-queries.js";
-import { resolveAdminFromToken, hashPassword } from "../server/auth.js";
+import { resolveAdminFromToken, hashPassword, hashToken } from "../server/auth.js";
 
 // Copia local de adminScope (no exportado desde index.js)
 function adminScope(req) {
@@ -68,20 +68,20 @@ async function createTestServer() {
     "INSERT INTO admin_users (username, password_hash, role, branch, active, created_at) VALUES (?, ?, ?, ?, 1, ?)"
   ).run("necochea_admin", hash, "branch_admin", "necochea", new Date().toISOString());
 
-  // Superadmin token (admin_user_id = NULL)
+  // Superadmin token (admin_user_id = NULL) - FIND-008: guardado como hash
   await db.prepare(
     "INSERT INTO admin_tokens (token, admin_user_id, created_at) VALUES (?, NULL, ?)"
-  ).run("superadmin-token", new Date().toISOString());
+  ).run(hashToken("superadmin-token"), new Date().toISOString());
 
-  // Branch admin tokens
+  // Branch admin tokens - FIND-008: guardados como hash
   const tandilUser = await db.prepare("SELECT id FROM admin_users WHERE username = ?").get("tandil_admin");
   const necocheaUser = await db.prepare("SELECT id FROM admin_users WHERE username = ?").get("necochea_admin");
   await db.prepare(
     "INSERT INTO admin_tokens (token, admin_user_id, created_at) VALUES (?, ?, ?)"
-  ).run("tandil-token", tandilUser.id, new Date().toISOString());
+  ).run(hashToken("tandil-token"), tandilUser.id, new Date().toISOString());
   await db.prepare(
     "INSERT INTO admin_tokens (token, admin_user_id, created_at) VALUES (?, ?, ?)"
-  ).run("necochea-token", necocheaUser.id, new Date().toISOString());
+  ).run(hashToken("necochea-token"), necocheaUser.id, new Date().toISOString());
 
   // Crear app Express con las rutas necesarias
   const app = express();

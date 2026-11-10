@@ -44,6 +44,13 @@ export function safeEqual(a, b) {
   return timingSafeEqual(ha, hb);
 }
 
+// Hashea un token de sesión para almacenamiento (FIND-008).
+// SHA-256 hex: así en la base NO queda el token en claro. La validación
+// re-hashea lo que manda el cliente y compara con safeEqual (tiempo constante).
+export function hashToken(token) {
+  return createHash("sha256").update(String(token)).digest("hex");
+}
+
 // Hashea una contraseña: "scrypt$N$r$p$<saltHex>$<hashHex>". El salt viaja
 // adentro del string guardado, así que no hace falta otra columna ni otro
 // registro de qué parámetros se usaron para cada usuario.
@@ -119,6 +126,47 @@ export async function authenticateAdmin(db, { username, password, envUser, envPa
 }
 
 // ============================================================
+// FIND-008: Migración de tokens a SHA-256 hash.
+// Corre una sola vez al arrancar (flag token_hashing_migrated en admin_config).
+// Borra todos los tokens existentes (formato viejo: texto plano) y marca
+// la migración como hecha. En ejecuciones posteriores no toca nada.
+// ============================================================
+export async function migrateTokenHashing(db) {
+  const row = await db.prepare("SELECT value FROM admin_config WHERE key = ?").get("token_hashing_migrated");
+  if (row) return; // Ya migrado
+  // Primera ejecución: purga tokens viejos (texto plano) y marca flag
+  await db.prepare("DELETE FROM admin_tokens").run();
+  await db.prepare("INSERT INTO admin_config (key, value, updated_at) VALUES (?, ?, ?)")
+    .run("token_hashing_migrated", "1", new Date().toISOString());
+}
+
+// ============================================================
+// FIND-002: Invalidar tokens de superadmin si cambió ADMIN_PASSWORD.
+// Compara SHA-256 del password actual con el guardado (admin_password_hash).
+// Si difiere (o no existe), borra tokens con admin_user_id IS NULL (superadmin)
+// y actualiza el fingerprint.
+// ============================================================
+export async function checkAdminPasswordChange(db, adminPassword) {
+  if (!adminPassword) return; // sin password no hay superadmin
+  const currentHash = createHash("sha256").update(adminPassword).digest("hex");
+  const row = await db.prepare("SELECT value FROM admin_config WHERE key = ?").get("admin_password_hash");
+  if (!row) {
+    // Primer arranque con esta versión: guardamos el hash actual
+    await db.prepare("INSERT INTO admin_config (key, value, updated_at) VALUES (?, ?, ?)")
+      .run("admin_password_hash", currentHash, new Date().toISOString());
+    return;
+  }
+  if (row.value !== currentHash) {
+    // Password cambió: purga tokens de superadmin
+    const deleted = await db.prepare("DELETE FROM admin_tokens WHERE admin_user_id IS NULL").run();
+    console.warn(`🔐 ADMIN_PASSWORD cambió: se invalidaron ${deleted.changes} sesión(es) de superadmin`);
+    // Actualizamos el fingerprint
+    await db.prepare("UPDATE admin_config SET value = ?, updated_at = ? WHERE key = ?")
+      .run(currentHash, new Date().toISOString(), "admin_password_hash");
+  }
+}
+
+// ============================================================
 // Resuelve QUIÉN hace cada request a partir del token de sesión.
 //
 // Este es el único lugar donde se decide la identidad del admin:
@@ -141,13 +189,16 @@ export async function authenticateAdmin(db, { username, password, envUser, envPa
 export async function resolveAdminFromToken(db, token, { maxAgeMs }) {
   const value = String(token || "");
   if (!value) return { invalid: true };
+  // FIND-008: tokens se guardan como SHA-256 hash. Re-hasheamos lo que
+  // manda el cliente y buscamos por hash; safeEqual evita timing attacks.
+  const tokenHash = hashToken(value);
   const row = await db
     .prepare("SELECT created_at, admin_user_id FROM admin_tokens WHERE token = ?")
-    .get(value);
+    .get(tokenHash);
   if (!row) return { invalid: true };
   const age = Date.now() - new Date(row.created_at).getTime();
   if (age > maxAgeMs) {
-    await db.prepare("DELETE FROM admin_tokens WHERE token = ?").run(value);
+    await db.prepare("DELETE FROM admin_tokens WHERE token = ?").run(tokenHash);
     return { expired: true };
   }
   if (row.admin_user_id == null) {

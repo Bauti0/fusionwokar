@@ -4,7 +4,7 @@ import cors from "cors";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, createHmac, createHash } from "node:crypto";
+import { randomBytes, createHmac } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import {
   db,
@@ -97,7 +97,7 @@ import { orderLogLine } from "./order-log.js";
 import { TRACK_RATE_LIMIT_PER_MIN } from "../src/constants.js";
 import { applyOrderEdit, computeOrderEdits, getAuditLogs } from "./order-edit.js";
 import { rowToCashRegister, correctCashRegister, getCashCorrections, deleteCashRegister, getDeletedCashRegisters } from "./cash-register.js";
-import { authenticateAdmin, resolveAdminFromToken, safeEqual } from "./auth.js";
+import { authenticateAdmin, resolveAdminFromToken, safeEqual, migrateTokenHashing, checkAdminPasswordChange } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from "../src/utils/validation.js";
 import { getBranchWindows, isOpenAtTime, validateBranchHours, replaceBranchHours, getBranchHoursForAdmin, outsideHoursMessage } from "./branch-hours.js";
@@ -227,30 +227,10 @@ async function seedTestData() {
 runConfigCheck();
 
 // FIND-002: invalidar tokens de superadmin si cambió ADMIN_PASSWORD.
-// Al arrancar, comparamos el SHA-256 del password actual con el guardado.
-// Si difiere (o no existe), borramos todos los tokens con admin_user_id NULL
-// (superadmin del .env) y actualizamos el fingerprint guardado.
-async function checkAdminPasswordChange() {
-  if (!ADMIN_PASSWORD) return; // sin password no hay superadmin
-  const currentHash = createHash("sha256").update(ADMIN_PASSWORD).digest("hex");
-  const row = await db.prepare("SELECT value FROM admin_config WHERE key = ?").get("admin_password_hash");
-  if (!row) {
-    // Primer arranque con esta versión: guardamos el hash actual
-    await db.prepare("INSERT INTO admin_config (key, value, updated_at) VALUES (?, ?, ?)")
-      .run("admin_password_hash", currentHash, new Date().toISOString());
-    return;
-  }
-  if (row.value !== currentHash) {
-    // Password cambió: purga tokens de superadmin
-    const deleted = await db.prepare("DELETE FROM admin_tokens WHERE admin_user_id IS NULL").run();
-    console.warn(`🔐 ADMIN_PASSWORD cambió: se invalidaron ${deleted.changes} sesión(es) de superadmin`);
-    // Actualizamos el fingerprint
-    await db.prepare("UPDATE admin_config SET value = ?, updated_at = ? WHERE key = ?")
-      .run(currentHash, new Date().toISOString(), "admin_password_hash");
-  }
-}
+await checkAdminPasswordChange(db, ADMIN_PASSWORD);
 
-await checkAdminPasswordChange();
+// FIND-008: migrar tokens existentes a SHA-256 hash (corre una sola vez).
+await migrateTokenHashing(db);
 
 // Siembra el menú y las categorías en la BD (solo la primera vez).
 // Va DESPUÉS de la validación: si el .env está roto no tiene sentido que
