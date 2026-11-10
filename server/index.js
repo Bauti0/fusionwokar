@@ -97,7 +97,7 @@ import { orderLogLine } from "./order-log.js";
 import { TRACK_RATE_LIMIT_PER_MIN } from "../src/constants.js";
 import { applyOrderEdit, computeOrderEdits, getAuditLogs } from "./order-edit.js";
 import { rowToCashRegister, correctCashRegister, getCashCorrections, deleteCashRegister, getDeletedCashRegisters } from "./cash-register.js";
-import { authenticateAdmin, resolveAdminFromToken, safeEqual, migrateTokenHashing, checkAdminPasswordChange } from "./auth.js";
+import { authenticateAdmin, resolveAdminFromToken, safeEqual, migrateTokenHashing, checkAdminPasswordChange, hashToken } from "./auth.js";
 import { listAdminUsers, createAdminUser, setUserPassword, setUserActive, deleteAdminUser } from "./admin-users.js";
 import { isValidPhone, isValidEmail, isValidIdentification, validatePhone } from "../src/utils/validation.js";
 import { getBranchWindows, isOpenAtTime, validateBranchHours, replaceBranchHours, getBranchHoursForAdmin, outsideHoursMessage } from "./branch-hours.js";
@@ -2621,13 +2621,15 @@ app.post(
         console.error("purga admin_tokens:", purgeErr.message);
       }
       const token = randomBytes(32).toString("hex");
+      // FIND-008: guardamos el token como SHA-256 hash, no en texto plano.
+      const tokenHash = hashToken(token);
       // El token nace atado a quién inició sesión: superadmin
       // (admin_user_id NULL) o la cuenta de sucursal con su rol y branch.
       await db
         .prepare(
           "INSERT INTO admin_tokens (token, created_at, admin_user_id, role, branch) VALUES (?, ?, ?, ?, ?)"
         )
-        .run(token, now(), admin.userId, admin.role, admin.branch);
+        .run(tokenHash, now(), admin.userId, admin.role, admin.branch);
       // Cookie httpOnly: el token nunca queda en localStorage ni en JS.
       // secure en producción/HTTPS/MP real: nunca viaja por HTTP plano.
       res.cookie("fw_admin_token", token, {
