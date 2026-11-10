@@ -90,8 +90,12 @@ export async function applyRefunds(db, orderId, { mpRefunds = [], patch, maxAtte
     // B-1: si el patch toca payment_status, el CAS también lo cubre. Sin esto,
     // dos aprobaciones concurrentes (ambas leen refunded_amount = 0) matchean
     // las dos y el segundo escritor dispara un order_created duplicado.
-    const casConds = ["id = ?", "refunded_amount = ?"];
-    const casParams = [orderId, row.refunded_amount || 0];
+    // FIND-018: también incluimos total en el CAS. Si el total cambia entre
+    // la lectura y la escritura (edición de pedido concurrente), el refundable
+    // amount calculado (total - refunded_amount) sería incorrecto. El CAS con
+    // total evita aplicar una devolución sobre un total desactualizado.
+    const casConds = ["id = ?", "refunded_amount = ?", "total = ?"];
+    const casParams = [orderId, row.refunded_amount || 0, row.total || 0];
     if ("payment_status" in extra) {
       casConds.push("payment_status = ?");
       casParams.push(row.payment_status);

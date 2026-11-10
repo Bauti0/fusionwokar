@@ -4,7 +4,7 @@ import cors from "cors";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, createHmac } from "node:crypto";
+import { randomBytes, createHmac, createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import {
   db,
@@ -225,6 +225,32 @@ async function seedTestData() {
   `).run("FW-00001", "tandil", "Test User", "1111111111", "pickup", "cash", "pending", "pending_payment", JSON.stringify([{productId: "wok-pollo", name: "Wok Pollo", qty: 1, unitPrice: 18900}]), 18900, now, now);
 }
 runConfigCheck();
+
+// FIND-002: invalidar tokens de superadmin si cambió ADMIN_PASSWORD.
+// Al arrancar, comparamos el SHA-256 del password actual con el guardado.
+// Si difiere (o no existe), borramos todos los tokens con admin_user_id NULL
+// (superadmin del .env) y actualizamos el fingerprint guardado.
+async function checkAdminPasswordChange() {
+  if (!ADMIN_PASSWORD) return; // sin password no hay superadmin
+  const currentHash = createHash("sha256").update(ADMIN_PASSWORD).digest("hex");
+  const row = await db.prepare("SELECT value FROM admin_config WHERE key = ?").get("admin_password_hash");
+  if (!row) {
+    // Primer arranque con esta versión: guardamos el hash actual
+    await db.prepare("INSERT INTO admin_config (key, value, updated_at) VALUES (?, ?, ?)")
+      .run("admin_password_hash", currentHash, new Date().toISOString());
+    return;
+  }
+  if (row.value !== currentHash) {
+    // Password cambió: purga tokens de superadmin
+    const deleted = await db.prepare("DELETE FROM admin_tokens WHERE admin_user_id IS NULL").run();
+    console.warn(`🔐 ADMIN_PASSWORD cambió: se invalidaron ${deleted.changes} sesión(es) de superadmin`);
+    // Actualizamos el fingerprint
+    await db.prepare("UPDATE admin_config SET value = ?, updated_at = ? WHERE key = ?")
+      .run(currentHash, new Date().toISOString(), "admin_password_hash");
+  }
+}
+
+await checkAdminPasswordChange();
 
 // Siembra el menú y las categorías en la BD (solo la primera vez).
 // Va DESPUÉS de la validación: si el .env está roto no tiene sentido que
@@ -1198,6 +1224,9 @@ setInterval(() => {
     if (e.blockedUntil > t) continue; // bloqueo activo: no se toca
     if (e.at && t - e.at > 30 * 60000) loginAttempts.delete(k);
   }
+  // FIND-001: limpieza esporádica de webhook_requests (>24h)
+  const cutoff = new Date(t - 24 * 60 * 60 * 1000).toISOString();
+  db.prepare("DELETE FROM webhook_requests WHERE created_at < ?").run(cutoff).catch(() => {});
 }, 15 * 60 * 1000).unref();
 
 // ---------- pedidos (cliente) ----------
@@ -2401,6 +2430,21 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
       return res.status(400).json({ error: "Firma inválida" });
     }
 
+    // ---- FIND-001: deduplicación por x-request-id ----
+    // Mercado Pago reenvía notificaciones con el mismo x-request-id.
+    // Verificamos si ya procesamos este request-id (SELECT solo al entrar).
+    // El INSERT se hace SOLO tras procesar OK (antes del 200), con INSERT OR IGNORE
+    // para que sea idempotente. La limpieza de entradas viejas (>24h) NO va acá
+    // (la hace un intervalo aparte para no penalizar cada request).
+    const requestId = req.headers["x-request-id"];
+    if (requestId) {
+      const existing = await db.prepare("SELECT 1 FROM webhook_requests WHERE request_id = ?").get(requestId);
+      if (existing) {
+        console.log(`Webhook duplicado (request-id ya procesado): ${requestId}`);
+        return res.sendStatus(200);
+      }
+    }
+
     // ---- Payload que no sabemos procesar: no-op con 200 ----
     // Los tipos que MP emite son "order" (Orders API, la integración actual) y
     // "payment" (Preferences API, histórica). Cualquier otro, o un id ausente,
@@ -2431,6 +2475,8 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
         return res.sendStatus(200);
       }
       await applyMpOrderState(row, mpOrder);
+      // FIND-001: marcar request-id como procesado SOLO tras éxito
+      if (requestId) await db.prepare("INSERT OR IGNORE INTO webhook_requests (request_id, created_at) VALUES (?, ?)").run(requestId, now());
       return res.sendStatus(200);
     }
 
@@ -2480,6 +2526,8 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
           if (status === "rejected" && !wasFailure && row.coupon_code) {
             await releaseOrderCoupon(db, row.id, row.coupon_code, row.branch);
           }
+          // FIND-001: marcar request-id como procesado SOLO tras éxito
+          if (requestId) await db.prepare("INSERT OR IGNORE INTO webhook_requests (request_id, created_at) VALUES (?, ?)").run(requestId, now());
         }
       }
     }
@@ -3023,12 +3071,13 @@ app.post("/api/admin/orders/:id/refund", requireAdmin, async (req, res) => {
       return;
     }
 
-    // Red de seguridad: si MP respondió sin el detalle del reembolso, se anota
-    // uno local para que el historial del panel no quede vacío.
+    // FIND-004: MP es la fuente de verdad del monto. Solo agregamos entrada
+    // local si MP devolvió array VACÍO (raro, pero posible). Si MP reportó
+    // reembolsos, confiamos en esos montos; no inflamos con lo que pidió el admin.
     const reportadas = result.refunds || [];
-    const base = reportadas.some((r) => (r.amount || 0) === amount)
-      ? reportadas
-      : [...reportadas, { id: result.id || `mp-${Date.now()}`, amount, at: now() }];
+    const base = reportadas.length === 0
+      ? [{ id: result.id || `mp-${Date.now()}`, amount, at: now() }]
+      : reportadas;
     // El nombre/autoría se pega solo a la devolución NUEVA: las que ya estaban
     // anotadas conservan lo registrado antes (mergeRefunds da prioridad a lo
     // existente y MP no reporta quién devolvió desde el panel).
