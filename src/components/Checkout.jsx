@@ -611,10 +611,11 @@ export default function Checkout({
             </div>
           )}
           {shippingUnavailable && !isMp && (
-            <div className="checkout-note" role="status">
-              No pudimos calcular el envío automático — si es un problema temporal, te
-              confirmamos el costo por WhatsApp antes de salir. Si tu dirección está
-              fuera de la zona de reparto, no vamos a poder tomar el pedido.
+            <div className="checkout-note checkout-note--error" role="status">
+              {shippingError || "No pudimos calcular el envío automático."}
+              <a className="btn btn--ghost btn--sm" href={contactWaLink} target="_blank" rel="noreferrer">
+                <IconChat width="16" height="16" /> Escribinos por WhatsApp
+              </a>
             </div>
           )}
           {items.map((item) => (

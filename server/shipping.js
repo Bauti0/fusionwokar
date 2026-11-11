@@ -20,17 +20,31 @@ import { normalizeAddressKey } from "./utils/normalizeAddressKey.js";
 
 // Configuración por sucursal. Los valores por defecto son los de Tandil;
 // Necochea usa los mismos valores de tarifa pero origen y ciudad distintos.
+// Variables de entorno:
+//   - Globales (compatibilidad): SHIPPING_BLOCK_METERS, SHIPPING_FLAT_BLOCKS,
+//     SHIPPING_BASE_COST, SHIPPING_PER_BLOCK, SHIPPING_MAX_BLOCKS
+//   - Por sucursal (prioridad sobre globales): SHIPPING_MAX_BLOCKS_TANDIL,
+//     SHIPPING_MAX_BLOCKS_NECOCHEA, SHIPPING_BLOCK_METERS_TANDIL,
+//     SHIPPING_BLOCK_METERS_NECOCHEA, SHIPPING_FLAT_BLOCKS_TANDIL,
+//     SHIPPING_FLAT_BLOCKS_NECOCHEA, SHIPPING_BASE_COST_TANDIL,
+//     SHIPPING_BASE_COST_NECOCHEA, SHIPPING_PER_BLOCK_TANDIL,
+//     SHIPPING_PER_BLOCK_NECOCHEA
+function branchEnv(branch, suffix) {
+  const upper = branch.toUpperCase();
+  return process.env[`SHIPPING_${suffix}_${upper}`] || process.env[`SHIPPING_${suffix}`];
+}
+
 const BRANCH_SHIPPING_CONFIG = {
   tandil: {
     originQuery: "Chacabuco 660, Tandil, Buenos Aires, Argentina",
     city: "Tandil",
     region: "Buenos Aires",
     country: "Argentina",
-    blockMeters: Number(process.env.SHIPPING_BLOCK_METERS || 130),
-    flatBlocks: Number(process.env.SHIPPING_FLAT_BLOCKS || 20),
-    baseCost: Number(process.env.SHIPPING_BASE_COST || 4000),
-    perBlock: Number(process.env.SHIPPING_PER_BLOCK || 100),
-    maxBlocks: Math.max(0, Number(process.env.SHIPPING_MAX_BLOCKS || 0) || 0),
+    blockMeters: Number(branchEnv("tandil", "BLOCK_METERS") || 130),
+    flatBlocks: Number(branchEnv("tandil", "FLAT_BLOCKS") || 20),
+    baseCost: Number(branchEnv("tandil", "BASE_COST") || 4000),
+    perBlock: Number(branchEnv("tandil", "PER_BLOCK") || 100),
+    maxBlocks: Math.max(0, Number(branchEnv("tandil", "MAX_BLOCKS") || 0) || 0),
     // Coordenadas opcionales por env vars (SHIPPING_ORIGIN_LAT/LNG son globales;
     // si se definen se usan para Tandil por compatibilidad).
     envOriginLat: (process.env.SHIPPING_ORIGIN_LAT || "").trim(),
@@ -41,11 +55,11 @@ const BRANCH_SHIPPING_CONFIG = {
     city: "Necochea",
     region: "Buenos Aires",
     country: "Argentina",
-    blockMeters: Number(process.env.SHIPPING_BLOCK_METERS || 100),
-    flatBlocks: Number(process.env.SHIPPING_FLAT_BLOCKS || 20),
-    baseCost: Number(process.env.SHIPPING_BASE_COST || 4000),
-    perBlock: Number(process.env.SHIPPING_PER_BLOCK || 100),
-    maxBlocks: Math.max(0, Number(process.env.SHIPPING_MAX_BLOCKS || 0) || 0),
+    blockMeters: Number(branchEnv("necochea", "BLOCK_METERS") || 100),
+    flatBlocks: Number(branchEnv("necochea", "FLAT_BLOCKS") || 20),
+    baseCost: Number(branchEnv("necochea", "BASE_COST") || 4000),
+    perBlock: Number(branchEnv("necochea", "PER_BLOCK") || 100),
+    maxBlocks: Math.max(0, Number(branchEnv("necochea", "MAX_BLOCKS") || 0) || 0),
     // Necochea no tiene env vars dedicados aún; se geocodifica originQuery.
     envOriginLat: "",
     envOriginLng: "",
