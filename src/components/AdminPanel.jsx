@@ -1453,7 +1453,19 @@ const renderOrder = (o) => {
                   <p className="detail-strong">{selected.customer.name}</p>
                   <p>{selected.customer.phone || "Sin teléfono"}</p>
                   {selected.orderMode === "delivery" && selected.address && (
-                    <p className="detail-wrap"><IconLocation /> {selected.address}</p>
+                    <p className="detail-wrap">
+                      <IconLocation /> {selected.address}{" "}
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                          selected.address
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="detail-link"
+                      >
+                        Ver en Google Maps
+                      </a>
+                    </p>
                   )}
                   {selected.orderMode === "delivery" && selected.notes && (
                     <p className="detail-note detail-wrap"><IconReceipt /> {selected.notes}</p>
@@ -1467,6 +1479,9 @@ const renderOrder = (o) => {
                   <div className="order-chips">
                     {selected.shipping?.pending && (
                       <span className="badge badge--shipping-pending"><IconAlertCircle /> Envío a confirmar</span>
+                    )}
+                    {selected.shipping?.pending && (
+                      <span className="badge badge--shipping-pending"><IconAlertCircle /> Dirección no ubicada</span>
                     )}
                     {selected.scheduledFor && (
                       <span className="badge">
