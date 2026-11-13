@@ -8,7 +8,11 @@
 //   - Origen: dirección del local de cada sucursal (geocodificada o por env vars).
 //   - Servicios 100% gratis, con respaldos para que una limitación
 //     de tráfico (429) o una caída no dejen sin envío:
-//       1) Geocoding: Nominatim (OSM) → si falla, Photon (Komoot).
+//       1) Geocodificación: OpenRouteService / Pelias (con límite geográfico por
+//          sucursal: boundary.circle + boundary.country + focus.point) → si no
+//          hay key o falla, Nominatim (OSM) → Photon (Komoot). Cualquier
+//          resultado se vuelve a validar contra el radio de búsqueda de la
+//          sucursal para no ubicar direcciones de otra ciudad.
 //       2) Ruta por calles: OpenRouteService si ORS_API_KEY está seteada
 //          (clave gratuita en openrouteservice.org) → si no, OSRM → si
 //          falla, distancia en línea recta (factor ~1.25x).
@@ -34,12 +38,22 @@ function branchEnv(branch, suffix) {
   return process.env[`SHIPPING_${suffix}_${upper}`] || process.env[`SHIPPING_${suffix}`];
 }
 
+// Radio de búsqueda para anclar el geocodificador a la sucursal. Se elige el
+// doble del radio de reparto (~7 km → 14 km) como margen razonable: cubre el
+// reparto y localidades cercanas (p. ej. Quequén para Necochea) sin aceptar
+// candidatos de otras ciudades de calles numeradas (p. ej. La Plata).
+const SEARCH_RADIUS_KM = 14;
+
 const BRANCH_SHIPPING_CONFIG = {
   tandil: {
     originQuery: "Chacabuco 660, Tandil, Buenos Aires, Argentina",
     city: "Tandil",
     region: "Buenos Aires",
     country: "Argentina",
+    // Centro de la sucursal (origen). Se usa como focus.point y centro del
+    // boundary.circle para anclar la geocodificación a Tandil.
+    center: { lat: -37.32154, lng: -59.13024 },
+    searchRadiusKm: SEARCH_RADIUS_KM,
     blockMeters: Number(branchEnv("tandil", "BLOCK_METERS") || 130),
     flatBlocks: Number(branchEnv("tandil", "FLAT_BLOCKS") || 20),
     baseCost: Number(branchEnv("tandil", "BASE_COST") || 4000),
@@ -55,6 +69,8 @@ const BRANCH_SHIPPING_CONFIG = {
     city: "Necochea",
     region: "Buenos Aires",
     country: "Argentina",
+    center: { lat: -38.5670514, lng: -58.7293811 },
+    searchRadiusKm: SEARCH_RADIUS_KM,
     blockMeters: Number(branchEnv("necochea", "BLOCK_METERS") || 100),
     flatBlocks: Number(branchEnv("necochea", "FLAT_BLOCKS") || 20),
     baseCost: Number(branchEnv("necochea", "BASE_COST") || 4000),
@@ -75,11 +91,17 @@ const ORIGIN_TTL = 24 * 60 * 60 * 1000;
 // se vuelven a consultar los geocoders por la misma dirección).
 const KM_TTL = 7 * 24 * 60 * 60 * 1000;
 // Ante un fallo transitorio (429/caída) no volvemos a golpear el servicio
-// por 90 s, así el cliente puede reintentar sin saturar nada.
+// por 90 s, así el cliente que reintenta no satura nada.
 const DEFINITIVE_FAIL_TTL = 90 * 1000;
 
 const GEO_TIMEOUT_MS = 5000; // reducido para que el total no crezca
 const USER_AGENT = "FusionWok/1.0 (+https://fusionwok.net)";
+
+// Umbral de confianza mínimo para aceptar un resultado del geocodificador.
+// Una localidad genérica (p. ej. "Necochea" como fallback de una calle
+// inexistente) tiene confidence ~0.6 y layer "locality"; no se acepta como
+// dirección porque ubicaría cualquier invento en el centro de la ciudad.
+const MIN_CONFIDENCE = 0.7;
 
 const blockCache = new Map(); // clave normalizada → { blocks, cost, at }
 const transientFailCache = new Map(); // clave normalizada → { at } (fallos transitorios: 15s)
@@ -93,7 +115,9 @@ const DEADLINE_MS = 12000; // techo global para computeShipping
 
 // Errores con código para que el endpoint devuelva el HTTP correcto:
 //  - transient → 503 (servicio saturado/caído, se puede reintentar)
-//  - unknown / zone → 400 (definitivo, mostrado al cliente)
+//  - zone → 400 (fuera de zona de reparto, mensaje con distancia)
+//  - unknown → se resuelve como "envío a confirmar" (shipping_pending),
+//    NO como error: el cliente sigue y el local fija el costo por WhatsApp.
 class ShippingError extends Error {
   constructor(code, message) {
     super(message);
@@ -102,6 +126,7 @@ class ShippingError extends Error {
 }
 const transient = (m) => new ShippingError("transient", m);
 const unknown = (m) => new ShippingError("unknown", m);
+const zone = (m) => new ShippingError("zone", m);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -214,7 +239,7 @@ const withRetry = async (fn, times = 1, opts = {}) => {
     }
   }
   throw lastErr;
-}
+};
 
 // Haversine (km en línea recta); fallback cuando OSRM no responde.
 function haversineKm(a, b) {
@@ -227,6 +252,125 @@ function haversineKm(a, b) {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// ---------- Normalización de direcciones (Necochea: calles numeradas) ----------
+// Quita del texto a geocodificar los cruces de calles ("entre X y Y", "y X"),
+// que se conservan en las notas del pedido pero confunden al parser.
+// Devuelve { texto, cruces }: texto limpio para geocodificar y los cruces
+// detectados (para conservar en notas).
+function extraerCruces(a) {
+  const cruces = [];
+  let t = String(a)
+    .replace(/\b(entre\s+[^,;]+?\s+y\s+[^,;]+)\b/gi, (m) => {
+      cruces.push(m.trim());
+      return " ";
+    })
+    .replace(/\s+y\s+[^,;]+$/gi, (m) => {
+      cruces.push(m.trim().slice(2));
+      return " ";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+  return { texto: t, cruces };
+}
+
+// Convierte formas comunes de dirección de Necochea a "Calle N altura":
+//   "95 1513"            → "Calle 95 1513"
+//   "calle 95 n° 1513"   → "Calle 95 1513"
+//   "95 Nº 1513"         → "Calle 95 1513"
+//   "Av. 59 y 10"        → cruce "59 y 10" (se queda el texto "Av. 59")
+//   "Diagonal San Martín 1258" → se deja tal cual (nombre propio + altura)
+export function normalizarTexto(a) {
+  const { texto: t, cruces } = extraerCruces(a);
+  let s = t
+    .replace(/\b(n°|nº|nro|número|numero)\s*/gi, " ")
+    .replace(/\bav\.\s*/gi, "av. ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // "<número de calle corto> <altura>" → "Calle <número> <altura>"
+  // (ej: "95 1513" → "Calle 95 1513"). Sólo cuando el primer token es un
+  // número de 1-3 dígitos y el segundo es un número (altura).
+  const calleAltura = /^(\d{1,3})\s+(\d{1,5})$/;
+  const m = s.match(calleAltura);
+  if (m) {
+    s = `Calle ${m[1]} ${m[2]}`;
+  }
+  return { texto: s, cruces };
+}
+
+// Construye los textos de consulta en orden de preferencia. Cada entrada:
+// { texto, cruces, tipo } donde tipo es "direccion" | "cruce" | "calle".
+export function buildVariants(a, cfg) {
+  const { texto, cruces } = normalizarTexto(a);
+  const ciudad = [texto, cfg.city, cfg.region, cfg.country].filter(Boolean).join(", ");
+  const variants = [{ texto: ciudad, cruces, tipo: "direccion" }];
+  // Variante 2: cruce de calles (si se detectó uno), solo con ciudad.
+  if (cruces.length) {
+    variants.push({ texto: `${cruces[0]}, ${cfg.city}, ${cfg.region}, ${cfg.country}`, cruces, tipo: "cruce" });
+  }
+  // Variante 3: solo la calle (primer token significativo) y la ciudad.
+  const primeraPalabra = texto.split(/\s+/)[0];
+  if (primeraPalabra && primeraPalabra !== cfg.city) {
+    variants.push({ texto: `${primeraPalabra}, ${cfg.city}, ${cfg.region}, ${cfg.country}`, cruces, tipo: "calle" });
+  }
+  return variants;
+}
+
+// ---------- Geocodificadores ----------
+
+// OpenRouteService / Pelias. Parámetros exactos (ver
+// https://giscience.github.io/openrouteservice/ y la especificación de Pelias):
+//   GET /geocode/search?text=&focus.point.lat=&focus.point.lon=&
+//     boundary.circle.lat=&boundary.circle.lon=&boundary.circle.radius=&
+//     boundary.country=&size=
+// boundary.circle restringe los resultados a un círculo (km) alrededor del
+// centro de la sucursal: una búsqueda que no puede devolver resultados fuera
+// del radio. focus.point prioriza por proximidad al origen. boundary.country
+// limita a Argentina. La respuesta es GeoJSON con features que traen
+// properties.label, properties.confidence, properties.match_type,
+// properties.layer, properties.locality, properties.region, properties.country
+// y geometry.coordinates [lon, lat].
+async function geocodeOrs(query, cfg, opts = {}) {
+  if (!ORS_KEY) return null;
+  const center = cfg.center;
+  const params = new URLSearchParams();
+  params.set("text", query);
+  params.set("focus.point.lat", String(center.lat));
+  params.set("focus.point.lon", String(center.lng));
+  params.set("boundary.circle.lat", String(center.lat));
+  params.set("boundary.circle.lon", String(center.lng));
+  params.set("boundary.circle.radius", String(cfg.searchRadiusKm));
+  params.set("boundary.country", "AR");
+  params.set("size", "5");
+  const url = `https://api.openrouteservice.org/geocode/search?api_key=${encodeURIComponent(ORS_KEY)}&${params.toString()}`;
+  const j = await fetchJson(url);
+  const features = j && j.features ? j.features : [];
+  for (const f of features) {
+    const props = f.properties || {};
+    const conf = Number(props.confidence);
+    const layer = String(props.layer || "").toLowerCase();
+    if (!Number.isFinite(conf) || conf < MIN_CONFIDENCE) continue;
+    // Solo aceptamos direcciones (address) o calles (street). Una localidad
+    // genérica (locality/region/country) no es una dirección válida: evita
+    // que una calle inexistente se ubique en el centro de la ciudad.
+    if (layer !== "address" && layer !== "street") continue;
+    const coords = f.geometry && f.geometry.coordinates;
+    if (!coords || coords.length < 2) continue;
+    return {
+      lat: Number(coords[1]),
+      lng: Number(coords[0]),
+      label: props.label || "",
+      confidence: conf,
+      matchType: props.match_type || "",
+      layer: props.layer || "",
+      locality: props.locality || "",
+      region: props.region || "",
+      country: props.country || "",
+    };
+  }
+  return null;
 }
 
 // Geocodificadores gratuitos en orden; un resultado = éxito.
@@ -323,12 +467,24 @@ const GEO_PROVIDERS = [
   },
 ];
 
-async function geocode(query, opts = {}) {
+async function geocode(query, cfg, opts = {}) {
   const deadline = opts.deadline || Date.now() + GEO_TIMEOUT_MS * 20; // margen
   return withRetry(
     () =>
       throttled(async () => {
         let sawTransient = false;
+        // 1) OpenRouteService / Pelias con límite geográfico por sucursal.
+        if (ORS_KEY) {
+          try {
+            const c = await geocodeOrs(query, cfg, opts);
+            if (c) return c;
+          } catch (err) {
+            // Fallback a Nominatim/Photon si ORS falla (transient o definitivo).
+            sawTransient = true;
+          }
+        }
+        // 2) Nominatim → Photon (sin límite geográfico propio: se valida el
+        //    radio del origen después, en computeShipping).
         for (const p of GEO_PROVIDERS) {
           if (Date.now() > deadline) {
             sawTransient = true;
@@ -345,13 +501,11 @@ async function geocode(query, opts = {}) {
             }
             const st = err.status;
             if (st === 429 && err.retryAfterMs) {
-              // respeamos wait acotado, aún así marca transient para conjunto
               sawTransient = true;
               if (err.retryAfterMs > 0) await sleep(Math.min(err.retryAfterMs, MAX_RETRY_AFTER_MS));
               continue;
             }
             if (st === 401 || st === 403) {
-              // ya suspendido/logueado
               sawTransient = true;
               continue;
             }
@@ -392,7 +546,6 @@ async function roadDistanceKm(from, to, opts = {}) {
         const status = err.status || (typeof err.message === "string" && err.message.match(/HTTP (\d+)/)?.[1]);
         const st = status ? Number(status) : null;
         if (st === 401 || st === 403 || st === 429) {
-          // logueo ya hecho implícitamente no necesario; suspendemos si aplica
           if (st === 401 || st === 403) suspendProvider("ors");
         }
       } catch {}
@@ -479,15 +632,20 @@ async function getOrigin(branch, opts = {}) {
   }
   const cached = originCache.get(branch);
   if (cached && Date.now() - cached.at < ORIGIN_TTL) return cached.coords;
-  const o = await geocode(cfg.originQuery, opts);
+  const o = await geocode(cfg.originQuery, cfg, opts);
   if (!o) throw unknown(`No pudimos ubicar la dirección del local de ${cfg.city}.`);
   originCache.set(branch, { coords: o, at: Date.now() });
   return o;
 }
 
-// Devuelve { cost, blocks, supported } para un envío en la sucursal dada.
+// Devuelve { cost, blocks, supported, pending? } para un envío en la sucursal dada.
 // Reintentar es seguro: los fallos transitorios se cachean brevemente y los
 // resultados por dirección se guardan para no repetir consultas.
+//   - pendiente ("no ubicada"): no hay candidato dentro del radio de búsqueda
+//     de la sucursal. Se devuelve pending: true y el pedido se crea con
+//     shipping_pending (no bloquea; el local fija el costo por WhatsApp).
+//   - fuera de zona ("zone"): hay candidato dentro del radio de búsqueda pero
+//     la ruta supera maxBlocks. Se lanza ShippingError("zone") con distancia.
 export async function computeShipping(branch, address) {
   const a = String(address || "").trim();
   // Si la sucursal no tiene config de envío conocida, no está soportada.
@@ -519,22 +677,35 @@ export async function computeShipping(branch, address) {
         `Esa dirección queda fuera de nuestra zona de reparto.`
       );
     }
-    throw unknown("No pudimos ubicar esa dirección. Revisá calle y número.");
+    // "unknown" (no ubicada) ya no llega acá como error: se resuelve como
+    // pending más abajo. Se conserva por compatibilidad con caché previa.
+    throw unknown("No pudimos ubicar esa dirección con exactitud.");
   }
 
   // Todo lo que consulta la red va envuelto para que el fallo transitorio
   // quede cacheado por 15 s para esta dirección (caché negativo corto): el
-  // cliente que reintenta cada 2 s no le vuelve a pegar a Nominatim/Photon/OSRM
-  // ni los obliga a seguir respondiendo. Los definitivos (unknown/zone) se
-  // cachean donde se detectan, con su plazo de 90 s.
+  // cliente que reintenta cada 2 s no le vuelve a pegar a los geocoders ni
+  // los obliga a seguir respondiendo. Los definitivos (zone) se cachean
+  // donde se detectan, con su plazo de 90 s.
   try {
-    const dest = await geocode(enrichAddress(a, branch), { deadline: started + DEADLINE_MS });
+    // Texto principal a geocodificar: dirección normalizada (sin cruces de
+    // calles, que se conservan en las notas del pedido) + ciudad/región/país
+    // de la sucursal, para anclar la búsqueda. OpenRouteService consulta con
+    // boundary.circle centrado en la sucursal, así que sus resultados nunca
+    // quedan fuera del radio de búsqueda.
+    const principal = normalizarTexto(a);
+    const textoPrincipal = [principal.texto, cfg.city, cfg.region, cfg.country]
+      .filter(Boolean)
+      .join(", ");
+    const dest = await geocode(textoPrincipal, cfg, { deadline: started + DEADLINE_MS });
     if (Date.now() - started > DEADLINE_MS) {
       throw transient("No pudimos consultar el mapa. Volvé a intentar en unos segundos.");
     }
     if (!dest) {
+      // No se pudo ubicar dentro del radio: envío a confirmar, no error de
+      // distancia. El cliente sigue y el local fija el costo por WhatsApp.
       definitiveFailCache.set(key, { at: Date.now(), code: "unknown" });
-      throw unknown("No pudimos ubicar esa dirección. Revisá calle y número.");
+      throw unknown("No pudimos ubicar esa dirección con exactitud.");
     }
     const origin = await getOrigin(branch, { deadline: started + DEADLINE_MS });
     const km = await roadDistanceKm(origin, dest, { deadline: started + DEADLINE_MS });
@@ -547,8 +718,7 @@ export async function computeShipping(branch, address) {
     // Sin tope configurado el reparto no tiene límite de cobertura.
     if (cfg.maxBlocks > 0 && exact > cfg.maxBlocks) {
       definitiveFailCache.set(key, { at: Date.now(), code: "zone" });
-      throw new ShippingError(
-        "zone",
+      throw zone(
         `Esa dirección queda a ${Math.round(exact)} cuadras. Nuestro reparto cubre hasta ${cfg.maxBlocks} cuadras (~${Math.round((cfg.maxBlocks * cfg.blockMeters) / 1000)} km).`
       );
     }
