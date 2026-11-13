@@ -163,4 +163,87 @@ describe("geocodificación anclada a la sucursal (Necochea)", () => {
     assert.equal(error.code, "zone", "debe ser zone: " + (error && error.code));
     assert.ok(error.message.includes("cuadras"), "el mensaje lleva la distancia en cuadras");
   });
+
+  it("(f) 429 de ORS con respaldo que devuelve punto de La Plata → 'no ubicada' (envío pendiente)", async (t) => {
+    // ORS devuelve 429; Nominatim devuelve un punto de La Plata (fuera del radio
+    // de 14 km de Necochea). Como el respaldo está fuera del radio, se descarta
+    // y el resultado es 'no ubicada', no transient.
+    const urls = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      urls.push(u);
+      if (u.includes("/geocode/search")) {
+        return { ok: false, status: 429, json: async () => ({}) };
+      }
+      if (u.includes("nominatim")) {
+        // La Plata: a ~560 km del centro de Necochea, fuera del radio.
+        return respuestaJson([{ lat: "-34.9214", lon: "-57.9543" }]);
+      }
+      if (u.includes("photon")) {
+        return respuestaJson({ features: [] });
+      }
+      throw new Error("URL no esperada: " + u);
+    };
+    let error = null;
+    try {
+      await computeShipping("necochea", "Calle 1 100");
+    } catch (e) {
+      error = e;
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    assert.equal(error.code, "unknown", "debe ser unknown (no ubicada): " + (error && error.code));
+    // ORS se consultó (429) y los respaldos también, pero ninguno dio punto válido dentro del radio.
+    assert.ok(urls.some((u) => u.includes("/geocode/search")), "se consultó ORS");
+    assert.ok(urls.some((u) => u.includes("nominatim")), "se consultó el respaldo Nominatim");
+  });
+
+  it("(g) sin clave ORS_API_KEY → 'no ubicada' (envío pendiente), no error de red", async (t) => {
+    process.env.ORS_API_KEY = "";
+    const { computeShipping: computeSinClave } = await import(
+      "../server/shipping.js?instancia=necogeo-sin-clave"
+    );
+    process.env.ORS_API_KEY = "test-ors-key";
+    const urls = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      urls.push(u);
+      if (u.includes("/geocode/search")) {
+        // No debería llegarse a llamar a ORS porque no hay clave.
+        throw new Error("ORS no debe llamarse sin clave");
+      }
+      if (u.includes("nominatim")) {
+        return respuestaJson([{ lat: "-34.9214", lon: "-57.9543" }]); // La Plata, fuera del radio
+      }
+      if (u.includes("photon")) {
+        return respuestaJson({ features: [] });
+      }
+      throw new Error("URL no esperada: " + u);
+    };
+    let error = null;
+    try {
+      await computeSinClave("necochea", "Calle 1 100");
+    } catch (e) {
+      error = e;
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    assert.equal(error.code, "unknown", "debe ser unknown (no ubicada): " + (error && error.code));
+    assert.ok(!urls.some((u) => u.includes("/geocode/search")), "ORS no se consultó sin clave");
+  });
+
+  it("(h) caché de geocodificación evita la segunda consulta a ORS", async (t) => {
+    const urls = instalarMOCK(t, {
+      "Diagonal San Martín": [feature({ lat: CENTRO_NECOCHEA.lat, lng: CENTRO_NECOCHEA.lng, label: "Diagonal San Martín 1258, Necochea" })],
+      "Calle 5 678": [feature({ lat: -38.567, lng: -58.729 })],
+    }, 1);
+    // Primera consulta: se consulta ORS (origen + destino).
+    await computeShipping("necochea", "Calle 5 678");
+    const llamadasDespuesPrimera = urls.length;
+    // Segunda consulta misma dirección: debe usar caché, no llamar a ORS.
+    await computeShipping("necochea", "Calle 5 678");
+    assert.ok(urls.length === llamadasDespuesPrimera, "la caché evita repetir la consulta de geocodificación");
+  });
 });
