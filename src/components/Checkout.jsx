@@ -199,7 +199,7 @@ export default function Checkout({
 
       try {
         const res = await shippingQuote(branch.id, addr, { signal: controller.signal });
-        const data = { blocks: res.blocks, cost: res.cost };
+        const data = { blocks: res.blocks, cost: res.cost, pending: !!res.pending };
         quoteCache.set(key, { res: data, at: Date.now() });
         // Solo aplicar si NO fue abortado y la dirección sigue siendo la actual
         if (!controller.signal.aborted && addressRef.current.trim() === addr) {
@@ -350,7 +350,7 @@ export default function Checkout({
         address: orderMode === "delivery" ? address.trim() : "",
         deliveryNotes: orderMode === "delivery" ? deliveryNotes.trim() : "",
         shipping: wantsDelivery
-          ? { cost: shipping?.cost || 0, blocks: shipping?.blocks || 0, pending: shippingUnavailable && !isMp }
+          ? { cost: shipping?.cost || 0, blocks: shipping?.blocks || 0, pending: !!shipping?.pending }
           : { cost: 0, blocks: 0, pending: false },
         // Se manda la hora local tal cual la devuelve el DateTimePicker
         // ("YYYY-MM-DDTHH:mm"): el server la interpreta en hora AR (parseArLocal)

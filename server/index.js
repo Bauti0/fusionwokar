@@ -1057,25 +1057,18 @@ async function validateOrderBody(body, { requireEmail = false, requirePhone = tr
       shipping = await computeShipping(branch, address);
     } catch (err) {
       const code = err && err.code;
-      // Errores DEFINITIVOS (fuera de zona / dirección no encontrada): se
-      // rechazan igual para todos los medios de pago. Antes, efectivo y
-      // transferencia pasaban con envío "pendiente" y se aceptaban direcciones
-      // fuera de la zona de reparto.
-      if (code === "zone" || code === "unknown") {
-        // `shippingCode` no va en la respuesta: es solo para el log del
-        // checkout (ver warnOrder), que necesita distinguir zone de unknown.
+      // Fuera de zona: la dirección se ubicó pero está más lejos del reparto.
+      // Se rechaza con el mensaje de distancia correcta (siempre, cualquier
+      // medio de pago).
+      if (code === "zone") {
         return { error: err.message, shippingCode: code };
       }
-      // Fallo TRANSITORIO (proveedores caídos) o inesperado:
-      //  - Mercado Pago → se bloquea (no se puede cobrar sin saber el costo),
-      //    pero se marca `code: shipping_unavailable` + contactWhatsApp para que
-      //    el checkout ofrezca hablar con el local en vez de dejar al cliente
-      //    sin salida. El `code` es lo que permite distinguir este fallo del de
-      //    "no se pudo generar el link de pago": ambos son WhatsApp, pero son
-      //    cosas distintas y el mensaje tiene que decirlo.
-      //  - Efectivo/transferencia → el pedido pasa igual con envío "pendiente";
-      //    el costo se confirma por WhatsApp antes de salir (badge en el panel).
-      if (paymentMethod === "mercadopago") {
+      // Dirección no ubicada dentro del radio de la sucursal: no se bloquea.
+      // El pedido se crea con envío "a confirmar" (shipping_pending), el costo
+      // se fija por WhatsApp y el cliente puede seguir.
+      if (code === "unknown") {
+        shipping = { cost: 0, blocks: 0, supported: true, pending: true };
+      } else if (paymentMethod === "mercadopago") {
         const msg = code === "transient" ? err.message : "No pudimos calcular el envío. Escribinos por WhatsApp.";
         return {
           error: msg,
@@ -1083,8 +1076,9 @@ async function validateOrderBody(body, { requireEmail = false, requirePhone = tr
           contactWhatsApp: true,
           shippingCode: code || "unexpected",
         };
+      } else {
+        shipping = { cost: 0, blocks: 0, supported: true, pending: true };
       }
-      shipping = { cost: 0, blocks: 0, supported: true, pending: true };
     }
   }
   return {
@@ -2411,11 +2405,27 @@ app.post("/api/shipping/quote", rateLimit({ max: 30, windowMs: 60000, name: "shi
     if (typeof address !== "string" || !address.trim()) return res.status(400).json({ error: "Falta la dirección" });
     const s = await computeShipping(branch, address);
     if (!s.supported) return res.json({ ok: true, blocks: 0, cost: 0, supported: false });
-    res.json({ ok: true, blocks: s.blocks, cost: s.cost, supported: true });
+    // `pending` (dirección no ubicada dentro del radio de la sucursal): el
+    // pedido se crea con envío a confirmar y no se bloquea; el local fija el
+    // costo por WhatsApp. `zone` (fuera de reparto) ya lanzó ShippingError y
+    // se maneja como 400 más arriba.
+    res.json({
+      ok: true,
+      blocks: s.blocks,
+      cost: s.cost,
+      supported: true,
+      pending: !!s.pending,
+      message: s.pending ? (s.message || "No pudimos ubicar esa dirección con exactitud.") : "",
+    });
   } catch (err) {
     console.error("POST /api/shipping/quote:", err.message);
-    // transitorio (429 / servicio caído) → 503 para que el cliente reintente
     const code = err.code;
+    // "unknown": no se bloquea, se responde como pendiente para que el cliente
+    // siga y el local fije el costo por WhatsApp.
+    if (code === "unknown") {
+      return res.json({ ok: true, blocks: 0, cost: 0, supported: true, pending: true, message: err.message || "No pudimos ubicar esa dirección con exactitud." });
+    }
+    // "zone": fuera de zona de reparto, se rechaza con la distancia correcta.
     const body = { error: err.message };
     if (code) body.code = code;
     res.status(code === "transient" ? 503 : 400).json(body);
