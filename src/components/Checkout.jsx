@@ -227,7 +227,7 @@ export default function Checkout({
       }
     };
 
-    debounceTimer = setTimeout(startFetch, 1500);
+    debounceTimer = setTimeout(startFetch, 800);
 
     return () => {
       clearTimeout(debounceTimer);
