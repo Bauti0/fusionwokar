@@ -76,10 +76,22 @@ async function put(path, body, auth) {
   }));
 }
 
+async function post(path, body, auth) {
+  return jres(await fetch(`${baseUrl()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...auth, Connection: "close" },
+    body: JSON.stringify(body),
+  }));
+}
+
 const BASE_VALUES = { branch: "tandil", base_cost: 4000, flat_blocks: 20, per_block: 100, max_blocks: 0, auto_enabled: 1 };
 
 describe("endpoints de configuración de envío", () => {
   before(async () => {
+    // Base limpia para que el schema se cree desde cero con las columnas nuevas.
+    for (const f of ["test-shipping-settings.db", "test-shipping-settings.db-shm", "test-shipping-settings.db-wal"]) {
+      try { unlinkSync(f); } catch {}
+    }
     await loadServer();
     server = app.listen(PORT);
     await new Promise((resolve) => server.once("listening", resolve));
@@ -195,5 +207,39 @@ describe("endpoints de configuración de envío", () => {
     const rTan = await get("/api/shipping-config/tandil");
     assert.equal(rTan.status, 200);
     assert.equal(rTan.json.auto_enabled, 1);
+  });
+
+  it("rate límite 10 por minuto en probar cotización y origin-locate (429 después)", async () => {
+    // Cubre el punto 3: ambos endpoints admin tienen límite de 10 por minuto por
+    // usuario (mismo CSRF y sesión que el resto, sin exenciones).
+    const payload = {
+      branch: "necochea",
+      address: "Diagonal San Martín 1258, Necochea",
+      origin_address: "Diagonal San Martín 1258, Necochea, Buenos Aires, Argentina",
+      base_cost: 4000,
+      flat_blocks: 20,
+      per_block: 100,
+      max_blocks: 0,
+      auto_enabled: 1,
+    };
+    let cuatrocientosveintinueve = 0;
+    let noCuatrocientosveintinueve = 0;
+    for (let i = 0; i < 11; i++) {
+      const r = await post("/api/admin/shipping-settings/test", payload, authAdmin);
+      if (r.status === 429) cuatrocientosveintinueve++;
+      else noCuatrocientosveintinueve++;
+    }
+    assert.equal(cuatrocientosveintinueve, 1, `solo la 11ª petición debe ser 429, hubo ${cuatrocientosveintinueve}`);
+    assert.equal(noCuatrocientosveintinueve, 10, "las primeras 10 no deben ser 429");
+
+    // Mismo límite para origin-locate.
+    cuatrocientosveintinueve = 0;
+    noCuatrocientosveintinueve = 0;
+    for (let i = 0; i < 11; i++) {
+      const r = await post("/api/admin/shipping-settings/origin-locate", { origin_address: "Diagonal San Martín 1258, Necochea" }, authAdmin);
+      if (r.status === 429) cuatrocientosveintinueve++;
+      else noCuatrocientosveintinueve++;
+    }
+    assert.equal(cuatrocientosveintinueve, 1, `origin-locate: solo la 11ª petición debe ser 429, hubo ${cuatrocientosveintinueve}`);
   });
 });
