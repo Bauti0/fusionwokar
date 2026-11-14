@@ -130,11 +130,11 @@ function rowToConfig(branch, row) {
     originAddress: row.origin_address != null ? String(row.origin_address) : d.originAddress,
     originLat: row.origin_lat != null ? Number(row.origin_lat) : d.originLat,
     originLng: row.origin_lng != null ? Number(row.origin_lng) : d.originLng,
-    city: d.city,
-    region: d.region,
-    country: d.country,
-    center: d.center,
-    searchRadiusKm: d.searchRadiusKm,
+    center: {
+      lat: row.center_lat != null ? Number(row.center_lat) : d.center.lat,
+      lng: row.center_lng != null ? Number(row.center_lng) : d.center.lng,
+    },
+    searchRadiusKm: row.search_radius_km != null ? Number(row.search_radius_km) : d.searchRadiusKm,
     sanityRadiusKm: d.sanityRadiusKm,
     blockMeters: d.blockMeters,
     flatBlocks: row.flat_blocks != null ? Number(row.flat_blocks) : d.flatBlocks,
@@ -191,6 +191,10 @@ export async function saveShippingSettings({ db, branch, values, adminUserId, ad
   const originAddress = values.origin_address != null ? String(values.origin_address).trim() : previous.originAddress || d.originAddress;
   const originLat = values.origin_lat != null ? Number(values.origin_lat) : previous.originLat;
   const originLng = values.origin_lng != null ? Number(values.origin_lng) : previous.originLng;
+  const centerLat = values.center_lat != null ? Number(values.center_lat) : (previous.center.lat ?? d.center.lat);
+  const centerLng = values.center_lng != null ? Number(values.center_lng) : (previous.center.lng ?? d.center.lng);
+  const searchRadiusKm =
+    values.search_radius_km != null ? Number(values.search_radius_km) : (previous.searchRadiusKm ?? SANITY_RADIUS_KM);
   const baseCost = Number(values.base_cost ?? previous.baseCost);
   const flatBlocks = Number(values.flat_blocks ?? previous.flatBlocks);
   const perBlock = Number(values.per_block ?? previous.perBlock);
@@ -204,6 +208,9 @@ export async function saveShippingSettings({ db, branch, values, adminUserId, ad
   addChange("origen", previous.originAddress, originAddress);
   addChange("origen_lat", previous.originLat, originLat);
   addChange("origen_lng", previous.originLng, originLng);
+  addChange("origen_lat_centro", previous.center.lat, centerLat);
+  addChange("origen_lng_centro", previous.center.lng, centerLng);
+  addChange("radio de búsqueda", previous.searchRadiusKm, searchRadiusKm);
   addChange("precio base", previous.baseCost, baseCost);
   addChange("cuadras incluidas", previous.flatBlocks, flatBlocks);
   addChange("precio por cuadra extra", previous.perBlock, perBlock);
@@ -212,12 +219,15 @@ export async function saveShippingSettings({ db, branch, values, adminUserId, ad
 
   const sql = `
     INSERT INTO branch_shipping_settings
-      (branch, origin_address, origin_lat, origin_lng, base_cost, flat_blocks, per_block, max_blocks, auto_enabled, updated_at, updated_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (branch, origin_address, origin_lat, origin_lng, center_lat, center_lng, search_radius_km, base_cost, flat_blocks, per_block, max_blocks, auto_enabled, updated_at, updated_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(branch) DO UPDATE SET
       origin_address = excluded.origin_address,
       origin_lat = excluded.origin_lat,
       origin_lng = excluded.origin_lng,
+      center_lat = excluded.center_lat,
+      center_lng = excluded.center_lng,
+      search_radius_km = excluded.search_radius_km,
       base_cost = excluded.base_cost,
       flat_blocks = excluded.flat_blocks,
       per_block = excluded.per_block,
@@ -231,6 +241,9 @@ export async function saveShippingSettings({ db, branch, values, adminUserId, ad
     originAddress,
     originLat,
     originLng,
+    centerLat,
+    centerLng,
+    searchRadiusKm,
     baseCost,
     flatBlocks,
     perBlock,
@@ -255,4 +268,22 @@ export async function saveShippingSettings({ db, branch, values, adminUserId, ad
   cache.delete(branch);
   if (onSettingsSaved) onSettingsSaved(branch);
   return { ok: true, branch, changed };
+}
+
+// Valida que una latitud esté dentro de Argentina (-55 a -21). Devuelve null
+// si es válida, o un mensaje de error si no.
+export function validarLatitud(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "Latitud inválida.";
+  if (n < -55 || n > -21) return "Latitud fuera de rango para Argentina (-55 a -21).";
+  return null;
+}
+
+// Valida que una longitud esté dentro de Argentina (-74 a -53). Devuelve null
+// si es válida, o un mensaje de error si no.
+export function validarLongitud(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "Longitud inválida.";
+  if (n < -74 || n > -53) return "Longitud fuera de rango para Argentina (-74 a -53).";
+  return null;
 }
