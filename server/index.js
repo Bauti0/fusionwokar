@@ -47,6 +47,8 @@ import {
 import {
   getShippingSettings,
   saveShippingSettings,
+  validarLatitud,
+  validarLongitud,
   VALID_BRANCHES,
 } from "./shipping-settings.js";
 import {
@@ -4119,6 +4121,29 @@ app.put("/api/admin/shipping-settings", requireAdmin, async (req, res) => {
     const previous = await getShippingSettings(db, branch);
     const parsed = validateShippingSettings(req.body || {}, previous);
     if (parsed.error) return res.status(400).json({ error: parsed.error, field: parsed.field });
+    // Si el cálculo automático queda encendido, el origen tiene que estar
+    // completo y dentro de Argentina (de lo contrario el cálculo fallaría y
+    // no habría respaldo). Nunca se guarda lat/lng vacíos ni fuera de
+    // Argentina con el automático encendido.
+    const autoEfectivo =
+      parsed.values.auto_enabled == null ? previous.autoEnabled : Number(parsed.values.auto_enabled) === 0 ? 0 : 1;
+    // Solo se valida el origen cuando el admin envía un valor nuevo (y el
+    // automático está encendido). Si deja el origen tal como está, no se
+    // rechaza: el cálculo usa el del código/BD como respaldo.
+    const tocaOrigen =
+      req.body.origin_lat !== undefined || req.body.origin_lng !== undefined || req.body.origin_address !== undefined;
+    if (autoEfectivo === 1 && tocaOrigen) {
+      const latErr = validarLatitud(parsed.values.origin_lat);
+      const lngErr = validarLongitud(parsed.values.origin_lng);
+      if (latErr) return res.status(400).json({ error: latErr, field: "origin_lat" });
+      if (lngErr) return res.status(400).json({ error: lngErr, field: "origin_lng" });
+      if (!parsed.values.origin_address) {
+        return res.status(400).json({
+          error: "La dirección del origen es obligatoria cuando el cálculo automático está encendido.",
+          field: "origin_address",
+        });
+      }
+    }
     const result = await saveShippingSettings({
       db,
       branch,
@@ -4200,7 +4225,16 @@ app.post(
 
 // POST /api/admin/shipping-settings/origin-locate → geocodifica la dirección
 // del origen y devuelve lat/lng + enlace a Google Maps para confirmar visualmente.
-app.post("/api/admin/shipping-settings/origin-locate", requireAdmin, async (req, res) => {
+// Límite: 10 por minuto por usuario (admin) para no gastar la cuota de ORS.
+app.post(
+  "/api/admin/shipping-settings/origin-locate",
+  requireAdmin,
+  rateLimitByKey((req) => String(req.admin.username || req.ip || "unknown"), {
+    windowMs: 60 * 1000,
+    max: 10,
+    name: "shipping-settings-origin-locate",
+  }),
+  async (req, res) => {
   try {
     const branch = settingsBranchFromReq(req, req.body?.branch);
     if (!branch) return res.status(400).json({ error: "Sucursal inválida" });
