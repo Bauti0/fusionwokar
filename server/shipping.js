@@ -703,6 +703,11 @@ async function getOrigin(cfg, opts = {}) {
       return { lat, lng };
     }
   }
+  // Si no hay lat/lng válidos y tampoco dirección de origen, usar el centro
+  // de la sucursal (código o BD) en vez de fallar.
+  if (!cfg.originAddress || !cfg.originAddress.trim()) {
+    return { lat: cfg.center.lat, lng: cfg.center.lng };
+  }
   const cached = originCache.get(branch);
   if (cached && Date.now() - cached.at < ORIGIN_TTL) return cached.coords;
   const o = await geocode(cfg.originAddress, cfg, opts);
