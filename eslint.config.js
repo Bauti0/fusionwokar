@@ -46,7 +46,7 @@ export default [
     // en runtime de Node). No son código del proyecto y el config por archivo
     // de abajo no les asigna `globals.node`, así que si entran al lint el
     // gate se cae con 110 no-undef falsos.
-    ignores: ["dist/**", "node_modules/**", "public/**", ".opencode/**", ".claude/**", ".github/**", "test-branch-isolation.js", "test-quick.js"],
+    ignores: ["dist/**", "node_modules/**", "public/**", ".opencode/**", ".claude/**", ".github/**", "test-branch-isolation.js", "test-quick.js", "insert-superadmin.mjs", "setup-e2e.mjs", "verify-e2e.mjs"],
   },
 
   js.configs.recommended,
@@ -110,6 +110,17 @@ export default [
   // ---- Config ----------------------------------------------------------
   {
     files: ["*.config.js", "*.config.mjs"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: { ...globals.node },
+    },
+    rules: { ...RULES, "no-console": "off" },
+  },
+
+  // ---- Scripts (Node) --------------------------------------------------
+  {
+    files: ["scripts/**/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
