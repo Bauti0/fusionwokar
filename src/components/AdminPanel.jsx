@@ -1335,7 +1335,7 @@ const renderOrder = (o) => {
                         <span className="admin-order__name">{o.customer.name}</span>
                         {o.source === "whatsapp" && <span className="badge badge--source"><IconChat /> WhatsApp</span>}
                         {o.source === "counter" && o.orderMode === "delivery" && (
-                          <span className="badge badge--source"><IconDelivery /> Delivery</span>
+                          <span className="badge badge--source"><IconTruck /> Delivery</span>
                         )}
                         {o.source === "counter" && o.orderMode !== "delivery" && (
                           <span className="badge badge--source"><IconTakeout /> Mostrador</span>
@@ -1496,7 +1496,7 @@ const renderOrder = (o) => {
                 <div className="detail-block">
                   <h4>Sucursal / Entrega</h4>
                   <p className="detail-strong">{BRANCHES[selected.branch]?.name}</p>
-                  <p>{selected.orderMode === "delivery" ? <><IconDelivery /> Delivery</> : <><IconTakeout /> Retiro</>}</p>
+                  <p>{selected.orderMode === "delivery" ? <><IconTruck /> Delivery</> : <><IconTakeout /> Retiro</>}</p>
                   <p>{new Date(selected.createdAt).toLocaleString("es-AR")}</p>
                   <div className="order-chips">
                     {selected.shipping?.pending && (
@@ -1694,7 +1694,7 @@ const renderOrder = (o) => {
                           aria-pressed={edit.orderMode === "delivery"}
                           onClick={() => setEditField({ orderMode: "delivery" })}
                         >
-                          <IconDelivery /> Delivery
+                          <IconTruck /> Delivery
                         </button>
                         <button
                           type="button"
