@@ -32,6 +32,8 @@ describe("Admin routes — scope table coverage", () => {
     "PUT /api/admin/branch-pause",
     // Branch hours
     "PUT /api/admin/branch-hours",
+    // Shipping settings
+    "PUT /api/admin/shipping-settings",
     // Products
     "POST /api/admin/products",
     "PUT /api/admin/products/{id}",

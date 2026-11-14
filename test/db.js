@@ -225,6 +225,34 @@ export async function createTestDb() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS branch_shipping_settings (
+      branch TEXT PRIMARY KEY,
+      auto_enabled INTEGER NOT NULL DEFAULT 1,
+      origin_address TEXT NOT NULL DEFAULT '',
+      origin_lat REAL,
+      origin_lng REAL,
+      base_cost INTEGER NOT NULL DEFAULT 0,
+      flat_blocks INTEGER NOT NULL DEFAULT 0,
+      per_block INTEGER NOT NULL DEFAULT 0,
+      max_blocks INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      updated_by TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS branch_shipping_settings_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      branch TEXT NOT NULL,
+      admin_user_id INTEGER,
+      admin_username TEXT NOT NULL,
+      admin_role TEXT NOT NULL,
+      field TEXT NOT NULL,
+      old_value TEXT,
+      new_value TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_shipping_settings_log_branch ON branch_shipping_settings_log(branch);
+    CREATE INDEX IF NOT EXISTS idx_shipping_settings_log_created ON branch_shipping_settings_log(created_at);
+
     CREATE INDEX IF NOT EXISTS idx_orders_number ON orders(order_number);
     CREATE INDEX IF NOT EXISTS idx_orders_branch ON orders(branch);
     CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);

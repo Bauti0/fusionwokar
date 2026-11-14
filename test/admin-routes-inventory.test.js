@@ -93,6 +93,13 @@ const ADMIN_ROUTES = [
   { method: "GET", path: "/api/admin/branch-hours", scopeType: "branch_admin" },
   { method: "PUT", path: "/api/admin/branch-hours", scopeType: "branch_admin" },
 
+  // Configuración de envío
+  { method: "GET", path: "/api/admin/shipping-settings", scopeType: "branch_admin" },
+  { method: "PUT", path: "/api/admin/shipping-settings", scopeType: "branch_admin" },
+  { method: "POST", path: "/api/admin/shipping-settings/test", scopeType: "branch_admin" },
+  { method: "POST", path: "/api/admin/shipping-settings/origin-locate", scopeType: "branch_admin" },
+  { method: "GET", path: "/api/admin/shipping-settings/log", scopeType: "branch_admin" },
+
   // Products
   { method: "GET", path: "/api/admin/products", scopeType: "branch_admin" },
   { method: "POST", path: "/api/admin/products", scopeType: "branch_admin" },
