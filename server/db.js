@@ -272,6 +272,45 @@ await db.exec(`
   CREATE INDEX IF NOT EXISTS idx_products_branch ON products(branch);
   CREATE INDEX IF NOT EXISTS idx_products_category ON products(branch, category_id);
   CREATE INDEX IF NOT EXISTS idx_categories_branch ON categories(branch);
+
+  -- Configuración de envío por sucursal (editable desde el panel).
+  -- Una fila por sucursal; si no hay fila, se usa el valor de semilla
+  -- (los defaults de .env / código al momento del primer arranque).
+  -- La configuración guardada en BD manda sobre la del código para el
+  -- origen (dirección, lat, lng) y el radio de búsqueda (search_radius_km);
+  -- el código queda solo como valor inicial y respaldo ante fallos de BD.
+  CREATE TABLE IF NOT EXISTS branch_shipping_settings (
+    branch TEXT PRIMARY KEY,
+    auto_enabled INTEGER NOT NULL DEFAULT 1,
+    origin_address TEXT NOT NULL DEFAULT '',
+    origin_lat REAL,
+    origin_lng REAL,
+    center_lat REAL,
+    center_lng REAL,
+    search_radius_km REAL,
+    base_cost INTEGER NOT NULL DEFAULT 0,
+    flat_blocks INTEGER NOT NULL DEFAULT 0,
+    per_block INTEGER NOT NULL DEFAULT 0,
+    max_blocks INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT ''
+  );
+
+  -- Auditoría de cambios de configuración de envío: una fila por campo
+  -- modificado. admin_user_id NULL = superadmin del .env.
+  CREATE TABLE IF NOT EXISTS branch_shipping_settings_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    branch TEXT NOT NULL,
+    admin_user_id INTEGER,
+    admin_username TEXT NOT NULL,
+    admin_role TEXT NOT NULL,
+    field TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_shipping_settings_log_branch ON branch_shipping_settings_log(branch);
+  CREATE INDEX IF NOT EXISTS idx_shipping_settings_log_created ON branch_shipping_settings_log(created_at);
 `);
 
   // Tabla de configuración simple (key/value) para el admin.
@@ -396,6 +435,13 @@ await ensureColumn("admin_tokens", "branch", "branch TEXT NOT NULL DEFAULT ''");
 // El índice se crea DESPUÉS de agregar la columna (sino falla en DBs viejas).
 await ensureColumn("events", "visitor_id", "visitor_id TEXT");
 await db.exec("CREATE INDEX IF NOT EXISTS idx_events_visitor ON events(visitor_id)");
+
+// Columnas nuevas de configuración de envío (origen y radio efectivos). Se
+// agregan con ALTER TABLE si la tabla ya existía sin ellas (bases creadas en
+// versiones previas).
+await ensureColumn("branch_shipping_settings", "center_lat", "center_lat REAL");
+await ensureColumn("branch_shipping_settings", "center_lng", "center_lng REAL");
+await ensureColumn("branch_shipping_settings", "search_radius_km", "search_radius_km REAL");
 
 // Migraciones de caja (corrected_at, deleted_at/deleted_reason de la
 // anulación, cierre de duplicados, índice único de caja abierta): viven en
@@ -595,12 +641,17 @@ export async function seedBranchHours() {
 
 // Siembra la configuración inicial de envío por sucursal si aún no tiene fila.
 // Nunca pisa una fila existente: el comportamiento no cambia hasta que alguien
-// edite desde el panel.
+// edite desde el panel. Guarda el origen que HOY usa el cálculo (dirección,
+// lat y lng del centro de la sucursal, tomadas del código/.env si no hay
+// valores de entorno más específicos), nunca vacíos ni 0, y las cuadras
+// máximas y el radio efectivos.
 export async function seedShippingSettings() {
   const insert = db.prepare(`
     INSERT INTO branch_shipping_settings
-      (branch, auto_enabled, origin_address, origin_lat, origin_lng, base_cost, flat_blocks, per_block, max_blocks, updated_at, updated_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (branch, auto_enabled, origin_address, origin_lat, origin_lng,
+       center_lat, center_lng, search_radius_km, base_cost, flat_blocks,
+       per_block, max_blocks, updated_at, updated_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const ts = now();
   for (const branch of VALID_BRANCHES) {
@@ -609,12 +660,24 @@ export async function seedShippingSettings() {
       .prepare("SELECT 1 FROM branch_shipping_settings WHERE branch = ?")
       .get(branch);
     if (existing) continue;
+    // El origen efectivo es el centro del local (el que usa el cálculo en
+    // main), nunca vacío ni 0. Si no hay env vars de origen, se usa el centro
+    // de la sucursal.
+    const originLat = cfg.originLat != null ? cfg.originLat : cfg.center.lat;
+    const originLng = cfg.originLng != null ? cfg.originLng : cfg.center.lng;
+    // Radio efectivo de búsqueda: el de la sucursal (Necochea = 14 km) o el
+    // de sanity (50 km) como respaldo.
+    const searchRadiusKm =
+      cfg.searchRadiusKm != null ? cfg.searchRadiusKm : dfltSanityRadiusKm();
     await insert.run(
       branch,
       cfg.autoEnabled,
       cfg.originAddress,
-      cfg.originLat,
-      cfg.originLng,
+      originLat,
+      originLng,
+      cfg.center.lat,
+      cfg.center.lng,
+      searchRadiusKm,
       cfg.baseCost,
       cfg.flatBlocks,
       cfg.perBlock,
@@ -623,6 +686,10 @@ export async function seedShippingSettings() {
       "sistema"
     );
   }
+}
+
+function dfltSanityRadiusKm() {
+  return 50;
 }
 
 // Las proyecciones públicas del pedido viven en public-order.js (puras, sin
