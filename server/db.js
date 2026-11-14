@@ -660,11 +660,6 @@ export async function seedShippingSettings() {
       .prepare("SELECT 1 FROM branch_shipping_settings WHERE branch = ?")
       .get(branch);
     if (existing) continue;
-    // El origen efectivo es el centro del local (el que usa el cálculo en
-    // main), nunca vacío ni 0. Si no hay env vars de origen, se usa el centro
-    // de la sucursal.
-    const originLat = cfg.originLat != null ? cfg.originLat : cfg.center.lat;
-    const originLng = cfg.originLng != null ? cfg.originLng : cfg.center.lng;
     // Radio efectivo de búsqueda: el de la sucursal (Necochea = 14 km) o el
     // de sanity (50 km) como respaldo.
     const searchRadiusKm =
@@ -673,10 +668,10 @@ export async function seedShippingSettings() {
       branch,
       cfg.autoEnabled,
       cfg.originAddress,
-      originLat,
-      originLng,
-      cfg.center.lat,
-      cfg.center.lng,
+      null,           // origin_lat: NULL → getOrigin geocodifica originAddress
+      null,           // origin_lng: NULL → getOrigin geocodifica originAddress
+      cfg.center.lat, // center_lat: para ORS boundary.circle (radio de búsqueda)
+      cfg.center.lng, // center_lng: para ORS boundary.circle
       searchRadiusKm,
       cfg.baseCost,
       cfg.flatBlocks,
