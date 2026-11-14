@@ -58,6 +58,7 @@ function toApiError(data, status) {
 async function request(path, options = {}) {
   const res = await fetch(path, {
     ...options,
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...csrfHeader(), ...(options.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
@@ -74,7 +75,7 @@ const lastPayloadPerPath = new Map();
 async function pollRequest(path) {
   const prev = lastPayloadPerPath.get(path);
   const headers = prev && prev.updatedAt ? { "If-Modified-Since": prev.updatedAt } : {};
-  const res = await fetch(path, { headers });
+  const res = await fetch(path, { headers, credentials: "include" });
   if (res.status === 304) return prev;
   const data = await res.json().catch(() => ({}));
   // Mismo error tipado que el resto: el tracking y el polling del pago pueden
