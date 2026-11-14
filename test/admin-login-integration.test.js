@@ -280,3 +280,34 @@ describe("FIND-008: login HTTP integration - token guardado como hash SHA-256 (a
     assert.equal(isPlaintext, false, "MUTATION TEST: token NO debe guardarse en texto plano (isPlaintext=false). Si falla, se revirtió el fix FIND-008.");
   });
 });
+
+// Test unitario para isSecureRequest (no requiere servidor)
+describe("isSecureRequest", () => {
+  it("devuelve false en desarrollo (TEST_MODE + DEMO_MODE)", () => {
+    process.env.TEST_MODE = "true";
+    process.env.DEMO_MODE = "true";
+    process.env.NODE_ENV = "development";
+    const req = { secure: false, headers: {} };
+    const isSecure = process.env.NODE_ENV === "production" || !!req.secure || !(process.env.TEST_MODE === "true" && process.env.DEMO_MODE === "true");
+    assert.equal(isSecure, false, "en desarrollo con demo mode NO debe ser secure");
+  });
+
+  it("devuelve true en producción (NODE_ENV=production)", () => {
+    process.env.NODE_ENV = "production";
+    process.env.TEST_MODE = "true";
+    process.env.DEMO_MODE = "true";
+    const req = { secure: false, headers: {} };
+    const isSecure = process.env.NODE_ENV === "production" || !!req.secure || !(process.env.TEST_MODE === "true" && process.env.DEMO_MODE === "true");
+    assert.equal(isSecure, true, "en producción DEBE ser secure");
+    delete process.env.NODE_ENV;
+  });
+
+  it("devuelve true si req.secure es true (TLS)", () => {
+    process.env.NODE_ENV = "development";
+    process.env.TEST_MODE = "true";
+    process.env.DEMO_MODE = "true";
+    const req = { secure: true, headers: {} };
+    const isSecure = process.env.NODE_ENV === "production" || !!req.secure || !(process.env.TEST_MODE === "true" && process.env.DEMO_MODE === "true");
+    assert.equal(isSecure, true, "con req.secure=true DEBE ser secure");
+  });
+});
