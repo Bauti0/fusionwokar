@@ -30,7 +30,7 @@ import { previewOrderEdit, formatAuditEdits } from "../utils/orderEdit.js";
 import { buildOrderSummaryRows } from "../utils/orderSummary.js";
 import { startNewOrderLoop, stopNewOrderLoop, playConfirmBeep, unlockAudio, loadAudioEnabled, saveAudioEnabled, shouldPlayAlert, shouldShowUnlockBanner } from "../utils/notifySound.js";
 import useDialogA11y from "../hooks/useDialogA11y.js";
-import { IconEmptySearch, IconRepeat, IconPlus, IconLocation, IconVolume2, IconVolumeX, IconAlertCircle, IconCart, IconChart, IconMoney, IconBowlSteam, IconChopsticks, IconTag, IconUser, IconLock, IconBell, IconSearch, IconChat, IconDelivery, IconClock, IconCard, IconCash, IconBank, IconTakeout, IconX, IconReceipt, IconOrderStatus, IconChevronDown } from "./ui/icons.jsx";
+import { IconEmptySearch, IconRepeat, IconPlus, IconLocation, IconVolume2, IconVolumeX, IconAlertCircle, IconCart, IconChart, IconMoney, IconBowlSteam, IconChopsticks, IconTag, IconUser, IconLock, IconBell, IconSearch, IconChat, IconDelivery, IconClock, IconCard, IconCash, IconBank, IconTakeout, IconX, IconReceipt, IconOrderStatus, IconChevronDown, IconTruck } from "./ui/icons.jsx";
 import Dropdown from "./ui/Dropdown.jsx";
 import Switch from "./ui/Switch.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
@@ -46,6 +46,7 @@ import AdminSales from "./AdminSales.jsx";
 import AdminNewOrder from "./AdminNewOrder.jsx";
 import AdminUsers from "./AdminUsers.jsx";
 import AdminBranchHours from "./AdminBranchHours.jsx";
+import AdminShippingSettings from "./AdminShippingSettings.jsx";
 import AdminPanelCard from "./AdminPanelCard.jsx";
 import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import { SectionFallback } from "./ui/ErrorFallbacks.jsx";
@@ -163,7 +164,7 @@ function editDraftFrom(order) {
 }
 
 export default function AdminPanel({ me, onLogout }) {
-  const [section, setSection] = useState("orders"); // "orders" | "stats" | "products" | "coupons"
+  const [section, setSection] = useState("orders"); // "orders" | "stats" | "products" | "coupons" | "envíos"
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -849,6 +850,14 @@ export default function AdminPanel({ me, onLogout }) {
             <IconClock />
             <span className="admin-nav__label">Horarios</span>
           </button>
+          <button
+            data-testid="nav-envios"
+            className={`admin-nav__btn ${section === "envíos" ? "is-active" : ""}`}
+            onClick={() => setSection("envíos")}
+          >
+            <IconTruck />
+            <span className="admin-nav__label">Envíos</span>
+          </button>
           {/* Commit con el que se compiló la app (lo inyecta vite.config.js
               al hacer el build). Sirve para saber de un vistazo qué versión
               está corriendo el panel. Si no se pudo leer el hash ("?") no se
@@ -1040,6 +1049,19 @@ export default function AdminPanel({ me, onLogout }) {
             >
               <AdminPanelCard title="Horarios" titleIcon={<IconClock style={{ width: 18, height: 18 }} />}>
                 <AdminBranchHours me={me} />
+              </AdminPanelCard>
+            </ErrorBoundary>
+          </>
+        )}
+
+        {section === "envíos" && (
+          <>
+            <ErrorBoundary
+              fallback={(err, reset) => <SectionFallback error={err} reset={reset} sectionName="los envíos" />}
+              resetKeys={['section']}
+            >
+              <AdminPanelCard title="Envíos" titleIcon={<IconTruck style={{ width: 18, height: 18 }} />}>
+                <AdminShippingSettings me={me} />
               </AdminPanelCard>
             </ErrorBoundary>
           </>
