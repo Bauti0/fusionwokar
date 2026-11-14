@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { pauseNotice } from "../utils/schedule.js";
 import { IconClock, IconLocation, IconDelivery, IconChevronDown, IconPause } from "./ui/icons.jsx";
+import { useShippingConfig } from "../hooks/useShippingConfig.js";
+import { buildShippingText } from "../utils/shippingText.js";
 
 // ============================================================
 // BranchHoursInfo — Presentación unificada de horarios
@@ -52,6 +54,7 @@ export default function BranchHoursInfo({
   mode = "full", // "full" | "compact"
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const { config: shippingConfig } = useShippingConfig(branch?.id);
 
   const status = getStatusLabel(branch, pause, structuredHours);
   const today = structuredHours?.today;
@@ -164,12 +167,12 @@ export default function BranchHoursInfo({
             <IconLocation className="hours-info__icon" width="20" height="20" />
             <span className="hours-info__address">{branch.address}</span>
           </div>
-          {branch.deliveryInfo && (
-            <div className="hours-info__row">
-              <IconDelivery className="hours-info__icon" width="20" height="20" />
-              <span className="hours-info__delivery">{branch.deliveryInfo}</span>
-            </div>
-          )}
+          <div className="hours-info__row">
+            <IconDelivery className="hours-info__icon" width="20" height="20" />
+            <span className="hours-info__delivery">
+              {buildShippingText(shippingConfig)}
+            </span>
+          </div>
         </>
       )}
 

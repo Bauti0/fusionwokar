@@ -5,6 +5,7 @@ import { waLinkForUnpaidOrder } from "../utils/whatsapp.js";
 import { validateCheckoutForm } from "../utils/checkoutValidation.js";
 import { pauseNotice } from "../utils/schedule.js";
 import { useBranchHours } from "../hooks/useBranchHours.js";
+import { useShippingConfig } from "../hooks/useShippingConfig.js";
 import BranchHoursInfo from "./BranchHoursInfo.jsx";
 import { phonePlaceholderFor } from "../data/branches.js";
 import { shouldCacheQuoteError } from "../utils/shippingCache.js";
@@ -12,8 +13,6 @@ import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/ch
 import { normalizeAddressKey } from "../utils/normalizeAddressKey.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard, IconLock, IconCheck, IconFlash, IconTakeout, IconChat, IconClockOutline, IconDelivery, IconTag } from "./ui/icons.jsx";
-import FadeImage from "./FadeImage.jsx";
-
 const PAYMENT_METHODS = [
   { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "Contado al retirar o al recibir" },
   { id: "transferencia", label: "Transferencia", Icon: IconBank, hint: "CBU de la sucursal al confirmar" },
@@ -123,7 +122,14 @@ export default function Checkout({
   const isMp = paymentMethod === "mercadopago";
   const wantsDelivery = orderMode === "delivery";
   const isTandil = branch.id === "tandil";
-  const supportsAutoShipping = branch.shippingConfig === true;
+  // El cálculo automático viene de la configuración pública de la sucursal;
+  // mientras carga se conserva el valor de branches.js para no cambiar el
+  // comportamiento actual.
+  const { config: shippingConfig, loading: shippingConfigLoading } = useShippingConfig(branch.id);
+  const autoShippingEnabled = shippingConfigLoading
+    ? branch.shippingConfig === true
+    : shippingConfig?.auto_enabled !== 0;
+  const supportsAutoShipping = autoShippingEnabled && branch.supportsDelivery;
   const minAddressLength = branch.minAddressLength ?? 8;
   const shippingCost = wantsDelivery ? shipping?.cost || 0 : 0;
   const finalTotal = (coupon ? coupon.totalAfter : total) + shippingCost;
@@ -132,6 +138,9 @@ export default function Checkout({
   // Para efectivo/transferencia se deja pasar con envío "a confirmar"; para
   // Mercado Pago se bloquea pero con la puerta de WhatsApp del local.
   const shippingUnavailable = wantsDelivery && supportsAutoShipping && !!shippingError;
+  // Cálculo automático apagado: el local coordina el envío por WhatsApp y no
+  // se bloquea el botón de confirmar.
+  const shippingAutoOff = wantsDelivery && !autoShippingEnabled;
   const contactWaLink = `https://wa.me/${branch.whatsapp}?text=${encodeURIComponent(
     "Hola! Estoy haciendo un pedido pero no puedo calcular el envío automáticamente en la página. ¿Me pueden ayudar?"
   )}`;
@@ -155,8 +164,17 @@ export default function Checkout({
   // cambia la dirección/sucursal/modalidad. Un timer de 8 s muestra
   // "Estamos calculando…" sin bloquear el formulario. AbortError se ignora.
   useEffect(() => {
-    if (!wantsDelivery || !supportsAutoShipping) {
+    if (!wantsDelivery) {
       setShipping(null);
+      setShippingError("");
+      setShippingBusy(false);
+      setShippingCalculating(false);
+      return;
+    }
+    if (!supportsAutoShipping) {
+      // Cálculo automático apagado: no se consulta el mapa ni se bloquea.
+      // El pedido queda con envío "a confirmar" y el local lo fija por WhatsApp.
+      setShipping({ cost: 0, blocks: 0, pending: true });
       setShippingError("");
       setShippingBusy(false);
       setShippingCalculating(false);
@@ -618,17 +636,19 @@ export default function Checkout({
               </a>
             </div>
           )}
-          {items.map((item) => (
+          {items.map((item) => {
+            return (
             <div className="summary__row" key={item.key}>
               <span className="summary__item">
-                {item.image && <FadeImage src={item.image} alt="" width="44" height="44" aspectRatio={1} className="summary__thumb" />}
+                {item.image && <img src={item.image} alt="" width="44" height="44" aspectRatio={1} className="summary__thumb" style={{objectFit:'cover'}} />}
                 <span>
                   {item.qty}× {item.name}
                 </span>
               </span>
               <span>{formatPrice(lineTotal(item))}</span>
             </div>
-          ))}
+            );
+          })}
           {discount > 0 && (
             <div className="summary__row">
               <span>Descuento ({coupon?.code})</span>
@@ -639,6 +659,22 @@ export default function Checkout({
             <div className="summary__row">
               <span>Envío</span>
               <span>a confirmar</span>
+            </div>
+          )}
+          {shippingAutoOff && (
+            <div className="summary__row">
+              <span>Envío</span>
+              <span>
+                El costo de envío te lo confirmamos por WhatsApp{" "}
+                <a
+                  className="summary__link"
+                  href={contactWaLink}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Escribinos
+                </a>
+              </span>
             </div>
           )}
           {shippingCost > 0 && (

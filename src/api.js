@@ -174,6 +174,46 @@ export function shippingQuote(branch, address, { signal } = {}) {
   });
 }
 
+// Configuración pública de envío de una sucursal (solo lo que necesita la tienda).
+export function getShippingConfig(branch) {
+  return request(`/api/shipping-config/${encodeURIComponent(branch)}`);
+}
+
+// ---- envío (admin) ----
+export function adminShippingSettings(branch) {
+  const qs = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+  return request(`/api/admin/shipping-settings${qs}`);
+}
+
+export function adminUpdateShippingSettings(values) {
+  return request("/api/admin/shipping-settings", {
+    method: "PUT",
+    body: JSON.stringify(values),
+  });
+}
+
+// "Probar cotización": devuelve cuadras, costo y estado sin crear pedido.
+// Acepta los valores del formulario (sin guardar) si se envían en el body.
+export function adminShippingSettingsTest(payload) {
+  return request("/api/admin/shipping-settings/test", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// Geocodifica la dirección del origen y devuelve lat/lng + enlace a Maps.
+export function adminShippingOriginLocate(payload) {
+  return request("/api/admin/shipping-settings/origin-locate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function adminShippingSettingsLog(branch) {
+  const qs = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+  return request(`/api/admin/shipping-settings/log${qs}`);
+}
+
 // ---- admin (cookie httpOnly, sin token) ----
 export function adminLogin(username, password) {
   return request("/api/admin/login", {
