@@ -86,9 +86,9 @@ const USER_AGENT = "FusionWok/1.0 (+https://fusionwok.net)";
 // dirección porque ubicaría cualquier invento en el centro de la ciudad.
 const MIN_CONFIDENCE = 0.7;
 
-const blockCache = new Map(); // clave normalizada → { blocks, cost, at }
-const transientFailCache = new Map(); // clave normalizada → { at } (15s)
-const definitiveFailCache = new Map(); // clave normalizada → { at, code } (90s)
+const blockCache = new Map(); // `${branch}|${addressKey}` → { blocks, cost, at }
+const transientFailCache = new Map(); // `${branch}|${addressKey}` → { at } (15s)
+const definitiveFailCache = new Map(); // `${branch}|${addressKey}` → { at, code } (90s)
 const originCache = new Map(); // branch → { coords, at }
 const geoCache = new Map(); // `${branch}|${textoNormalizado}` → { coords, at }
 const inFlight = new Map(); // `${branch}|${textoNormalizado}` → promesa en vuelo
@@ -722,7 +722,9 @@ async function getOrigin(cfg, opts = {}) {
 export async function quoteShipping(cfg, address) {
   const a = String(address || "").trim();
   if (!a) return { blocks: 0, cost: 0, supported: true };
-  const key = normalizeAddressKey(a);
+  const branchKey = cfg.city.toLowerCase(); // "tandil" | "necochea"
+  const addressKey = normalizeAddressKey(a);
+  const key = `${branchKey}|${addressKey}`;
   const started = Date.now();
 
   const cached = blockCache.get(key);

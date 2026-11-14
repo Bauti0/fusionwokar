@@ -130,6 +130,9 @@ function rowToConfig(branch, row) {
     originAddress: row.origin_address != null ? String(row.origin_address) : d.originAddress,
     originLat: row.origin_lat != null ? Number(row.origin_lat) : d.originLat,
     originLng: row.origin_lng != null ? Number(row.origin_lng) : d.originLng,
+    city: d.city,
+    region: d.region,
+    country: d.country,
     center: {
       lat: row.center_lat != null ? Number(row.center_lat) : d.center.lat,
       lng: row.center_lng != null ? Number(row.center_lng) : d.center.lng,

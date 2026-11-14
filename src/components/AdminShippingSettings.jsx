@@ -213,7 +213,7 @@ export default function AdminShippingSettings({ me }) {
     setLocateBusy(true);
     setLocateResult(null);
     try {
-      const res = await adminShippingOriginLocate({ origin_address: addr });
+      const res = await adminShippingOriginLocate({ origin_address: addr, branch: branchId });
       setLocateResult(res);
       setField("origin_lat", String(res.lat));
       setField("origin_lng", String(res.lng));
