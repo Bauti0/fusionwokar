@@ -1,6 +1,7 @@
 import { createClient } from "@libsql/client";
 import { createDb } from "./sqlite.js";
 import { migrateCashRegisters } from "./migrations-cash.js";
+import { envConfig, VALID_BRANCHES } from "./shipping-settings.js";
 
 // ============================================================
 // FUSIÓN WOK — Base de datos Turso (libSQL en la nube)
@@ -589,6 +590,38 @@ export async function seedBranchHours() {
         }
       }
     }
+  }
+}
+
+// Siembra la configuración inicial de envío por sucursal si aún no tiene fila.
+// Nunca pisa una fila existente: el comportamiento no cambia hasta que alguien
+// edite desde el panel.
+export async function seedShippingSettings() {
+  const insert = db.prepare(`
+    INSERT INTO branch_shipping_settings
+      (branch, auto_enabled, origin_address, origin_lat, origin_lng, base_cost, flat_blocks, per_block, max_blocks, updated_at, updated_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const ts = now();
+  for (const branch of VALID_BRANCHES) {
+    const cfg = envConfig(branch);
+    const existing = await db
+      .prepare("SELECT 1 FROM branch_shipping_settings WHERE branch = ?")
+      .get(branch);
+    if (existing) continue;
+    await insert.run(
+      branch,
+      cfg.autoEnabled,
+      cfg.originAddress,
+      cfg.originLat,
+      cfg.originLng,
+      cfg.baseCost,
+      cfg.flatBlocks,
+      cfg.perBlock,
+      cfg.maxBlocks,
+      ts,
+      "sistema"
+    );
   }
 }
 
