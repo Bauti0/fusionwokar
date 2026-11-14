@@ -220,6 +220,21 @@ await db.exec(`
     updated_at TEXT NOT NULL
   );
 
+  -- Variantes optimizadas de imágenes de producto (WebP, varios anchos).
+  -- Se generan al subir (sharp) y por script de migración para imágenes
+  -- ya existentes. No se borran los originales (product_images).
+  -- PRIMARY KEY compuesta (image_id, width): una variante por ancho por imagen.
+  CREATE TABLE IF NOT EXISTS product_image_variants (
+    image_id INTEGER NOT NULL,
+    width INTEGER NOT NULL,
+    mime TEXT NOT NULL,          -- 'image/webp' (o mime original si no se comprimió)
+    data BLOB NOT NULL,
+    bytes INTEGER NOT NULL,      -- peso en bytes de la variante
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (image_id, width),
+    FOREIGN KEY (image_id) REFERENCES product_images(id) ON DELETE CASCADE
+  );
+
   -- Auditoría de cambios en pedidos: solo superadmin puede leer.
   -- Cada fila registra UN cambio de campo (para consultas simples y
   -- filtrado por admin/campo/fecha). old_total/new_total capturan el
@@ -623,4 +638,34 @@ export async function getProductImage(id) {
 // producto: evita acumular BLOBs huérfanos que consumen el plan free).
 export async function deleteProductImage(id) {
   await db.prepare("DELETE FROM product_images WHERE id = ?").run(id);
+}
+
+// Guarda una variante optimizada de imagen (WebP, ancho específico).
+// Se usa al subir (sharp) y en el script de migración.
+export async function saveProductImageVariant({ imageId, width, mime, data, bytes }) {
+  const ts = now();
+  await db
+    .prepare(
+      "INSERT OR REPLACE INTO product_image_variants (image_id, width, mime, data, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    )
+    .run(imageId, width, mime, data, bytes, ts);
+}
+
+// Obtiene una variante por image_id y ancho.
+export async function getProductImageVariant(imageId, width) {
+  return db
+    .prepare("SELECT mime, data, bytes FROM product_image_variants WHERE image_id = ? AND width = ?")
+    .get(imageId, width);
+}
+
+// Lista todos los anchos disponibles para una imagen.
+export async function listProductImageVariants(imageId) {
+  return db
+    .prepare("SELECT width, mime, bytes FROM product_image_variants WHERE image_id = ? ORDER BY width")
+    .all(imageId);
+}
+
+// Borra todas las variantes de una imagen (al borrar la imagen original).
+export async function deleteProductImageVariants(imageId) {
+  await db.prepare("DELETE FROM product_image_variants WHERE image_id = ?").run(imageId);
 }
