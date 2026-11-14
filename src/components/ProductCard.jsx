@@ -2,7 +2,15 @@ import { memo, useEffect, useRef, useState } from "react";
 import { formatPrice } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
 import { IconSparkle, IconFlash } from "./ui/icons.jsx";
-import FadeImage from "./FadeImage.jsx";
+import ProductImage from "./ProductImage.jsx";
+
+// Extrae { id, version } de URLs tipo /api/images/products/123?v=456
+function parseProductImageUrl(url) {
+  if (!url || typeof url !== "string") return { id: null, version: null };
+  const m = url.match(/^\/api\/images\/products\/(\d+)(?:\?v=(\d+))?/);
+  if (!m) return { id: null, version: null };
+  return { id: m[1], version: m[2] || null };
+}
 
 // ============================================================
 // Tarjeta de producto
@@ -23,7 +31,7 @@ import FadeImage from "./FadeImage.jsx";
 // memo: al tipear en la búsqueda o cambiar de categoría solo se
 // re-renderizan las tarjetas afectadas, no las 40+ del menú.
 // ============================================================
-const ProductCard = memo(function ProductCard({ product, categoryName, isTop, onAdd, onCustomize, qty = 0 }) {
+const ProductCard = memo(function ProductCard({ product, categoryName, isTop, onAdd, onCustomize, qty = 0, isAboveFold = false }) {
   const hasExtras = product.extras && product.extras.length > 0;
   const hasOptions = product.optionGroups && product.optionGroups.length > 0;
   const customizable = hasExtras || hasOptions;
@@ -31,11 +39,9 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   const [added, setAdded] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
 
-  // Si la foto no carga (archivo borrado, ruta rota…) se cae al
-  // estado sin foto. El estado persiste para no volver a intentar
-  // la misma imagen rota en cada re-render (React podría re-montar
-  // el <img> con el mismo src).
-  const hasImage = !!product.image && !imgFailed;
+  // Parsear la URL de la imagen para extraer id y version
+  const { id: imageId, version } = parseProductImageUrl(product.image);
+  const hasImage = !!imageId && !imgFailed;
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -45,9 +51,6 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   function flash() {
     if (!mountedRef.current) return;
     setAdded(true);
-    // Interruptible: dos rAF = próximo frame de pintura después del cambio de estado.
-    // Si el usuario toca otra vez antes, el setAdded(false) del siguiente click
-    // gana y no queda estado roto.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (mountedRef.current) setAdded(false);
@@ -69,13 +72,14 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
     <div className={`product ${hasImage ? "product--with-image" : "product--no-image"} ${unavailable ? "product--unavailable" : ""}`}>
       {hasImage && (
         <div className="product__media">
-          <FadeImage
-            src={product.image}
+          <ProductImage
+            imageId={imageId}
+            version={version}
             alt={product.name}
-            width="160"
-            height="160"
+            displayWidth={160}
+            displayHeight={160}
             aspectRatio={1}
-            placeholderOnError={false}
+            isAboveFold={isAboveFold}
             onImageError={() => setImgFailed(true)}
           />
         </div>
