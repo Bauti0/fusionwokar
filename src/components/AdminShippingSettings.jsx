@@ -11,7 +11,6 @@ import {
   adminUpdateShippingSettings,
   adminShippingSettingsTest,
   adminShippingOriginLocate,
-  adminShippingSettingsLog,
 } from "../api.js";
 import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
 import { formatPriceCompact } from "../utils/format.js";
@@ -72,7 +71,6 @@ export default function AdminShippingSettings({ me }) {
   const [quoteBusy, setQuoteBusy] = useState(false);
   const [locateBusy, setLocateBusy] = useState(false);
   const [locateResult, setLocateResult] = useState(null);
-  const [history, setHistory] = useState([]);
   const lastLoadedBranch = useRef(branchId);
 
   const branch = BRANCHES[branchId];
@@ -90,12 +88,6 @@ export default function AdminShippingSettings({ me }) {
       setFieldErrors({});
       setSaveErr(null);
       setSaveMsg(null);
-      try {
-        const log = await adminShippingSettingsLog(branchId);
-        setHistory((log.logs || []).slice(0, 10));
-      } catch {
-        setHistory([]);
-      }
     } catch (err) {
       setLoadError(err.message || "No se pudo cargar la configuración");
       setSettings(null);
@@ -146,10 +138,6 @@ export default function AdminShippingSettings({ me }) {
       setForm(settingsToForm(res));
       setSaveMsg("Guardado");
       setTimeout(() => setSaveMsg(null), 2500);
-      try {
-        const log = await adminShippingSettingsLog(branchId);
-        setHistory((log.logs || []).slice(0, 10));
-      } catch {}
     } catch (err) {
       const field = err.field;
       setFieldErrors((prev) => ({ ...prev, [field]: err.message || "Error del servidor" }));
@@ -286,7 +274,7 @@ export default function AdminShippingSettings({ me }) {
         />
         <p className="hint" style={{ marginTop: 6 }}>
           Al apagarlo, los pedidos a domicilio entran con el envío "a confirmar" y el local
-          fija el costo por WhatsApp. No se consulta el mapa ni OpenRouteService.
+          fija el costo por WhatsApp.
         </p>
       </section>
 
@@ -301,47 +289,53 @@ export default function AdminShippingSettings({ me }) {
           />
           {fieldErrors.origin_address && <div className="form-error">{fieldErrors.origin_address}</div>}
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-          <div className="field" style={{ minWidth: 150, marginBottom: 0 }}>
-            <label>Latitud</label>
-            <input
-              inputMode="numeric"
-              value={form.origin_lat}
-              onChange={(e) => setField("origin_lat", e.target.value)}
-              placeholder="-38.5670"
-            />
-            {fieldErrors.origin_lat && <div className="form-error">{fieldErrors.origin_lat}</div>}
-          </div>
-          <div className="field" style={{ minWidth: 150, marginBottom: 0 }}>
-            <label>Longitud</label>
-            <input
-              inputMode="numeric"
-              value={form.origin_lng}
-              onChange={(e) => setField("origin_lng", e.target.value)}
-              placeholder="-58.7293"
-            />
-            {fieldErrors.origin_lng && <div className="form-error">{fieldErrors.origin_lng}</div>}
-          </div>
-          <button
-            className="btn btn--primary"
-            onClick={handleLocate}
-            disabled={locateBusy || !form.origin_address.trim()}
-            style={{ height: 44 }}
-          >
-            {locateBusy ? "Ubicando…" : <><IconLocation width="16" height="16" style={{ marginRight: 6 }} /> Ubicar</>}
-          </button>
-          {locateResult && (
-            <a
-              href={locateResult.mapsUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="btn btn--ghost btn--sm"
-              style={{ marginLeft: 8, height: 44 }}
+
+        <details className="coord-toggle" style={{ marginBottom: 8 }}>
+          <summary style={{ cursor: "pointer", fontSize: 13, color: "var(--color-text-soft)" }}>
+            Mostrar coordenadas y geocodificación
+          </summary>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: 8 }}>
+            <div className="field" style={{ minWidth: 150, marginBottom: 0 }}>
+              <label>Latitud</label>
+              <input
+                inputMode="numeric"
+                value={form.origin_lat}
+                onChange={(e) => setField("origin_lat", e.target.value)}
+                placeholder="-38.5670"
+              />
+              {fieldErrors.origin_lat && <div className="form-error">{fieldErrors.origin_lat}</div>}
+            </div>
+            <div className="field" style={{ minWidth: 150, marginBottom: 0 }}>
+              <label>Longitud</label>
+              <input
+                inputMode="numeric"
+                value={form.origin_lng}
+                onChange={(e) => setField("origin_lng", e.target.value)}
+                placeholder="-58.7293"
+              />
+              {fieldErrors.origin_lng && <div className="form-error">{fieldErrors.origin_lng}</div>}
+            </div>
+            <button
+              className="btn btn--primary"
+              onClick={handleLocate}
+              disabled={locateBusy || !form.origin_address.trim()}
+              style={{ height: 44 }}
             >
-              Ver en Google Maps
-            </a>
-          )}
-        </div>
+              {locateBusy ? "Ubicando…" : <><IconLocation width="16" height="16" style={{ marginRight: 6 }} /> Ubicar</>}
+            </button>
+            {locateResult && (
+              <a
+                href={locateResult.mapsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn--ghost btn--sm"
+                style={{ marginLeft: 8, height: 44 }}
+              >
+                Ver en Google Maps
+              </a>
+            )}
+          </div>
+        </details>
       </section>
 
       <section style={{ marginBottom: 16 }}>
@@ -436,26 +430,6 @@ export default function AdminShippingSettings({ me }) {
             {quoteResult.cost != null && <span> · Costo: {formatPriceCompact(quoteResult.cost)}</span>}
             {quoteResult.message && <p className="hint" style={{ marginTop: 4 }}>{quoteResult.message}</p>}
           </div>
-        )}
-      </section>
-
-      <section style={{ marginBottom: 16 }}>
-        <h4 style={{ margin: "0 0 8px 0", fontSize: 14 }}>Historial de cambios (últimos 10)</h4>
-        {history.length === 0 ? (
-          <p className="hint">No hay cambios registrados aún.</p>
-        ) : (
-          <ul style={{ margin: 0, paddingLeft: 16 }}>
-            {history.map((h, i) => (
-              <li key={i} style={{ fontSize: 13, marginBottom: 6 }}>
-                <strong>{h.admin_username}</strong> ({h.admin_role}) cambió <strong>{h.field}</strong>:{" "}
-                {h.old_value === null || h.old_value === "" ? "—" : h.old_value}
-                →
-                {h.new_value === null || h.new_value === "" ? "—" : h.new_value}
-                <br />
-                <span style={{ color: "var(--color-text-soft)" }}>{new Date(h.created_at).toLocaleString("es-AR")}</span>
-              </li>
-            ))}
-          </ul>
         )}
       </section>
 
