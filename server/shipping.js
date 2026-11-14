@@ -27,77 +27,48 @@
 // ============================================================
 
 import { normalizeAddressKey } from "./utils/normalizeAddressKey.js";
+import {
+  getShippingSettings,
+  onShippingSettingsSaved,
+  DEFAULT_BLOCK_METERS,
+  DEFAULT_SHIPPING,
+  ROAD_FACTOR,
+} from "./shipping-settings.js";
 
-// Configuración por sucursal. Los valores por defecto son los de Tandil;
-// Necochea usa los mismos valores de tarifa pero origen y ciudad distintos.
-// Variables de entorno:
-//   - Globales (compatibilidad): SHIPPING_BLOCK_METERS, SHIPPING_FLAT_BLOCKS,
-//     SHIPPING_BASE_COST, SHIPPING_PER_BLOCK, SHIPPING_MAX_BLOCKS
-//   - Por sucursal (prioridad sobre globales): SHIPPING_MAX_BLOCKS_TANDIL,
-//     SHIPPING_MAX_BLOCKS_NECOCHEA, SHIPPING_BLOCK_METERS_TANDIL,
-//     SHIPPING_BLOCK_METERS_NECOCHEA, SHIPPING_FLAT_BLOCKS_TANDIL,
-//     SHIPPING_FLAT_BLOCKS_NECOCHEA, SHIPPING_BASE_COST_TANDIL,
-//     SHIPPING_BASE_COST_NECOCHEA, SHIPPING_PER_BLOCK_TANDIL,
-//     SHIPPING_PER_BLOCK_NECOCHEA
-function branchEnv(branch, suffix) {
-  const upper = branch.toUpperCase();
-  return process.env[`SHIPPING_${suffix}_${upper}`] || process.env[`SHIPPING_${suffix}`];
+// Constante técnica (no editable desde el panel ni guardada en BD): se lee
+// del entorno con fallback al valor de código, igual que antes.
+function blockMetersFor(branch) {
+  const upper = String(branch || "").toUpperCase();
+  return (
+    Number(
+      process.env[`SHIPPING_BLOCK_METERS_${upper}`] ||
+        process.env.SHIPPING_BLOCK_METERS ||
+        DEFAULT_BLOCK_METERS[upper] ||
+        130
+    ) || 130
+  );
 }
 
-// Radio de sanity: si el punto elegido queda más lejos del origen, se trata
-// como "no ubicada" (envío a confirmar). 50 km para todas las sucursales.
-const SANITY_RADIUS_KM = 50;
-// Radio de búsqueda para anclar el geocodificador ORS a Necochea (doble del
-// radio de reparto ~7 km → 14 km): cubre el reparto y Quequén sin aceptar
-// candidatos de otras ciudades de calles numeradas (p. ej. La Plata).
-const SEARCH_RADIUS_KM = 14;
-
-const BRANCH_SHIPPING_CONFIG = {
-  tandil: {
-    // Tandil conserva el mismo camino de geocodificación que tenía en main
-    // (Nominatim → Photon, sin límite geográfico propio). Solo se agrega la
-    // red de seguridad sanityRadiusKm.
-    geocoder: "legacy",
-    originQuery: "Chacabuco 660, Tandil, Buenos Aires, Argentina",
-    city: "Tandil",
-    region: "Buenos Aires",
-    country: "Argentina",
-    center: { lat: -37.32154, lng: -59.13024 },
-    sanityRadiusKm: SANITY_RADIUS_KM,
-    blockMeters: Number(branchEnv("tandil", "BLOCK_METERS") || 130),
-    flatBlocks: Number(branchEnv("tandil", "FLAT_BLOCKS") || 20),
-    baseCost: Number(branchEnv("tandil", "BASE_COST") || 4000),
-    perBlock: Number(branchEnv("tandil", "PER_BLOCK") || 100),
-    maxBlocks: Math.max(0, Number(branchEnv("tandil", "MAX_BLOCKS") || 0) || 0),
-    envOriginLat: (process.env.SHIPPING_ORIGIN_LAT || "").trim(),
-    envOriginLng: (process.env.SHIPPING_ORIGIN_LNG || "").trim(),
-  },
-  necochea: {
-    geocoder: "ors-anclado",
-    originQuery: "Diagonal San Martín 1258, Necochea, Buenos Aires, Argentina",
-    city: "Necochea",
-    region: "Buenos Aires",
-    country: "Argentina",
-    center: { lat: -38.5670514, lng: -58.7293811 },
-    searchRadiusKm: SEARCH_RADIUS_KM,
-    sanityRadiusKm: SANITY_RADIUS_KM,
-    blockMeters: Number(branchEnv("necochea", "BLOCK_METERS") || 100),
-    flatBlocks: Number(branchEnv("necochea", "FLAT_BLOCKS") || 20),
-    baseCost: Number(branchEnv("necochea", "BASE_COST") || 4000),
-    perBlock: Number(branchEnv("necochea", "PER_BLOCK") || 100),
-    maxBlocks: Math.max(0, Number(branchEnv("necochea", "MAX_BLOCKS") || 0) || 0),
-    envOriginLat: "",
-    envOriginLng: "",
-  },
-};
-
+// Clave de OpenRouteService: se queda en .env (secreto). Nunca viaja a la BD
+// ni a las respuestas de la API ni a los logs.
 const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
-// Multiplicador línea recta → calles (distancia de ruta aproximada)
-const ROAD_FACTOR = 1.25;
 // El origen es fijo: cacheamos 24 h
 const ORIGIN_TTL = 24 * 60 * 60 * 1000;
 // Dirección → costo/cuadras: cacheamos 7 días (se repiten muchísimo).
 const KM_TTL = 7 * 24 * 60 * 60 * 1000;
+
+// Resuelve la configuración efectiva de envío de una sucursal: BD (valor
+// editado desde el panel) con caché de 30 s, o los valores de semilla
+// (.env / código) como respaldo si la BD falla.
+export async function getBranchConfig(db, branch) {
+  return getShippingSettings(db, branch);
+}
+
+// Cuando la configuración se guarda desde el panel, invalidamos el caché de
+// origen de esta sucursal para que el próximo cálculo use el nuevo origen.
+onShippingSettingsSaved((branch) => {
+  originCache.delete(branch);
+});
 // Ante un fallo transitorio (429/caída) no volvemos a golpear el servicio
 // por 90 s.
 const DEFINITIVE_FAIL_TTL = 90 * 1000;
@@ -529,7 +500,7 @@ function dentroDelRadio(cfg, c) {
 // Geocodifica con el motor de la sucursal. Siempre valida el radio.
 //   - legacy (Tandil): Nominatim → Photon, luego sanityRadiusKm.
 //   - ors-anclado (Necochea): ORS Pelias con boundary → respaldos validados.
-async function geocode(query, cfg, opts = {}) {
+export async function geocode(query, cfg, opts = {}) {
   const deadline = opts.deadline || Date.now() + GEO_TIMEOUT_MS * 20;
   const textoNormalizado = normalizarTexto(query).texto;
   const cacheKey = `${cfg.city}|${textoNormalizado}`;
@@ -717,51 +688,35 @@ async function roadDistanceKm(from, to, opts = {}) {
   }
 }
 
-function getBranchConfig(branch) {
-  return BRANCH_SHIPPING_CONFIG[branch] || BRANCH_SHIPPING_CONFIG.tandil;
-}
-
-function enrichAddress(address, branch) {
-  const a = String(address || "").trim();
-  if (!a) return "";
-  const cfg = getBranchConfig(branch);
-  const cityRe = new RegExp(cfg.city, "i");
-  if (cityRe.test(a)) return a;
-  return `${a}, ${cfg.city}, ${cfg.region}, ${cfg.country}`;
-}
-
-async function getOrigin(branch, opts = {}) {
-  const cfg = getBranchConfig(branch);
-  if (cfg.envOriginLat && cfg.envOriginLng) {
-    const lat = Number(cfg.envOriginLat);
-    const lng = Number(cfg.envOriginLng);
+async function getOrigin(cfg, opts = {}) {
+  const branch = cfg.city;
+  if (cfg.originLat != null && cfg.originLng != null) {
+    const lat = Number(cfg.originLat);
+    const lng = Number(cfg.originLng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      console.warn(`${branch}: SHIPPING_ORIGIN_LAT/LNG valores no numéricos, se ignoran`);
+      console.warn(`${branch}: origen.lat/lng valores no numéricos, se ignoran`);
     } else if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      console.warn(`${branch}: SHIPPING_ORIGIN_LAT/LNG fuera de rango lat/lng, se ignoran`);
+      console.warn(`${branch}: origen.lat/lng fuera de rango lat/lng, se ignoran`);
     } else if (lat < -56 || lat > -21 || lng < -74 || lng > -53) {
-      console.warn(`${branch}: SHIPPING_ORIGIN_LAT/LNG fuera de heurística Argentina, se ignoran`);
+      console.warn(`${branch}: origen.lat/lng fuera de heurística Argentina, se ignoran`);
     } else {
       return { lat, lng };
     }
   }
   const cached = originCache.get(branch);
   if (cached && Date.now() - cached.at < ORIGIN_TTL) return cached.coords;
-  const o = await geocode(cfg.originQuery, cfg, opts);
+  const o = await geocode(cfg.originAddress, cfg, opts);
   if (!o) throw unknown(`No pudimos ubicar la dirección del local de ${cfg.city}.`);
   originCache.set(branch, { coords: o, at: Date.now() });
   return o;
 }
 
-export async function computeShipping(branch, address) {
+// Cotización de envío para una dirección y una configuración dada.
+// Usada por computeShipping (pedido real) y por el endpoint de "probar
+// cotización" del panel. No crea pedidos.
+export async function quoteShipping(cfg, address) {
   const a = String(address || "").trim();
-  if (!BRANCH_SHIPPING_CONFIG[branch]) {
-    return { cost: 0, blocks: 0, supported: false };
-  }
-  const cfg = getBranchConfig(branch);
-  if (!a) {
-    return { cost: 0, blocks: 0, supported: true };
-  }
+  if (!a) return { blocks: 0, cost: 0, supported: true };
   const key = normalizeAddressKey(a);
   const started = Date.now();
 
@@ -797,7 +752,7 @@ export async function computeShipping(branch, address) {
       definitiveFailCache.set(key, { at: Date.now(), code: "unknown" });
       throw unknown("No pudimos ubicar esa dirección con exactitud.");
     }
-    const origin = await getOrigin(branch, { deadline: started + DEADLINE_MS });
+    const origin = await getOrigin(cfg, { deadline: started + DEADLINE_MS });
     const km = await roadDistanceKm(origin, dest, { deadline: started + DEADLINE_MS });
     if (Date.now() - started > DEADLINE_MS) {
       throw transient("No pudimos consultar el mapa. Volvé a intentar en unos segundos.");
@@ -826,6 +781,41 @@ export async function computeShipping(branch, address) {
     if (err && err.code === "transient") transientFailCache.set(key, { at: Date.now() });
     throw err;
   }
+}
+
+export async function computeShipping(a, b, c) {
+  // Soporta tanto computeShipping(db, branch, address) como la firma antigua
+  // computeShipping(branch, address) (sin BD: usa valores de semilla, útil para
+  // lógica pura como order-edit.js y para tests existentes).
+  let db, branch, address;
+  if (a && typeof a.prepare === "function") {
+    db = a;
+    branch = b;
+    address = c;
+  } else {
+    db = undefined;
+    branch = a;
+    address = b;
+  }
+  const cfg = await getBranchConfig(db, branch);
+  if (!cfg || !DEFAULT_SHIPPING[branch]) {
+    return { cost: 0, blocks: 0, supported: false };
+  }
+  // blockMeters: con BD se usa la configuración guardada (DEFAULT/DB, sin leer
+  // .env); con la firma antigua (sin BD) se lee del entorno, como lo hacía el
+  // código original, para no romper tests y llamadores existentes.
+  if (!db) cfg.blockMeters = blockMetersFor(branch);
+  // Cálculo automático apagado: el servidor no geocodifica ni consulta ORS.
+  // El pedido entra igual con envío "a confirmar" (flujo existente).
+  if (cfg.autoEnabled === 0) {
+    return { cost: 0, blocks: 0, supported: true, pending: true };
+  }
+  const s = String(address || "").trim();
+  if (!s) {
+    return { cost: 0, blocks: 0, supported: true };
+  }
+  const result = await quoteShipping(cfg, address);
+  return { cost: result.cost, blocks: result.blocks, supported: result.supported };
 }
 
 function pruneShippingCaches() {

@@ -20,6 +20,7 @@ import {
   seedProducts,
   seedCategories,
   seedBranchHours,
+  seedShippingSettings,
 } from "./db.js";
 import {
   createOrder,
@@ -38,7 +39,16 @@ import { MENUS } from "../src/data/menus.js";
 import { BRANCHES } from "../src/data/branches.js";
 import { enhanceHtml } from "./seo.js";
 import { toWallclock } from "../src/utils/schedule.js";
-import { computeShipping } from "./shipping.js";
+import {
+  computeShipping,
+  quoteShipping,
+  geocode as geocodeAddress,
+} from "./shipping.js";
+import {
+  getShippingSettings,
+  saveShippingSettings,
+  VALID_BRANCHES,
+} from "./shipping-settings.js";
 import {
   applyCoupon,
   reserveCoupon,
@@ -276,6 +286,7 @@ if (!process.env.TEST_MODE) {
     await seedProducts(MENUS);
     await seedCategories(MENUS);
     await seedBranchHours();
+    await seedShippingSettings();
 
     // En modo test, sembramos datos de prueba adicionales (pedido pendiente, admins, etc.)
     if (process.env.NODE_ENV === "test" || process.env.TEST_MODE === "true") {
@@ -1054,7 +1065,7 @@ async function validateOrderBody(body, { requireEmail = false, requirePhone = tr
   let shipping = { cost: 0, blocks: 0, supported: false };
   if (orderMode === "delivery") {
     try {
-      shipping = await computeShipping(branch, address);
+      shipping = await computeShipping(db, branch, address);
     } catch (err) {
       const code = err && err.code;
       // Fuera de zona: la dirección se ubicó pero está más lejos del reparto.
@@ -3905,6 +3916,28 @@ app.get("/api/branch-hours/:branchId", async (req, res) => {
   }
 });
 
+// ---------- configuración de envío pública (solo lectura) ----------
+// GET /api/shipping-config/:branch → solo lo que necesita la tienda.
+// Sucursal inexistente = 404. Sin coordenadas, ids, auditoría ni secretos.
+app.get("/api/shipping-config/:branch", async (req, res) => {
+  const branchId = String(req.params.branch || "").trim();
+  if (!VALID_BRANCHES.includes(branchId)) return res.status(404).json({ error: "Sucursal no encontrada" });
+  res.setHeader("Cache-Control", "public, max-age=60, must-revalidate");
+  try {
+    const settings = await getShippingSettings(db, branchId);
+    res.json({
+      auto_enabled: settings.autoEnabled,
+      base_cost: settings.baseCost,
+      flat_blocks: settings.flatBlocks,
+      per_block: settings.perBlock,
+      max_blocks: settings.maxBlocks,
+    });
+  } catch (err) {
+    console.error("GET /api/shipping-config:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
 // ---------- horarios por sucursal (admin) ----------
 // GET /api/admin/branch-hours → horarios de las sucursales visibles para la sesión
 app.get("/api/admin/branch-hours", requireAdmin, async (req, res) => {
@@ -3938,6 +3971,258 @@ app.put("/api/admin/branch-hours", requireAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("PUT /api/admin/branch-hours:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// ---------- configuración de envío por sucursal (admin) ----------
+// GET/PUT /api/admin/shipping-settings → leer y editar las variables de envío.
+// La sucursal sale SIEMPRE de la sesión para un branch_admin; el superadmin
+// elige entre 'tandil' y 'necochea' (cualquier otro valor da 400).
+function settingsBranchFromReq(req, bodyBranch) {
+  if (req.admin.role === "branch_admin") return req.admin.branch; // ignora ?branch= y body.branch
+  const b = typeof bodyBranch === "string" ? bodyBranch.trim() : String(req.query.branch || "").trim();
+  return VALID_BRANCHES.includes(b) ? b : null;
+}
+
+function labelForField(key) {
+  const labels = {
+    base_cost: "Precio base",
+    per_block: "Precio por cuadra extra",
+    flat_blocks: "Cuadras incluidas",
+    max_blocks: "Máximo de cuadras",
+    origin_address: "Dirección del local",
+    origin_lat: "Latitud del local",
+    origin_lng: "Longitud del local",
+    auto_enabled: "Cálculo automático",
+  };
+  return labels[key] || key;
+}
+
+function validateShippingSettings(body = {}, previous = {}) {
+  const values = {};
+  const CAMEL = {
+    base_cost: "baseCost", per_block: "perBlock", flat_blocks: "flatBlocks",
+    max_blocks: "maxBlocks", origin_address: "originAddress", origin_lat: "originLat",
+    origin_lng: "originLng", auto_enabled: "autoEnabled",
+  };
+  const get = (key) => {
+    const v = body[key];
+    if (v !== undefined && v !== null && v !== "") return v;
+    return previous[key] ?? previous[CAMEL[key]];
+  };
+
+  const rawStr = (v) => (v === undefined || v === null ? "" : String(v)).trim();
+
+  for (const [key, max] of [["base_cost", 1000000], ["per_block", 1000000]]) {
+    const raw = rawStr(get(key));
+    if (raw === "") return { error: `${labelForField(key)} es obligatorio.`, field: key };
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 0 || n > max)
+      return { error: `${labelForField(key)} debe ser un número entre 0 y ${max}.`, field: key };
+    values[key] = n;
+  }
+
+  const flatRaw = rawStr(get("flat_blocks"));
+  if (flatRaw === "") return { error: "Cuadras incluidas es obligatorio.", field: "flat_blocks" };
+  const flat = Number.parseInt(flatRaw, 10);
+  if (!Number.isFinite(flat) || flat < 0 || flat > 200)
+    return { error: "Cuadras incluidas debe ser un número entre 0 y 200.", field: "flat_blocks" };
+  values.flat_blocks = flat;
+
+  const maxRaw = rawStr(get("max_blocks"));
+  if (maxRaw === "") return { error: "Máximo de cuadras es obligatorio.", field: "max_blocks" };
+  const max = Number.parseInt(maxRaw, 10);
+  if (!Number.isFinite(max)) return { error: "Máximo de cuadras debe ser un número.", field: "max_blocks" };
+  // 0 = sin tope de reparto (comportamiento actual); de otro modo debe cubrir
+  // al menos la franquicia y no exceder 500 cuadras.
+  if (max !== 0 && (max < flat || max > 500))
+    return {
+      error: "Máximo de cuadras debe ser 0 (sin tope) o un número entre las cuadras incluidas y 500.",
+      field: "max_blocks",
+    };
+  values.max_blocks = max;
+
+  const originAddress = String(get("origin_address") || "").trim();
+  if (originAddress.length > 200)
+    return { error: "La dirección del local es demasiado larga (máx. 200 caracteres).", field: "origin_address" };
+  values.origin_address = originAddress;
+
+  const originLat = get("origin_lat");
+  let originLatN = null;
+  if (originLat !== undefined && originLat !== null && originLat !== "") {
+    originLatN = Number(originLat);
+    if (!Number.isFinite(originLatN) || originLatN < -55 || originLatN > -21)
+      return { error: "Latitud fuera de rango para Argentina (-55 a -21).", field: "origin_lat" };
+  }
+  values.origin_lat = originLatN;
+
+  const originLng = get("origin_lng");
+  let originLngN = null;
+  if (originLng !== undefined && originLng !== null && originLng !== "") {
+    originLngN = Number(originLng);
+    if (!Number.isFinite(originLngN) || originLngN < -74 || originLngN > -53)
+      return { error: "Longitud fuera de rango para Argentina (-74 a -53).", field: "origin_lng" };
+  }
+  values.origin_lng = originLngN;
+
+  values.auto_enabled = get("auto_enabled") == null ? 1 : Number(get("auto_enabled")) === 0 ? 0 : 1;
+  return { values };
+}
+
+app.get("/api/admin/shipping-settings", requireAdmin, async (req, res) => {
+  try {
+    const branch = settingsBranchFromReq(req);
+    if (!branch) return res.status(400).json({ error: "Sucursal inválida" });
+    const settings = await getShippingSettings(db, branch);
+    res.json({
+      branch,
+      auto_enabled: settings.autoEnabled,
+      origin_address: settings.originAddress,
+      origin_lat: settings.originLat,
+      origin_lng: settings.originLng,
+      base_cost: settings.baseCost,
+      flat_blocks: settings.flatBlocks,
+      per_block: settings.perBlock,
+      max_blocks: settings.maxBlocks,
+      updated_at: settings.updatedAt,
+      updated_by: settings.updatedBy,
+    });
+  } catch (err) {
+    console.error("GET /api/admin/shipping-settings:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// GET /api/admin/shipping-settings/log → historial de los últimos cambios
+// de configuración de envío de una sucursal (ámbito de la sesión).
+app.get("/api/admin/shipping-settings/log", requireAdmin, async (req, res) => {
+  try {
+    const branch = settingsBranchFromReq(req);
+    if (!branch) return res.status(400).json({ error: "Sucursal inválida" });
+    const rows = await db
+      .prepare(
+        "SELECT admin_username, admin_role, field, old_value, new_value, created_at FROM branch_shipping_settings_log WHERE branch = ? ORDER BY created_at DESC LIMIT 10"
+      )
+      .all(branch);
+    res.json({ branch, logs: rows });
+  } catch (err) {
+    console.error("GET /api/admin/shipping-settings/log:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+app.put("/api/admin/shipping-settings", requireAdmin, async (req, res) => {
+  try {
+    const branch = settingsBranchFromReq(req, req.body?.branch);
+    if (!branch) return res.status(400).json({ error: "Sucursal inválida" });
+    const previous = await getShippingSettings(db, branch);
+    const parsed = validateShippingSettings(req.body || {}, previous);
+    if (parsed.error) return res.status(400).json({ error: parsed.error, field: parsed.field });
+    const result = await saveShippingSettings({
+      db,
+      branch,
+      values: parsed.values,
+      adminUserId: req.admin.userId,
+      adminUsername: req.admin.username || "superadmin",
+      adminRole: req.admin.role,
+    });
+    res.json({ ok: true, branch, changed: result.changed });
+  } catch (err) {
+    console.error("PUT /api/admin/shipping-settings:", err.message);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
+
+// POST /api/admin/shipping-settings/test → "probar cotización" sin crear pedido.
+// Límite: 10 por minuto por usuario (admin) para no gastar la cuota de ORS.
+app.post(
+  "/api/admin/shipping-settings/test",
+  requireAdmin,
+  rateLimitByKey((req) => String(req.admin.username || req.ip || "unknown"), {
+    windowMs: 60 * 1000,
+    max: 10,
+    name: "shipping-settings-test",
+  }),
+  async (req, res) => {
+    try {
+      const branch = settingsBranchFromReq(req, req.body?.branch);
+      if (!branch) return res.status(400).json({ error: "Sucursal inválida" });
+      const { address } = req.body || {};
+      if (typeof address !== "string" || !address.trim())
+        return res.status(400).json({ error: "Falta la dirección" });
+
+      const previous = await getShippingSettings(db, branch);
+      // Config efectiva: valores del formulario (sin guardar) si se mandan, o los guardados.
+      const cfg = {
+        ...previous,
+        originAddress: req.body.origin_address != null ? String(req.body.origin_address).trim() : previous.originAddress,
+        originLat: req.body.origin_lat != null ? Number(req.body.origin_lat) : previous.originLat,
+        originLng: req.body.origin_lng != null ? Number(req.body.origin_lng) : previous.originLng,
+        baseCost: req.body.base_cost != null ? Number(req.body.base_cost) : previous.baseCost,
+        flatBlocks: req.body.flat_blocks != null ? Number(req.body.flat_blocks) : previous.flatBlocks,
+        perBlock: req.body.per_block != null ? Number(req.body.per_block) : previous.perBlock,
+        maxBlocks: req.body.max_blocks != null ? Number(req.body.max_blocks) : previous.maxBlocks,
+      };
+
+      let status, blocks, cost, message;
+      try {
+        const q = await quoteShipping(cfg, address);
+        status = "ubicada";
+        blocks = q.blocks;
+        cost = q.cost;
+        message = q.blocks === 0 ? "Dirección del local (cuadras: 0)." : `Cotización OK: ${q.blocks} cuadra${q.blocks !== 1 ? "s" : ""}.`;
+      } catch (err) {
+        if (err.code === "zone") {
+          status = "fuera_de_zona";
+          blocks = 0;
+          cost = 0;
+          message = err.message;
+        } else if (err.code === "unknown") {
+          status = "no_ubicada";
+          blocks = 0;
+          cost = 0;
+          message = err.message || "No se pudo ubicar esa dirección con exactitud.";
+        } else {
+          status = "no_ubicada";
+          blocks = 0;
+          cost = 0;
+          message = err.message || "No se pudo consultar el mapa. Volvé a intentar en unos segundos.";
+        }
+      }
+      res.json({ ok: true, branch, address, status, blocks, cost, message });
+    } catch (err) {
+      console.error("POST /api/admin/shipping-settings/test:", err.message);
+      res.status(500).json({ error: "Error interno" });
+    }
+  }
+);
+
+// POST /api/admin/shipping-settings/origin-locate → geocodifica la dirección
+// del origen y devuelve lat/lng + enlace a Google Maps para confirmar visualmente.
+app.post("/api/admin/shipping-settings/origin-locate", requireAdmin, async (req, res) => {
+  try {
+    const branch = settingsBranchFromReq(req, req.body?.branch);
+    if (!branch) return res.status(400).json({ error: "Sucursal inválida" });
+    const { origin_address } = req.body || {};
+    if (typeof origin_address !== "string" || !origin_address.trim())
+      return res.status(400).json({ error: "Falta la dirección del local" });
+
+    const cfg = await getShippingSettings(db, branch);
+    const geoCfg = {
+      ...cfg,
+      originAddress: origin_address.trim(),
+      city: cfg.city,
+      center: cfg.center,
+      searchRadiusKm: cfg.searchRadiusKm,
+      geocoder: cfg.geocoder,
+    };
+    const o = await geocodeAddress(origin_address.trim(), geoCfg);
+    if (!o) return res.status(400).json({ error: "No se pudo geocodificar esa dirección." });
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${o.lat},${o.lng}`)}`;
+    res.json({ ok: true, lat: o.lat, lng: o.lng, label: o.label || "", mapsUrl });
+  } catch (err) {
+    console.error("POST /api/admin/shipping-settings/origin-locate:", err.message);
     res.status(500).json({ error: "Error interno" });
   }
 });
