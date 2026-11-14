@@ -627,7 +627,8 @@ export default function Checkout({
             </div>
           )}
           {items.map((item) => {
-            const { id: imageId, version } = parseProductImageUrl(item.image);
+            const { id: imageId } = parseProductImageUrl(item.image);
+            const version = item.imageVersion || parseProductImageUrl(item.image).version;
             return (
             <div className="summary__row" key={item.key}>
               <span className="summary__item">

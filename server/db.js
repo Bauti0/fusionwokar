@@ -503,6 +503,7 @@ export function toProduct(row) {
     price: row.price,
     description: row.description || "",
     image: row.image || "",
+    imageVersion: row.image_updated_at || null, // updated_at de product_images para ?v=
     // Extras con available:false (sección "Adicionales" del panel) no
     // llegan al menú público ni al catálogo que valida precios.
     extras: availableExtras(JSON.parse(row.extras_json || "[]")),
@@ -654,7 +655,7 @@ export async function saveProductImageVariant({ imageId, width, mime, data, byte
 // Obtiene una variante por image_id y ancho.
 export async function getProductImageVariant(imageId, width) {
   return db
-    .prepare("SELECT mime, data, bytes FROM product_image_variants WHERE image_id = ? AND width = ?")
+    .prepare("SELECT mime, data, bytes, created_at FROM product_image_variants WHERE image_id = ? AND width = ?")
     .get(imageId, width);
 }
 

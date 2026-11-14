@@ -787,14 +787,25 @@ function invalidateMenuCache() {
 async function getMenuFromDb(branchId) {
   const cached = menuCache.get(branchId);
   if (cached && Date.now() - cached.at < MENU_TTL_MS) return cached.menu;
+
+  // Obtener productos con la versión de la imagen (updated_at de product_images)
+  // para que el front pueda construir ?v=<updated_at> y cachear inmutablemente
   const rows = await db
     .prepare(
-      `SELECT p.* FROM products p
+      `SELECT p.*, pi.updated_at as image_updated_at
+       FROM products p
        LEFT JOIN categories c ON c.branch = p.branch AND c.category_id = p.category_id
+       LEFT JOIN product_images pi ON pi.id = (
+         CASE
+           WHEN p.image LIKE '/api/images/products/%' THEN CAST(SUBSTR(p.image, 23) AS INTEGER)
+           ELSE NULL
+         END
+       )
        WHERE p.branch = ? AND p.available = 1
        ORDER BY COALESCE(c.sort_order, 999999), p.sort_order`
     )
     .all(branchId);
+
   const categories = [];
   const catIndex = new Map();
   for (const row of rows) {
@@ -4802,11 +4813,10 @@ app.post(
         if (!metadata.format || !["png", "jpeg", "webp", "gif"].includes(metadata.format)) {
           return res.status(400).json({ error: "Formato de imagen no soportado" });
         }
-        // Procesar: rotar según EXIF, quitar metadatos, no agrandar, WebP q80, max 1200px
+        // Procesar: rotar según EXIF, quitar metadatos (sharp lo hace por defecto), no agrandar, WebP q80, max 1200px
         sharp.concurrency(1); // Procesar de a una imagen a la vez (memoria Render free)
         processedBuf = await image
           .rotate() // corrige orientación EXIF
-          .withMetadata(false) // quita TODOS los metadatos (EXIF, ICC, GPS, etc.)
           .resize({
             width: 1200,
             height: 1200,
@@ -4920,11 +4930,15 @@ app.get(
       // Buscar variante si se pidió ancho válido
       let row = null;
       let isVariant = false;
+      let variantBytes = null;
+      let variantUpdatedAt = null;
       if (requestedWidth) {
         const variant = await getProductImageVariant(id, requestedWidth);
         if (variant) {
-          row = { mime: variant.mime, data: variant.data, updated_at: version || new Date().toISOString() };
+          row = { mime: variant.mime, data: variant.data, updated_at: variant.created_at };
           isVariant = true;
+          variantBytes = variant.bytes;
+          variantUpdatedAt = variant.created_at;
         }
       }
       // Fallback a imagen original
@@ -4936,9 +4950,13 @@ app.get(
 
       const buf = Buffer.from(row.data);
 
-      // ETag: hash SHA-256 truncado basado en image_id + width + bytes + created_at (sin leer el BLOB)
+      // ETag: hash SHA-256 truncado basado en image_id + width + bytes + created_at
+      // Para la imagen original usamos buf.length (ya tenemos el buffer para la respuesta).
+      // Para variantes usamos los bytes guardados en product_image_variants (sin leer el BLOB de la variante).
       const { createHash } = await import("node:crypto");
-      const etagSource = `${id}:${requestedWidth || 'orig'}:${buf.length}:${row.updated_at}`;
+      const etagBytes = isVariant ? variantBytes : buf.length;
+      const etagUpdatedAt = isVariant ? variantUpdatedAt : row.updated_at;
+      const etagSource = `${id}:${requestedWidth || 'orig'}:${etagBytes}:${etagUpdatedAt}`;
       const etag = `"${createHash("sha256").update(etagSource).digest("hex").slice(0, 32)}"`;
       res.setHeader("ETag", etag);
 

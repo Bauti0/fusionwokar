@@ -80,7 +80,8 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
               {items.map((item) => {
                 const extras = Array.isArray(item.extras) ? item.extras : [];
                 const options = Array.isArray(item.options) ? item.options : [];
-                const { id: imageId, version } = parseProductImageUrl(item.image);
+                const { id: imageId } = parseProductImageUrl(item.image);
+                const version = item.imageVersion || parseProductImageUrl(item.image).version;
                 return (
                 <div className="cart-item" key={item.key}>
                   {imageId && (

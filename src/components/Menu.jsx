@@ -56,8 +56,6 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
   const [activeCat, setActiveCat] = useState(() => menu.categories[0]?.id || "");
   const catsRef = useRef(null);
   const [catsHint, setCatsHint] = useState(false);
-  // Contador global de productos renderizados para isAboveFold (primeros 4)
-  const productIndexRef = useRef(0);
 
   // Horarios de la sucursal actual (hook con cache y refresh)
   const { closedLabel, hoursSummary, structuredHours, loading: hoursLoading } = useBranchHours(branch.id);
@@ -67,13 +65,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
   // sucursal, la sección se vería vacía sin entender por qué.
   useEffect(() => {
     setActiveCat(menu.categories[0]?.id || "");
-    productIndexRef.current = 0; // reset contador al cambiar menú
   }, [menu]);
-
-  // Reset contador al cambiar de categoría (solo se renderizan productos de la activa)
-  useEffect(() => {
-    productIndexRef.current = 0;
-  }, [activeCat]);
 
   useEffect(() => {
     const el = catsRef.current;
@@ -196,18 +188,17 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
                         </div>
                       )}
                       <div className="category__products">
-                        {run.products.map((product) => {
-                          const currentIndex = productIndexRef.current++;
-                          return <ProductCard
+                        {run.products.map((product, idx) => (
+                          <ProductCard
                             key={product.id}
                             product={product}
                             isTop={topIds.includes(product.id)}
                             onAdd={handleAdd}
                             onCustomize={setCustomizing}
                             qty={qtys[product.id] || 0}
-                            isAboveFold={currentIndex < 4}
-                          />;
-                        })}
+                            isAboveFold={idx < 4}
+                          />
+                        ))}
                       </div>
                     </div>
                   ))}

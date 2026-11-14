@@ -39,8 +39,10 @@ const ProductCard = memo(function ProductCard({ product, categoryName, isTop, on
   const [added, setAdded] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
 
-  // Parsear la URL de la imagen para extraer id y version
-  const { id: imageId, version } = parseProductImageUrl(product.image);
+  // Parsear la URL de la imagen para extraer id
+  // Usar product.imageVersion (del menú API) como prioridad, sino parsear de la URL
+  const { id: imageId } = parseProductImageUrl(product.image);
+  const version = product.imageVersion || parseProductImageUrl(product.image).version;
   const hasImage = !!imageId && !imgFailed;
   const mountedRef = useRef(true);
   useEffect(() => {
