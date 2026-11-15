@@ -211,6 +211,21 @@ export const IconAlertCircle = createIcon([
   <line key="l2" x1="12" x2="12.01" y1="16" y2="16" />,
 ]);
 
+export const IconMapPin = createIcon([
+  <path key="p1" d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />,
+  <circle key="c1" cx="12" cy="10" r="3" />,
+]);
+
+export const IconCalculator = createIcon([
+  <rect key="r1" x="4" y="2" width="16" height="20" rx="2" />,
+  <path key="p1" d="M8 6h8M8 10h8M8 14h8M8 18h3M15 14v8" />,
+]);
+
+export const IconSave = createIcon([
+  <path key="p1" d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />,
+  <polyline key="p2" points="17 21 17 13 7 13 7 21" />,
+]);
+
 export const IconSparkle = createIcon([
   <path key="p1" d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />,
   <path key="p2" d="M20 2v4" />,

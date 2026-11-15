@@ -6083,6 +6083,462 @@ svg { flex-shrink: 0; vertical-align: middle; }
 }
 
 /* ============================================================
+   Admin Shipping Settings — Configuración de envíos
+   ============================================================ */
+.admin-shipping {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-shipping__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.admin-shipping__branch-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--color-secondary);
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+}
+
+.admin-shipping__branch-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.admin-shipping__branch-hint {
+  font-size: 13px;
+  color: var(--color-text-soft);
+  font-weight: 500;
+}
+
+/* Section */
+.admin-shipping__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-shipping__section--preview {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.admin-shipping__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-shipping__section-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-shipping__section-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.admin-shipping__section-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text);
+  letter-spacing: 0.2px;
+}
+
+/* Toggle Row */
+.admin-shipping__toggle-row {
+  padding: 4px 0 4px 2px;
+}
+
+/* Fields */
+.admin-shipping__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-shipping__field--inline {
+  flex: 1;
+  min-width: 280px;
+}
+
+.admin-shipping__field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-soft);
+}
+
+.admin-shipping__input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.admin-shipping__input-wrapper input {
+  width: 100%;
+  border: 2px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.admin-shipping__input-wrapper input:focus {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hi);
+  box-shadow: var(--ring-soft);
+}
+
+.admin-shipping__input-wrapper input::placeholder {
+  color: var(--color-text-mute);
+}
+
+.admin-shipping__input-wrapper--currency .admin-shipping__currency-symbol {
+  position: absolute;
+  left: 16px;
+  color: var(--color-text-soft);
+  font-weight: 600;
+  font-size: 15px;
+  pointer-events: none;
+}
+
+.admin-shipping__input-wrapper--currency input {
+  padding-left: 36px;
+}
+
+.admin-shipping__input-wrapper--suffix .admin-shipping__input-suffix {
+  position: absolute;
+  right: 16px;
+  color: var(--color-text-soft);
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.admin-shipping__input-wrapper--suffix input {
+  padding-right: 100px;
+}
+
+.admin-shipping__input-icon {
+  position: absolute;
+  left: 14px;
+  width: 20px;
+  height: 20px;
+  color: var(--color-text-mute);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.admin-shipping__input-wrapper:has(.admin-shipping__input-icon) input {
+  padding-left: 48px;
+}
+
+.admin-shipping__field-error {
+  font-size: 12.5px;
+  color: var(--color-danger-text);
+  background: var(--color-primary-soft);
+  border: 1px solid rgba(229, 52, 46, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+
+/* Rates Grid */
+.admin-shipping__rates-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .admin-shipping__rates-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Preview */
+.admin-shipping__preview {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+}
+
+.admin-shipping__preview-text {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  white-space: pre-wrap;
+}
+
+/* Quote Form */
+.admin-shipping__quote-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Quote Result */
+.admin-shipping__quote-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: var(--radius);
+  border: 1px solid;
+  margin-top: 8px;
+  animation: admin-shipping__slide-in 0.2s var(--ease-out);
+}
+
+@keyframes admin-shipping__slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.admin-shipping__quote-result--ok {
+  background: var(--color-success-soft);
+  border-color: var(--color-success-border);
+}
+
+.admin-shipping__quote-result--out_of_range {
+  background: var(--color-warn-soft);
+  border-color: var(--color-warn-border);
+}
+
+.admin-shipping__quote-result--error {
+  background: var(--color-primary-soft);
+  border-color: rgba(229, 52, 46, 0.25);
+}
+
+.admin-shipping__quote-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-shipping__quote-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text-soft);
+}
+
+.admin-shipping__quote-value {
+  font-size: 14.5px;
+  font-weight: 700;
+}
+
+.admin-shipping__quote-value--ok {
+  color: var(--color-success-text);
+}
+
+.admin-shipping__quote-value--out_of_range {
+  color: var(--color-warn-text);
+}
+
+.admin-shipping__quote-value--error {
+  color: var(--color-danger-text);
+}
+
+.admin-shipping__quote-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.admin-shipping__quote-detail-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.admin-shipping__quote-detail strong {
+  font-weight: 700;
+}
+
+.admin-shipping__quote-message {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--color-text-soft);
+  line-height: 1.5;
+}
+
+/* Footer */
+.admin-shipping__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+  margin-top: 8px;
+}
+
+.admin-shipping__dirty-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--color-text-soft);
+}
+
+.admin-shipping__dirty-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--color-warn-text);
+  flex-shrink: 0;
+}
+
+.admin-shipping__save-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.admin-shipping__save-error {
+  width: 100%;
+  margin-top: 10px;
+  font-size: 13.5px;
+  color: var(--color-danger-text);
+  background: var(--color-primary-soft);
+  border: 1px solid rgba(229, 52, 46, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+/* Loading / Error States */
+.admin-shipping__loading,
+.admin-shipping__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--color-text-soft);
+}
+
+.admin-shipping__error {
+  color: var(--color-danger-text);
+  background: var(--color-primary-soft);
+  border: 1px solid rgba(229, 52, 46, 0.25);
+  border-radius: var(--radius);
+}
+
+.admin-shipping__error-icon {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.admin-shipping__spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: admin-shipping__spin 0.8s linear infinite;
+}
+
+.admin-shipping__spinner-sm {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: admin-shipping__spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes admin-shipping__spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Hint text */
+.admin-shipping__hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--color-text-soft);
+  line-height: 1.5;
+}
+
+/* Button size variants */
+.btn--sm {
+  padding: 10px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.btn--block {
+  width: 100%;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .admin-shipping__rates-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-shipping__quote-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-shipping__field--inline {
+    min-width: 0;
+  }
+
+  .admin-shipping__footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-shipping__footer .btn {
+    width: 100%;
+  }
+}
+
+/* ============================================================
    TANDA 1 — prefers-reduced-motion consolidado
    Un único bloque al final que apaga TODO movimiento no esencial
    (animations, transitions, keyframes) respetando la decisión del usuario.

@@ -10,7 +10,6 @@ import {
   adminShippingSettings,
   adminUpdateShippingSettings,
   adminShippingSettingsTest,
-  adminShippingOriginLocate,
 } from "../api.js";
 import { BRANCHES, BRANCH_LIST } from "../data/branches.js";
 import { formatPriceCompact } from "../utils/format.js";
@@ -18,7 +17,8 @@ import { buildShippingText } from "../utils/shippingText.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import ConfirmModal from "./ui/ConfirmModal.jsx";
 import Switch from "./ui/Switch.jsx";
-import { IconLocation } from "./ui/icons.jsx";
+import { IconLocation, IconMapPin, IconCalculator, IconSave, IconAlertCircle } from "./ui/icons.jsx";
+// IconLocation used for origin address field icon
 
 function formatMiles(v) {
   const n = Math.max(0, Math.round(Number(v || 0)));
@@ -69,8 +69,6 @@ export default function AdminShippingSettings({ me }) {
   const [quoteAddress, setQuoteAddress] = useState("");
   const [quoteResult, setQuoteResult] = useState(null);
   const [quoteBusy, setQuoteBusy] = useState(false);
-  const [locateBusy, setLocateBusy] = useState(false);
-  const [locateResult, setLocateResult] = useState(null);
   const lastLoadedBranch = useRef(branchId);
 
   const branch = BRANCHES[branchId];
@@ -195,32 +193,12 @@ export default function AdminShippingSettings({ me }) {
     }
   }
 
-  async function handleLocate() {
-    const addr = form.origin_address.trim();
-    if (!addr) return;
-    setLocateBusy(true);
-    setLocateResult(null);
-    try {
-      const res = await adminShippingOriginLocate({ origin_address: addr, branch: branchId });
-      setLocateResult(res);
-      setField("origin_lat", String(res.lat));
-      setField("origin_lng", String(res.lng));
-    } catch (err) {
-      setFieldErrors((prev) => ({ ...prev, origin_address: err.message || "No se pudo geocodificar" }));
-    } finally {
-      setLocateBusy(false);
-    }
-  }
-
   if (loadError) {
     return (
-      <div className="admin-panel-card__body">
-        <div className="form-error">{loadError}</div>
-        <button
-          className="btn btn--primary"
-          onClick={load}
-          disabled={saving || loading}
-        >
+      <div className="admin-shipping__error">
+        <IconAlertCircle className="admin-shipping__error-icon" />
+        <p>{loadError}</p>
+        <button className="btn btn--primary" onClick={load} disabled={saving || loading}>
           Reintentar
         </button>
       </div>
@@ -229,8 +207,9 @@ export default function AdminShippingSettings({ me }) {
 
   if (!settings || !form) {
     return (
-      <div className="admin-panel-card__body">
-        <p className="hint">Cargando configuración de envío…</p>
+      <div className="admin-shipping__loading">
+        <span className="admin-shipping__spinner" />
+        <p>Cargando configuración de envío…</p>
       </div>
     );
   }
@@ -247,205 +226,274 @@ export default function AdminShippingSettings({ me }) {
   });
 
   return (
-    <div className="admin-panel-card__body">
-      <div className="admin-products__controls" style={{ marginBottom: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+    <div className="admin-shipping">
+      {/* Branch Selector / Header */}
+      <header className="admin-shipping__header">
         {isBranchAdmin ? (
-          <span className="badge badge--branch">{branchLabel}</span>
+          <div className="admin-shipping__branch-badge">
+            <IconMapPin className="admin-shipping__branch-icon" />
+            <span>{branchLabel}</span>
+          </div>
         ) : (
           <Dropdown
             value={branchId}
             onChange={handleBranchChange}
             options={BRANCH_LIST.map((b) => ({ value: b.id, label: b.name }))}
-            placeholder="Sucursal"
+            placeholder="Seleccionar sucursal"
+            ariaLabel="Sucursal"
           />
         )}
-        <span style={{ fontSize: 12, color: "var(--color-text-soft)" }}>
-          {branchId === "necochea" ? "Necochea" : "Tandil"}
-        </span>
-      </div>
+        {!isBranchAdmin && (
+          <span className="admin-shipping__branch-hint">
+            {branchId === "necochea" ? "Necochea" : "Tandil"}
+          </span>
+        )}
+      </header>
 
-      {loadError && <div className="form-error">{loadError}</div>}
-
-      <section style={{ marginBottom: 16 }}>
-        <Switch
-          checked={form.auto_enabled === "1"}
-          onChange={handleAutoChange}
-          label="Cálculo automático de envío"
-        />
-        <p className="hint" style={{ marginTop: 6 }}>
+      {/* Auto Calculation Toggle */}
+      <section className="admin-shipping__section">
+        <div className="admin-shipping__section-header">
+          <div className="admin-shipping__section-title-group">
+            <IconCalculator className="admin-shipping__section-icon" />
+            <h3>Cálculo automático de envío</h3>
+          </div>
+        </div>
+        <div className="admin-shipping__toggle-row">
+          <Switch
+            checked={form.auto_enabled === "1"}
+            onChange={handleAutoChange}
+            label="Activar cálculo automático"
+            id="auto-shipping-toggle"
+          />
+        </div>
+        <p className="admin-shipping__hint">
           Al apagarlo, los pedidos a domicilio entran con el envío "a confirmar" y el local
           fija el costo por WhatsApp.
         </p>
       </section>
 
-      <section style={{ marginBottom: 16 }}>
-        <h4 style={{ margin: "0 0 8px 0", fontSize: 14 }}>Origen del local</h4>
-        <div className="field" style={{ marginBottom: 10 }}>
-          <label>Dirección</label>
-          <input
-            value={form.origin_address}
-            onChange={(e) => setField("origin_address", e.target.value)}
-            placeholder="Dirección del local"
-          />
-          {fieldErrors.origin_address && <div className="form-error">{fieldErrors.origin_address}</div>}
+      {/* Origin Address */}
+      <section className="admin-shipping__section">
+        <div className="admin-shipping__section-header">
+          <div className="admin-shipping__section-title-group">
+            <IconLocation className="admin-shipping__section-icon" />
+            <h3>Origen del local</h3>
+          </div>
+        </div>
+        <div className="admin-shipping__field">
+          <label htmlFor="origin-address">Dirección del local</label>
+          <div className="admin-shipping__input-wrapper">
+            <IconLocation className="admin-shipping__input-icon" />
+            <input
+              id="origin-address"
+              type="text"
+              value={form.origin_address}
+              onChange={(e) => setField("origin_address", e.target.value)}
+              placeholder="Calle, número, ciudad"
+              autoComplete="street-address"
+            />
+          </div>
+          {fieldErrors.origin_address && (
+            <div className="admin-shipping__field-error">{fieldErrors.origin_address}</div>
+          )}
+        </div>
+      </section>
+
+      {/* Shipping Rates */}
+      <section className="admin-shipping__section">
+        <div className="admin-shipping__section-header">
+          <div className="admin-shipping__section-title-group">
+            <IconCalculator className="admin-shipping__section-icon" />
+            <h3>Tarifa de envío</h3>
+          </div>
         </div>
 
-        <details className="coord-toggle" style={{ marginBottom: 8 }}>
-          <summary style={{ cursor: "pointer", fontSize: 13, color: "var(--color-text-soft)" }}>
-            Mostrar coordenadas y geocodificación
-          </summary>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: 8 }}>
-            <div className="field" style={{ minWidth: 150, marginBottom: 0 }}>
-              <label>Latitud</label>
+        <div className="admin-shipping__rates-grid">
+          <div className="admin-shipping__field">
+            <label htmlFor="base-cost">Precio base</label>
+            <div className="admin-shipping__input-wrapper admin-shipping__input-wrapper--currency">
+              <span className="admin-shipping__currency-symbol">$</span>
               <input
+                id="base-cost"
                 inputMode="numeric"
-                value={form.origin_lat}
-                onChange={(e) => setField("origin_lat", e.target.value)}
-                placeholder="-38.5670"
+                value={formatMiles(form.base_cost)}
+                onChange={(e) => setField("base_cost", parseMiles(e.target.value))}
+                onBlur={(e) => setField("base_cost", parseMiles(e.target.value))}
+                placeholder="0"
+                autoComplete="off"
               />
-              {fieldErrors.origin_lat && <div className="form-error">{fieldErrors.origin_lat}</div>}
             </div>
-            <div className="field" style={{ minWidth: 150, marginBottom: 0 }}>
-              <label>Longitud</label>
+            {fieldErrors.base_cost && <div className="admin-shipping__field-error">{fieldErrors.base_cost}</div>}
+          </div>
+
+          <div className="admin-shipping__field">
+            <label htmlFor="flat-blocks">Cuadras incluidas</label>
+            <div className="admin-shipping__input-wrapper admin-shipping__input-wrapper--suffix">
               <input
+                id="flat-blocks"
                 inputMode="numeric"
-                value={form.origin_lng}
-                onChange={(e) => setField("origin_lng", e.target.value)}
-                placeholder="-58.7293"
+                value={formatMiles(form.flat_blocks)}
+                onChange={(e) => setField("flat_blocks", parseMiles(e.target.value))}
+                onBlur={(e) => setField("flat_blocks", parseMiles(e.target.value))}
+                placeholder="0"
+                autoComplete="off"
               />
-              {fieldErrors.origin_lng && <div className="form-error">{fieldErrors.origin_lng}</div>}
+              <span className="admin-shipping__input-suffix">cuadras</span>
             </div>
-            <button
-              className="btn btn--primary"
-              onClick={handleLocate}
-              disabled={locateBusy || !form.origin_address.trim()}
-              style={{ height: 44 }}
-            >
-              {locateBusy ? "Ubicando…" : <><IconLocation width="16" height="16" style={{ marginRight: 6 }} /> Ubicar</>}
-            </button>
-            {locateResult && (
-              <a
-                href={locateResult.mapsUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="btn btn--ghost btn--sm"
-                style={{ marginLeft: 8, height: 44 }}
-              >
-                Ver en Google Maps
-              </a>
-            )}
+            {fieldErrors.flat_blocks && <div className="admin-shipping__field-error">{fieldErrors.flat_blocks}</div>}
           </div>
-        </details>
-      </section>
 
-      <section style={{ marginBottom: 16 }}>
-        <h4 style={{ margin: "0 0 8px 0", fontSize: 14 }}>Tarifa de envío</h4>
-        <div className="field" style={{ marginBottom: 10, minWidth: 170 }}>
-          <label>Precio base ($)</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span>$</span>
-            <input
-              inputMode="numeric"
-              value={formatMiles(form.base_cost)}
-              onChange={(e) => setField("base_cost", parseMiles(e.target.value))}
-              onBlur={(e) => setField("base_cost", parseMiles(e.target.value))}
-              style={{ flex: 1 }}
-            />
+          <div className="admin-shipping__field">
+            <label htmlFor="per-block">Precio por cuadra extra</label>
+            <div className="admin-shipping__input-wrapper admin-shipping__input-wrapper--currency">
+              <span className="admin-shipping__currency-symbol">$</span>
+              <input
+                id="per-block"
+                inputMode="numeric"
+                value={formatMiles(form.per_block)}
+                onChange={(e) => setField("per_block", parseMiles(e.target.value))}
+                onBlur={(e) => setField("per_block", parseMiles(e.target.value))}
+                placeholder="0"
+                autoComplete="off"
+              />
+            </div>
+            {fieldErrors.per_block && <div className="admin-shipping__field-error">{fieldErrors.per_block}</div>}
           </div>
-          {fieldErrors.base_cost && <div className="form-error">{fieldErrors.base_cost}</div>}
-        </div>
-        <div className="field" style={{ marginBottom: 10, minWidth: 170 }}>
-          <label>Cuadras incluidas</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              inputMode="numeric"
-              value={formatMiles(form.flat_blocks)}
-              onChange={(e) => setField("flat_blocks", parseMiles(e.target.value))}
-              onBlur={(e) => setField("flat_blocks", parseMiles(e.target.value))}
-              style={{ flex: 1 }}
-            />
-            <span>cuadras</span>
+
+          <div className="admin-shipping__field">
+            <label htmlFor="max-blocks">Máximo de cuadras de reparto</label>
+            <div className="admin-shipping__input-wrapper admin-shipping__input-wrapper--suffix">
+              <input
+                id="max-blocks"
+                inputMode="numeric"
+                value={formatMiles(form.max_blocks)}
+                onChange={(e) => setField("max_blocks", parseMiles(e.target.value))}
+                onBlur={(e) => setField("max_blocks", parseMiles(e.target.value))}
+                placeholder="0"
+                autoComplete="off"
+              />
+              <span className="admin-shipping__input-suffix">cuadras (0 = sin tope)</span>
+            </div>
+            {fieldErrors.max_blocks && <div className="admin-shipping__field-error">{fieldErrors.max_blocks}</div>}
           </div>
-          {fieldErrors.flat_blocks && <div className="form-error">{fieldErrors.flat_blocks}</div>}
-        </div>
-        <div className="field" style={{ marginBottom: 10, minWidth: 170 }}>
-          <label>Precio por cuadra extra ($)</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span>$</span>
-            <input
-              inputMode="numeric"
-              value={formatMiles(form.per_block)}
-              onChange={(e) => setField("per_block", parseMiles(e.target.value))}
-              onBlur={(e) => setField("per_block", parseMiles(e.target.value))}
-              style={{ flex: 1 }}
-            />
-          </div>
-          {fieldErrors.per_block && <div className="form-error">{fieldErrors.per_block}</div>}
-        </div>
-        <div className="field" style={{ minWidth: 170 }}>
-          <label>Máximo de cuadras de reparto</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              inputMode="numeric"
-              value={formatMiles(form.max_blocks)}
-              onChange={(e) => setField("max_blocks", parseMiles(e.target.value))}
-              onBlur={(e) => setField("max_blocks", parseMiles(e.target.value))}
-              style={{ flex: 1 }}
-            />
-            <span>cuadras (0 = sin tope)</span>
-          </div>
-          {fieldErrors.max_blocks && <div className="form-error">{fieldErrors.max_blocks}</div>}
         </div>
       </section>
 
-      <section style={{ marginBottom: 16, border: "1px dashed var(--color-border)", borderRadius: "var(--radius-sm)", padding: 12, background: "var(--color-surface)" }}>
-        <h4 style={{ margin: "0 0 8px 0", fontSize: 14 }}>Vista previa para la clienta</h4>
-        <p className="hint" style={{ margin: 0 }}>{previewText}</p>
+      {/* Customer Preview */}
+      <section className="admin-shipping__section admin-shipping__section--preview">
+        <div className="admin-shipping__section-header">
+          <div className="admin-shipping__section-title-group">
+            <IconMapPin className="admin-shipping__section-icon" />
+            <h3>Vista previa para el cliente</h3>
+          </div>
+        </div>
+        <div className="admin-shipping__preview">
+          <p className="admin-shipping__preview-text">{previewText}</p>
+        </div>
       </section>
 
-      <section style={{ marginBottom: 16 }}>
-        <h4 style={{ margin: "0 0 8px 0", fontSize: 14 }}>Probar cotización</h4>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
-          <div className="field" style={{ minWidth: 200, marginBottom: 0 }}>
-            <label>Dirección a cotizar</label>
-            <input
-              value={quoteAddress}
-              onChange={(e) => setQuoteAddress(e.target.value)}
-              placeholder="Calle y número"
-            />
+      {/* Quote Test */}
+      <section className="admin-shipping__section">
+        <div className="admin-shipping__section-header">
+          <div className="admin-shipping__section-title-group">
+            <IconCalculator className="admin-shipping__section-icon" />
+            <h3>Probar cotización</h3>
+          </div>
+        </div>
+        <div className="admin-shipping__quote-form">
+          <div className="admin-shipping__field admin-shipping__field--inline">
+            <label htmlFor="quote-address">Dirección a cotizar</label>
+            <div className="admin-shipping__input-wrapper">
+              <IconLocation className="admin-shipping__input-icon" />
+              <input
+                id="quote-address"
+                type="text"
+                value={quoteAddress}
+                onChange={(e) => setQuoteAddress(e.target.value)}
+                placeholder="Calle y número"
+                autoComplete="street-address"
+                onKeyDown={(e) => e.key === "Enter" && !quoteBusy && handleQuote()}
+              />
+            </div>
           </div>
           <button
             className="btn btn--primary"
             onClick={handleQuote}
             disabled={quoteBusy || !quoteAddress.trim()}
-            style={{ height: 44 }}
+            style={{ height: 44, minWidth: 140 }}
           >
-            {quoteBusy ? "Cotizando…" : "Cotizar"}
+            {quoteBusy ? (
+              <>
+                <span className="admin-shipping__spinner-sm" /> Cotizando…
+              </>
+            ) : (
+              "Cotizar"
+            )}
           </button>
         </div>
+
         {quoteResult && (
-          <div className="field" style={{ marginTop: 8 }}>
-            <span>Estado: <strong>{quoteResult.status}</strong></span>
-            {quoteResult.blocks != null && <span> · Cuadras: {quoteResult.blocks}</span>}
-            {quoteResult.cost != null && <span> · Costo: {formatPriceCompact(quoteResult.cost)}</span>}
-            {quoteResult.message && <p className="hint" style={{ marginTop: 4 }}>{quoteResult.message}</p>}
+          <div className={`admin-shipping__quote-result admin-shipping__quote-result--${quoteResult.status}`}>
+            <div className="admin-shipping__quote-status">
+              <span className="admin-shipping__quote-label">Estado:</span>
+              <strong className={`admin-shipping__quote-value admin-shipping__quote-value--${quoteResult.status}`}>
+                {quoteResult.status === "ok" ? "✓ Disponible" : quoteResult.status === "out_of_range" ? "✗ Fuera de rango" : "⚠ Error"}
+              </strong>
+            </div>
+            {quoteResult.blocks != null && (
+              <div className="admin-shipping__quote-detail">
+                <IconMapPin className="admin-shipping__quote-detail-icon" />
+                <span>Cuadras: <strong>{quoteResult.blocks}</strong></span>
+              </div>
+            )}
+            {quoteResult.cost != null && (
+              <div className="admin-shipping__quote-detail">
+                <IconCalculator className="admin-shipping__quote-detail-icon" />
+                <span>Costo: <strong>{formatPriceCompact(quoteResult.cost)}</strong></span>
+              </div>
+            )}
+            {quoteResult.message && (
+              <p className="admin-shipping__quote-message">{quoteResult.message}</p>
+            )}
           </div>
         )}
       </section>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: 8 }}>
-        <p className="hint" style={{ margin: 0 }}>
-          {dirty ? "Hay cambios sin guardar" : "Sin cambios sin guardar"}
-        </p>
+      {/* Save Actions */}
+      <footer className="admin-shipping__footer">
+        <div className="admin-shipping__dirty-indicator">
+          {dirty ? (
+            <>
+              <IconAlertCircle className="admin-shipping__dirty-icon" />
+              <span>Hay cambios sin guardar</span>
+            </>
+          ) : (
+            <span>Sin cambios pendientes</span>
+          )}
+        </div>
         <button
-          className="btn btn--primary"
+          className="btn btn--primary btn--block"
           onClick={handleSave}
           disabled={saving || loading || !dirty}
         >
-          {saving ? "Guardando…" : saveMsg ? "Guardado" : dirty ? "Guardar cambios" : "Sin cambios"}
+          {saving ? (
+            <>
+              <span className="admin-shipping__spinner-sm" /> Guardando…
+            </>
+          ) : saveMsg ? (
+            <>
+              <IconSave className="admin-shipping__save-icon" /> Guardado
+            </>
+          ) : dirty ? (
+            <>
+              <IconSave className="admin-shipping__save-icon" /> Guardar cambios
+            </>
+          ) : (
+            "Sin cambios"
+          )}
         </button>
-        {saveErr && <span className="form-error" style={{ marginLeft: 10 }}>{saveErr}</span>}
-      </div>
+        {saveErr && <div className="admin-shipping__save-error">{saveErr}</div>}
+      </footer>
 
       {confirmAutoOff && (
         <ConfirmModal
