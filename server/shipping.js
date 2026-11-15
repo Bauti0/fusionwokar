@@ -64,10 +64,16 @@ export async function getBranchConfig(db, branch) {
   return getShippingSettings(db, branch);
 }
 
-// Cuando la configuración se guarda desde el panel, invalidamos el caché de
-// origen de esta sucursal para que el próximo cálculo use el nuevo origen.
+// Cuando la configuración se guarda desde el panel, invalidamos TODOS los
+// cachés de esta sucursal (origen, cotizaciones, fallos) para que los próximos
+// cálculos usen la nueva tarifa y parámetros.
 onShippingSettingsSaved((branch) => {
   originCache.delete(branch);
+  // Limpia blockCache, transientFailCache, definitiveFailCache por sucursal
+  const prefix = `${branch.toLowerCase()}|`;
+  for (const [k, v] of blockCache) if (k.startsWith(prefix)) blockCache.delete(k);
+  for (const [k, v] of transientFailCache) if (k.startsWith(prefix)) transientFailCache.delete(k);
+  for (const [k, v] of definitiveFailCache) if (k.startsWith(prefix)) definitiveFailCache.delete(k);
 });
 // Ante un fallo transitorio (429/caída) no volvemos a golpear el servicio
 // por 90 s.
