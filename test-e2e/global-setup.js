@@ -24,14 +24,14 @@ async function setupDatabase() {
 
   // Crear tablas necesarias
   await db.exec(`
-    CREATE TABLE admin_tokens (
+    CREATE TABLE IF NOT EXISTS admin_tokens (
       token TEXT PRIMARY KEY,
       created_at TEXT NOT NULL,
       admin_user_id INTEGER,
       role TEXT NOT NULL DEFAULT 'superadmin',
       branch TEXT NOT NULL DEFAULT ''
     );
-    CREATE TABLE admin_users (
+    CREATE TABLE IF NOT EXISTS admin_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL COLLATE NOCASE,
       password_hash TEXT NOT NULL,
@@ -41,16 +41,16 @@ async function setupDatabase() {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-    CREATE TABLE admin_config (
+    CREATE TABLE IF NOT EXISTS admin_config (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-    CREATE TABLE webhook_requests (
+    CREATE TABLE IF NOT EXISTS webhook_requests (
       request_id TEXT PRIMARY KEY,
       created_at TEXT NOT NULL
     );
-    CREATE TABLE branch_shipping_settings (
+    CREATE TABLE IF NOT EXISTS branch_shipping_settings (
       branch TEXT PRIMARY KEY,
       auto_enabled INTEGER NOT NULL DEFAULT 1,
       origin_address TEXT NOT NULL DEFAULT '',
@@ -66,7 +66,7 @@ async function setupDatabase() {
       updated_at TEXT NOT NULL,
       updated_by TEXT NOT NULL DEFAULT ''
     );
-    CREATE TABLE branch_shipping_settings_log (
+    CREATE TABLE IF NOT EXISTS branch_shipping_settings_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       branch TEXT NOT NULL,
       admin_user_id INTEGER,
@@ -77,35 +77,35 @@ async function setupDatabase() {
       new_value TEXT,
       created_at TEXT NOT NULL
     );
-    CREATE INDEX idx_shipping_settings_log_branch ON branch_shipping_settings_log(branch);
-    CREATE INDEX idx_shipping_settings_log_created ON branch_shipping_settings_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_shipping_settings_log_branch ON branch_shipping_settings_log(branch);
+    CREATE INDEX IF NOT EXISTS idx_shipping_settings_log_created ON branch_shipping_settings_log(created_at);
   `);
 
   // Insertar superadmin
   const superHash = hashPassword('SuperSecret123');
   await db.prepare(`
-    INSERT INTO admin_users (username, password_hash, role, branch, active, created_at, updated_at)
+    INSERT OR IGNORE INTO admin_users (username, password_hash, role, branch, active, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run('superadmin', superHash, 'superadmin', '', 1, new Date().toISOString(), new Date().toISOString());
 
   // Insertar branch_admin para Tandil
   const tandilHash = hashPassword('tandilpass123');
   await db.prepare(`
-    INSERT INTO admin_users (username, password_hash, role, branch, active, created_at, updated_at)
+    INSERT OR IGNORE INTO admin_users (username, password_hash, role, branch, active, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run('tandil1', tandilHash, 'branch_admin', 'tandil', 1, new Date().toISOString(), new Date().toISOString());
 
   // Insertar branch_admin para Necochea
   const necocheaHash = hashPassword('necocheapass123');
   await db.prepare(`
-    INSERT INTO admin_users (username, password_hash, role, branch, active, created_at, updated_at)
+    INSERT OR IGNORE INTO admin_users (username, password_hash, role, branch, active, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run('necochea1', necocheaHash, 'branch_admin', 'necochea', 1, new Date().toISOString(), new Date().toISOString());
 
-  // Sembrar configuración de envío para ambas sucursales
+  // Sembrar configuración de envío para ambas sucursales (solo si no existen)
   const now = new Date().toISOString();
   const insertShipping = db.prepare(`
-    INSERT INTO branch_shipping_settings
+    INSERT OR IGNORE INTO branch_shipping_settings
     (branch, auto_enabled, origin_address, origin_lat, origin_lng, center_lat, center_lng, search_radius_km, base_cost, flat_blocks, per_block, max_blocks, updated_at, updated_by)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
