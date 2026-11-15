@@ -102,6 +102,7 @@ export default function useCart(branchId) {
             // La foto viaja en la línea para poder mostrar miniatura en el
             // carrito y en el resumen del checkout (antes no se guardaba).
             image: product.image || "",
+            imageVersion: product.imageVersion || null, // versión para ?v= (cache inmutable)
             unitPrice: product.price,
             extras,
             notes,

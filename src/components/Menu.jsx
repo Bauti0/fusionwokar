@@ -188,7 +188,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
                         </div>
                       )}
                       <div className="category__products">
-                        {run.products.map((product) => (
+                        {run.products.map((product, idx) => (
                           <ProductCard
                             key={product.id}
                             product={product}
@@ -196,6 +196,7 @@ const Menu = memo(function Menu({ menu, branch, pause = null, onAdd, orderMode, 
                             onAdd={handleAdd}
                             onCustomize={setCustomizing}
                             qty={qtys[product.id] || 0}
+                            isAboveFold={idx < 4}
                           />
                         ))}
                       </div>
@@ -258,7 +259,7 @@ function SearchResults({ menu, search, onAdd, onCustomize, qtys = {}, onClearSea
         {results.length} resultado{results.length > 1 ? "s" : ""}
       </p>
       <div className="menu__results">
-        {results.map((product) => (
+        {results.map((product, idx) => (
           <ProductCard
             key={product.id}
             product={product}
@@ -267,6 +268,7 @@ function SearchResults({ menu, search, onAdd, onCustomize, qtys = {}, onClearSea
             onAdd={onAdd}
             onCustomize={onCustomize}
             qty={qtys[product.id] || 0}
+            isAboveFold={idx < 4}
           />
         ))}
       </div>
