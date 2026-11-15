@@ -78,11 +78,7 @@ export const IconDelivery = createIcon([
   <circle key="c2" cx="7" cy="18" r="2" />,
 ]);
 
-export const IconTruck = createIcon([
-  <path key="p1" d="M3 17h4v-3h10v3h4l1-5H4l-1 5z" />,
-  <circle key="c1" cx="6" cy="19" r="2" />,
-  <circle key="c2" cx="16" cy="19" r="2" />,
-]);
+export const IconTruck = IconDelivery;
 
 export const IconTakeout = createIcon([
   <path key="p1" d="M5.364 3.848C4 6 3 9.652 3 12.652V19a2 2 0 002 2h14a2 2 0 002-2v-5c0-2.334-1.816-4.668-2.622-7.002" />,
