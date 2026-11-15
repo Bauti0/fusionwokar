@@ -37,3 +37,8 @@ opencode.json
 skills-lock.json
 cookies.txt
 login.json
+test-output.txt
+test-output*.txt
+*.test.log
+playwright-report/
+test-results/

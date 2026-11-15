@@ -735,8 +735,6 @@ export async function getProductImage(id) {
 export async function deleteProductImage(id) {
   await db.prepare("DELETE FROM product_images WHERE id = ?").run(id);
 }
-<<<<<<< HEAD
-=======
 
 // Guarda una variante optimizada de imagen (WebP, ancho específico).
 // Se usa al subir (sharp) y en el script de migración.
@@ -767,4 +765,3 @@ export async function listProductImageVariants(imageId) {
 export async function deleteProductImageVariants(imageId) {
   await db.prepare("DELETE FROM product_image_variants WHERE image_id = ?").run(imageId);
 }
->>>>>>> main
