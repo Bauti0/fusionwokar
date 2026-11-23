@@ -23,15 +23,6 @@ import ConfirmModal from "./ui/ConfirmModal.jsx";
 import Tooltip from "./ui/Tooltip.jsx";
 import { IconPlus, IconEdit, IconTrash } from "./ui/icons.jsx";
 import { useDelayedLoading } from "../utils/skeleton-delay.js";
-import ProductImage from "./ProductImage.jsx";
-
-// Extrae { id, version } de URLs tipo /api/images/products/123?v=456
-function parseProductImageUrl(url) {
-  if (!url || typeof url !== "string") return { id: null, version: null };
-  const m = url.match(/^\/api\/images\/products\/(\d+)(?:\?v=(\d+))?/);
-  if (!m) return { id: null, version: null };
-  return { id: m[1], version: m[2] || null };
-}
 
 // ============================================================
 // AdminProducts — edición del menú desde el panel
@@ -496,12 +487,9 @@ export default function AdminProducts({ me }) {
                     }}
                   >
                       <div className="admin-product__info">
-                        {(() => {
-                          const { id: imageId, version } = parseProductImageUrl(p.image);
-                          return imageId ? (
-                            <ProductImage imageId={imageId} version={version} alt="" displayWidth={44} displayHeight={44} aspectRatio={1} className="admin-product__thumb" loading="lazy" />
-                          ) : null;
-                        })()}
+                        {p.image && (
+                          <img className="admin-product__thumb" src={p.image} alt="" loading="lazy" />
+                        )}
                         <div className="admin-product__title">
                           <strong>{p.name}</strong>
                           <span className="admin-product__price">{formatPrice(p.price)}</span>
@@ -698,12 +686,7 @@ export default function AdminProducts({ me }) {
                 <div className="admin-product__image">
                   {form.image ? (
                     <>
-                      {(() => {
-                        const { id: imageId, version } = parseProductImageUrl(form.image);
-                        return imageId ? (
-                          <ProductImage imageId={imageId} version={version} alt="" displayWidth={200} displayHeight={200} aspectRatio={1} className="admin-product__preview" loading="eager" />
-                        ) : null;
-                      })()}
+                      <img src={form.image} alt="" className="admin-product__preview" />
                       <button
                         type="button"
                         className="btn btn--ghost btn--sm"

@@ -13,15 +13,7 @@ import { getTotalLabel, isSubmitDisabled, decideSubmitAction } from "../utils/ch
 import { normalizeAddressKey } from "../utils/normalizeAddressKey.js";
 import DateTimePicker from "./ui/DateTimePicker.jsx";
 import { IconMoney, IconBank, IconCard, IconLock, IconCheck, IconFlash, IconTakeout, IconChat, IconClockOutline, IconDelivery, IconTag } from "./ui/icons.jsx";
-import ProductImage from "./ProductImage.jsx";
-
-// Extrae { id, version } de URLs tipo /api/images/products/123?v=456
-function parseProductImageUrl(url) {
-  if (!url || typeof url !== "string") return { id: null, version: null };
-  const m = url.match(/^\/api\/images\/products\/(\d+)(?:\?v=(\d+))?/);
-  if (!m) return { id: null, version: null };
-  return { id: m[1], version: m[2] || null };
-}
+import FadeImage from "./FadeImage.jsx";
 
 const PAYMENT_METHODS = [
   { id: "efectivo", label: "Efectivo", Icon: IconMoney, hint: "Contado al retirar o al recibir" },
@@ -646,21 +638,17 @@ export default function Checkout({
               </a>
             </div>
           )}
-          {items.map((item) => {
-            const { id: imageId } = parseProductImageUrl(item.image);
-            const version = item.imageVersion || parseProductImageUrl(item.image).version;
-            return (
+          {items.map((item) => (
             <div className="summary__row" key={item.key}>
               <span className="summary__item">
-                {imageId && <ProductImage imageId={imageId} version={version} alt="" displayWidth={44} displayHeight={44} aspectRatio={1} className="summary__thumb" />}
+                {item.image && <FadeImage src={item.image} alt="" width="44" height="44" aspectRatio={1} className="summary__thumb" />}
                 <span>
                   {item.qty}× {item.name}
                 </span>
               </span>
               <span>{formatPrice(lineTotal(item))}</span>
             </div>
-            );
-          })}
+          ))}
           {discount > 0 && (
             <div className="summary__row">
               <span>Descuento ({coupon?.code})</span>

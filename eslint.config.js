@@ -130,15 +130,4 @@ ignores: [
     },
     rules: { ...RULES, "no-console": "off" },
   },
-
-  // ---- Scripts (Node) --------------------------------------------------
-  {
-    files: ["scripts/**/*.js"],
-    languageOptions: {
-      ecmaVersion: 2022,
-      sourceType: "module",
-      globals: { ...globals.node },
-    },
-    rules: { ...RULES, "no-console": "off" },
-  },
 ];

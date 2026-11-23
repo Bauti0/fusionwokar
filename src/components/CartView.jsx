@@ -3,15 +3,7 @@ import { formatPriceCompact, lineTotal } from "../utils/format.js";
 import { track } from "../utils/tracking.js";
 import Tooltip from "./ui/Tooltip.jsx";
 import { IconCart, IconTrash } from "./ui/icons.jsx";
-import ProductImage from "./ProductImage.jsx";
-
-// Extrae { id, version } de URLs tipo /api/images/products/123?v=456
-function parseProductImageUrl(url) {
-  if (!url || typeof url !== "string") return { id: null, version: null };
-  const m = url.match(/^\/api\/images\/products\/(\d+)(?:\?v=(\d+))?/);
-  if (!m) return { id: null, version: null };
-  return { id: m[1], version: m[2] || null };
-}
+import FadeImage from "./FadeImage.jsx";
 
 // ============================================================
 // Carrito como bottom-sheet: se abre sobre el menú sin sacarte del
@@ -80,20 +72,10 @@ export default function CartView({ cart, branch, onCheckout, onBack }) {
               {items.map((item) => {
                 const extras = Array.isArray(item.extras) ? item.extras : [];
                 const options = Array.isArray(item.options) ? item.options : [];
-                const { id: imageId } = parseProductImageUrl(item.image);
-                const version = item.imageVersion || parseProductImageUrl(item.image).version;
                 return (
                 <div className="cart-item" key={item.key}>
-                  {imageId && (
-                    <ProductImage
-                      imageId={imageId}
-                      version={version}
-                      alt=""
-                      displayWidth={44}
-                      displayHeight={44}
-                      aspectRatio={1}
-                      className="cart-item__thumb"
-                    />
+                  {item.image && (
+                    <FadeImage src={item.image} alt="" width="44" height="44" aspectRatio={1} className="cart-item__thumb" />
                   )}
                   <div className="cart-item__info">
                     <p className="cart-item__name">{item.name}</p>

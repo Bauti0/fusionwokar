@@ -6,7 +6,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, createHmac } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
-import sharp from "sharp";
 import {
   db,
   toPublicOrder,
@@ -16,10 +15,6 @@ import {
   saveProductImage,
   getProductImage,
   deleteProductImage,
-  saveProductImageVariant,
-  getProductImageVariant,
-  listProductImageVariants,
-  deleteProductImageVariants,
   toProduct,
   toCategory,
   seedProducts,
@@ -800,25 +795,14 @@ function invalidateMenuCache() {
 async function getMenuFromDb(branchId) {
   const cached = menuCache.get(branchId);
   if (cached && Date.now() - cached.at < MENU_TTL_MS) return cached.menu;
-
-  // Obtener productos con la versión de la imagen (updated_at de product_images)
-  // para que el front pueda construir ?v=<updated_at> y cachear inmutablemente
   const rows = await db
     .prepare(
-      `SELECT p.*, pi.updated_at as image_updated_at
-       FROM products p
+      `SELECT p.* FROM products p
        LEFT JOIN categories c ON c.branch = p.branch AND c.category_id = p.category_id
-       LEFT JOIN product_images pi ON pi.id = (
-         CASE
-           WHEN p.image LIKE '/api/images/products/%' THEN CAST(SUBSTR(p.image, 23) AS INTEGER)
-           ELSE NULL
-         END
-       )
        WHERE p.branch = ? AND p.available = 1
        ORDER BY COALESCE(c.sort_order, 999999), p.sort_order`
     )
     .all(branchId);
-
   const categories = [];
   const catIndex = new Map();
   for (const row of rows) {
@@ -5112,79 +5096,10 @@ app.post(
       }
       const m = dataUrl.match(/^data:image\/(png|jpeg|webp|gif);base64,(.+)$/);
       if (!m) return res.status(400).json({ error: "Formato de imagen no soportado" });
-      const originalBuf = Buffer.from(m[2], "base64");
-      // Límite duro de 10 MB (el front ya limita a 1.5 MB, pero el server valida también)
-      if (originalBuf.length > 10 * 1024 * 1024) return res.status(400).json({ error: "La imagen supera 10 MB" });
-
-      // Procesar con sharp: validar tipo real, corregir EXIF, quitar metadatos, no agrandar,
-      // convertir a WebP calidad 80 con lado mayor 1200px, generar variantes 400/800px.
-      // Si el resultado pesa más que el original, conservamos el original.
-      let processedBuf;
-      let processedMime = "image/webp";
-      let originalWidth = 0;
-      let originalHeight = 0;
-      try {
-        const image = sharp(originalBuf, { limitInputPixels: 30 * 1024 * 1024 }); // ~30MP límite anti-bomba
-        const metadata = await image.metadata();
-        originalWidth = metadata.width || 0;
-        originalHeight = metadata.height || 0;
-        // Validar que sea una imagen real (sharp lanza si no)
-        if (!metadata.format || !["png", "jpeg", "webp", "gif"].includes(metadata.format)) {
-          return res.status(400).json({ error: "Formato de imagen no soportado" });
-        }
-        // Procesar: rotar según EXIF, quitar metadatos (sharp lo hace por defecto), no agrandar, WebP q80, max 1200px
-        sharp.concurrency(1); // Procesar de a una imagen a la vez (memoria Render free)
-        processedBuf = await image
-          .rotate() // corrige orientación EXIF
-          .resize({
-            width: 1200,
-            height: 1200,
-            fit: "inside",
-            withoutEnlargement: true, // nunca agranda
-          })
-          .webp({ quality: 80, effort: 4 })
-          .toBuffer();
-      } catch (sharpErr) {
-        // Si sharp falla (archivo corrupto, no es imagen, etc.), rechazamos
-        return res.status(400).json({ error: "Archivo de imagen inválido o corrupto" });
-      }
-
-      // Si el procesado pesa más que el original, guardamos el original tal cual
-      const finalBuf = processedBuf.length < originalBuf.length ? processedBuf : originalBuf;
-      const finalMime = processedBuf.length < originalBuf.length ? "image/webp" : `image/${m[1]}`;
-      const savedBytes = finalBuf.length;
-
-      const saved = await saveProductImage({ mime: finalMime, data: finalBuf });
+      const buf = Buffer.from(m[2], "base64");
+      if (buf.length > 1.5 * 1024 * 1024) return res.status(400).json({ error: "La imagen supera 1.5 MB" });
+      const saved = await saveProductImage({ mime: `image/${m[1]}`, data: buf });
       const v = Math.floor(Date.now() / 1000);
-
-      // Generar variantes 400px y 800px (solo si la imagen original es más ancha)
-      const variantWidths = [400, 800].filter((w) => originalWidth > w);
-      for (const w of variantWidths) {
-        try {
-          const variantBuf = await sharp(finalBuf)
-            .resize({
-              width: w,
-              fit: "inside",
-              withoutEnlargement: true,
-            })
-            .webp({ quality: 80, effort: 4 })
-            .toBuffer();
-          // Solo guardamos si la variante pesa menos que la imagen principal
-          if (variantBuf.length < savedBytes) {
-            await saveProductImageVariant({
-              imageId: saved.id,
-              width: w,
-              mime: "image/webp",
-              data: variantBuf,
-              bytes: variantBuf.length,
-            });
-          }
-        } catch (variantErr) {
-          console.error(`Variante ${w}px falló para imagen ${saved.id}:`, variantErr.message);
-          // No fallamos el upload por una variante
-        }
-      }
-
       // Sweep de huérfanas: borra BLOBs sin ninguna referencia en products
       // (upload subido y cancelado sin guardar el producto), con un margen de
       // 10 min para no romper un upload recién hecho que el front todavía está
@@ -5196,7 +5111,7 @@ app.post(
           const rid = imageIdFromProductImageUrl(r.image);
           if (rid) referenced.add(rid);
         }
-        const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const cutoff = new Date(Date.now() - 10 * 60000).toISOString();
         let sql = "DELETE FROM product_images WHERE id != ? AND created_at <= ?";
         const args = [saved.id, cutoff];
         if (referenced.size) {
@@ -5208,13 +5123,7 @@ app.post(
       } catch (sweepErr) {
         console.error("sweep imagenes huérfanas:", sweepErr.message);
       }
-
-      // Respuesta con info de optimización
-      const optimized = processedBuf.length < originalBuf.length;
-      const savingsText = optimized
-        ? `Imagen optimizada: ${(originalBuf.length / 1024).toFixed(1)} KB -> ${(savedBytes / 1024).toFixed(1)} KB`
-        : `Imagen sin cambios: ${(savedBytes / 1024).toFixed(1)} KB`;
-      res.json({ ok: true, url: `/api/images/products/${saved.id}?v=${v}`, optimized, savingsText });
+      res.json({ ok: true, url: `/api/images/products/${saved.id}?v=${v}` });
     } catch (err) {
       console.error("POST /api/admin/upload:", err.message);
       res.status(500).json({ error: "No se pudo guardar la imagen" });
@@ -5222,13 +5131,9 @@ app.post(
   }
 );
 
-// Sirve las imágenes guardadas como BLOB en Turso.
-// Parámetros:
-//   ?w=400|800  → variante optimizada (si existe, si no cae al original)
-//   ?v=<ts>     → versión (updated_at); con ?v= → Cache-Control immutable 1 año
-//                sin ?v= → Cache-Control max-age=300, must-revalidate
-// ETag: hash del contenido (SHA-256 truncado) usando image_id + width + bytes + created_at.
-// Responde 304 si coincide.
+// Sirve las imágenes guardadas como BLOB en Turso. La URL lleva ?v=<updatedAt>
+// (constante por versión) → Cache-Control inmutable; el front ya cambia el query
+// al regenerar la imagen. Nunca se consulta por un id viejo tras un redeploy.
 app.get(
   "/api/images/products/:id",
   rateLimit({ max: 300, windowMs: 60000, name: "images" }),
@@ -5236,63 +5141,11 @@ app.get(
     try {
       const id = paramId(req.params.id);
       if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "ID inválido" });
-
-      // Parámetro de ancho de variante (400 u 800)
-      const widthParam = req.query.w ? parseInt(req.query.w, 10) : null;
-      const validWidths = [400, 800];
-      const requestedWidth = validWidths.includes(widthParam) ? widthParam : null;
-
-      // Parámetro de versión para cache inmutable
-      const version = typeof req.query.v === "string" ? req.query.v : null;
-      const hasVersion = !!version;
-
-      // Buscar variante si se pidió ancho válido
-      let row = null;
-      let isVariant = false;
-      let variantBytes = null;
-      let variantUpdatedAt = null;
-      if (requestedWidth) {
-        const variant = await getProductImageVariant(id, requestedWidth);
-        if (variant) {
-          row = { mime: variant.mime, data: variant.data, updated_at: variant.created_at };
-          isVariant = true;
-          variantBytes = variant.bytes;
-          variantUpdatedAt = variant.created_at;
-        }
-      }
-      // Fallback a imagen original
-      if (!row) {
-        const original = await getProductImage(id);
-        if (!original) return res.status(404).json({ error: "Imagen no encontrada" });
-        row = original;
-      }
-
+      const row = await getProductImage(id);
+      if (!row) return res.status(404).json({ error: "Imagen no encontrada" });
       const buf = Buffer.from(row.data);
-
-      // ETag: hash SHA-256 truncado basado en image_id + width + bytes + created_at
-      // Para la imagen original usamos buf.length (ya tenemos el buffer para la respuesta).
-      // Para variantes usamos los bytes guardados en product_image_variants (sin leer el BLOB de la variante).
-      const { createHash } = await import("node:crypto");
-      const etagBytes = isVariant ? variantBytes : buf.length;
-      const etagUpdatedAt = isVariant ? variantUpdatedAt : row.updated_at;
-      const etagSource = `${id}:${requestedWidth || 'orig'}:${etagBytes}:${etagUpdatedAt}`;
-      const etag = `"${createHash("sha256").update(etagSource).digest("hex").slice(0, 32)}"`;
-      res.setHeader("ETag", etag);
-
-      // 304 Not Modified si el cliente ya tiene esta versión
-      const ifNoneMatch = req.headers["if-none-match"];
-      if (ifNoneMatch && ifNoneMatch === etag) {
-        return res.status(304).end();
-      }
-
-      // Cache-Control: con ?v= → immutable 1 año; sin ?v= → revalidar a los 5 min
-      if (hasVersion) {
-        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-      } else {
-        res.setHeader("Cache-Control", "public, max-age=300, must-revalidate");
-      }
-      res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Content-Type", row.mime);
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
       res.setHeader("Content-Length", buf.length);
       res.end(buf);
     } catch (err) {
