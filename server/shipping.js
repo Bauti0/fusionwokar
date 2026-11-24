@@ -8,14 +8,9 @@
 //   - Origen: dirección del local de cada sucursal (geocodificada o por env vars).
 //   - Servicios 100% gratis, con respaldos para que una limitación
 //     de tráfico (429) o una caída no dejen sin envío:
-//       1) Geocodificación: depende del motor de la sucursal (campo `geocoder`):
-//          - "legacy" (Tandil): Nominatim (OSM) → Photon (Komoot), mismo camino que
-//            teníamos en main, sin cambios de motor.
-//          - "ors-anclado" (Necochea): OpenRouteService / Pelias con límite
-//            geográfico por sucursal (boundary.circle + boundary.country +
-//            focus.point) → si no hay key o falla, Nominatim → Photon.
-//          Cualquier resultado de cualquier respaldo se valida contra el
-//          sanityRadiusKm de la sucursal: nada de un respaldo sin validar.
+//       1) Geocodificación: Georef Argentina API (datos.gob.ar) → respaldos
+//          ORS/Nominatim/Photon. Georef es el servicio oficial argentino,
+//          entiende calles numeradas (La Plata/Necochea) y calles con nombre.
 //       2) Ruta por calles: OpenRouteService si ORS_API_KEY está seteada
 //          → si no, OSRM → si falla, distancia en línea recta (factor ~1.25x).
 //   - MAX_BLOCKS opcional por sucursal: si > 0, direcciones más allá se rechazan
@@ -56,6 +51,11 @@ const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
 const ORIGIN_TTL = 24 * 60 * 60 * 1000;
 // Dirección → costo/cuadras: cacheamos 7 días (se repiten muchísimo).
 const KM_TTL = 7 * 24 * 60 * 60 * 1000;
+
+// Georef Argentina API - servicio oficial de datos.gob.ar
+// Documentación: https://apis.datos.gob.ar/georef/api/
+const GEOREF_BASE = "https://apis.datos.gob.ar/georef/api";
+const GEOREF_TIMEOUT_MS = 8000;
 
 // Resuelve la configuración efectiva de envío de una sucursal: BD (valor
 // editado desde el panel) con caché de 30 s, o los valores de semilla
@@ -304,18 +304,80 @@ function geoCacheSet(branch, textoNormalizado, coords) {
 
 // ---------- Geocodificadores ----------
 
-// OpenRouteService / Pelias. Parámetros exactos (ver
-// https://giscience.github.io/openrouteservice/ y la especificación de Pelias):
-//   GET /geocode/search?text=&focus.point.lat=&focus.point.lon=&
-//     boundary.circle.lat=&boundary.circle.lon=&boundary.circle.radius=&
-//     boundary.country=&size=
-// boundary.circle restringe los resultados a un círculo (km) alrededor del
-// centro de la sucursal: una búsqueda que no puede devolver resultados fuera
-// del radio. focus.point prioriza por proximidad al origen. boundary.country
-// limita a Argentina. La respuesta es GeoJSON con features que traen
-// properties.label, properties.confidence, properties.match_type,
-// properties.layer, properties.locality, properties.region, properties.country
-// y geometry.coordinates [lon, lat].
+// Georef Argentina API (datos.gob.ar) - Servicio oficial de direcciones.
+// Entiende el sistema argentino: calles numeradas (La Plata, Necochea) y
+// calles con nombre. Filtra por provincia/departamento/localidad.
+// Documentación: https://apis.datos.gob.ar/georef/api/direcciones
+async function geocodeGeoref(query, cfg, opts = {}) {
+  const deadline = opts.deadline || Date.now() + GEOREF_TIMEOUT_MS;
+  try {
+    const params = new URLSearchParams();
+    params.set("direccion", query);
+    // Filtrar por provincia (Buenos Aires) y departamento (partido)
+    params.set("provincia", "Buenos Aires");
+    if (cfg.city) params.set("departamento", cfg.city);
+    // max=5 para obtener varias opciones y elegir la mejor
+    params.set("max", "5");
+    // campos para respuesta completa
+    params.set("campos", "estandar,nomenclatura,ubicacion");
+    // aplanar para respuesta más simple
+    params.set("aplanar", "true");
+
+    const url = `${GEOREF_BASE}/direcciones?${params.toString()}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), GEOREF_TIMEOUT_MS);
+    const j = await fetchJson(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    const resultados = j?.direcciones || [];
+    if (!resultados.length) return null;
+
+    // Buscar el mejor resultado: priorizar tipo "calle" con altura exacta
+    // y que coincida con la localidad de la sucursal
+    const expectedCity = (cfg.city || "").toLowerCase();
+    for (const dir of resultados) {
+      const loc = dir.localidad?.nombre?.toLowerCase() || "";
+      const dept = dir.departamento?.nombre?.toLowerCase() || "";
+      const prov = dir.provincia?.nombre?.toLowerCase() || "";
+      const tipo = dir.tipo?.toLowerCase() || "";
+
+      // Validar que pertenezca a la ciudad/partido de la sucursal
+      if (expectedCity && loc !== expectedCity && dept !== expectedCity) {
+        continue;
+      }
+
+      // Aceptar solo direcciones con altura (tipo "calle") o intersecciones
+      if (!["calle", "interseccion"].includes(tipo)) continue;
+
+      const lat = dir.ubicacion?.lat;
+      const lon = dir.ubicacion?.lon;
+      if (lat == null || lon == null) continue;
+
+      return {
+        lat: Number(lat),
+        lng: Number(lon),
+        label: dir.nomenclatura || dir.nombre || query,
+        confidence: 1.0, // Georef es oficial, confianza máxima
+        matchType: "exact",
+        layer: tipo,
+        locality: dir.localidad?.nombre || "",
+        region: dir.provincia?.nombre || "",
+        country: "Argentina",
+      };
+    }
+    return null;
+  } catch (err) {
+    if (err.name === "AbortError" || err.type === "timeout") {
+      console.warn(`shipping georef timeout`);
+      throw err;
+    }
+    console.warn(`shipping georef error: ${err.message}`);
+    throw err;
+  }
+}
+
+// OpenRouteService / Pelias como RESPALDO (solo si Georef falla).
+// boundary.circle es un BIAS, no filtro duro; se valida sanityRadiusKm.
 async function geocodeOrs(query, cfg, opts = {}) {
   if (!ORS_KEY) return null;
   const center = cfg.center;
@@ -336,18 +398,12 @@ async function geocodeOrs(query, cfg, opts = {}) {
     const conf = Number(props.confidence);
     const layer = String(props.layer || "").toLowerCase();
     if (!Number.isFinite(conf) || conf < MIN_CONFIDENCE) continue;
-    // Aceptamos address, street e intersection. Una localidad genérica
-    // (locality/region/country) no es una dirección válida.
     if (!["address", "street", "intersection"].includes(layer)) continue;
     const coords = f.geometry && f.geometry.coordinates;
     if (!coords || coords.length < 2) continue;
-    // Validar que la localidad coincida con la ciudad de la sucursal
-    // (ej.: Necochea usa calles numeradas; "Cuba" no existe ahí).
     const locality = (props.locality || "").toLowerCase();
     const expectedCity = (cfg.city || "").toLowerCase();
-    if (expectedCity && locality && locality !== expectedCity) {
-      continue;
-    }
+    if (expectedCity && locality && locality !== expectedCity) continue;
     return {
       lat: Number(coords[1]),
       lng: Number(coords[0]),
@@ -558,9 +614,9 @@ function ciudadValida(cfg, c) {
   return candidatos.some(cand => cand === expected || cand.includes(expected));
 }
 
-// Geocodifica con el motor de la sucursal. Siempre valida el radio.
-//   - legacy (Tandil): Nominatim → Photon, luego sanityRadiusKm.
-//   - ors-anclado (Necochea): ORS Pelias con boundary → respaldos validados.
+// Geocodifica usando Georef Argentina API (primario) con respaldos.
+// Georef es el servicio oficial de datos.gob.ar, entiende calles numeradas
+// (La Plata, Necochea) y calles con nombre. Filtra por provincia/departamento.
 export async function geocode(query, cfg, opts = {}) {
   const deadline = opts.deadline || Date.now() + GEO_TIMEOUT_MS * 20;
   const textoNormalizado = normalizarTexto(query).texto;
@@ -578,49 +634,113 @@ export async function geocode(query, cfg, opts = {}) {
     let resultado = null;
     let sawTransient = false;
 
-    if (cfg.geocoder === "ors-anclado") {
-      // 1) ORS Pelias con límite geográfico (boundary.circle es bias, no filtro duro).
-      //    Validamos explícitamente el radio de sanity (50 km) tras la respuesta.
-      if (ORS_KEY) {
+    // 1) Georef Argentina API - PRIMARIO para TODAS las sucursales
+    //    Servicio oficial argentino, filtra por provincia/departamento/localidad
+    // Manejo de errores igual que GEO_PROVIDERS: suspender en 403, reintentar en 429 con Retry-After
+    try {
+      if (isProviderSuspended("georef")) {
+        const e = new Error("provider suspended");
+        e.provider = "georef";
+        e.suspended = true;
+        throw e;
+      }
+      resultado = await geocodeGeoref(query, cfg, opts);
+      if (resultado && dentroDelRadio(cfg, resultado)) {
+        geoCacheSet(cfg.city, textoNormalizado, resultado);
+        inFlight.delete(cacheKey);
+        return resultado;
+      }
+      // Resultado fuera del radio de sanity: se descarta
+    } catch (err) {
+      // Georef falló: log y continúa con respaldos
+      if (err.name !== "AbortError" && err.type !== "timeout" && !err.suspended) {
+        console.warn(`shipping georef fallback: ${err.message}`);
+      }
+      // Georef timeout/abort = transient
+      if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
+      // Provider suspended = continuar al siguiente (igual que en GEO_PROVIDERS)
+      if (err.suspended) {
+        // No marcar transient, solo continuar
+      }
+      // Para errores 403/429 de Georef, suspender provider y propagar status
+      const status = err.status;
+      if (status === 403) {
+        suspendProvider("georef");
+        // No marcar transient, continuar al siguiente provider
+      } else if (status === 429) {
+        let wait = 0;
         try {
-          resultado = await geocodeOrs(query, cfg, opts);
+          if (err.retryAfter) wait = Math.min(Number(err.retryAfter) * 1000, MAX_RETRY_AFTER_MS);
+        } catch {}
+        if (wait > 0) {
+          // Esperar y reintentar Georef una vez (no suspender)
+          await sleep(Math.min(wait, MAX_RETRY_AFTER_MS));
+          try {
+            if (!isProviderSuspended("georef")) {
+              resultado = await geocodeGeoref(query, cfg, opts);
+              if (resultado && dentroDelRadio(cfg, resultado)) {
+                geoCacheSet(cfg.city, textoNormalizado, resultado);
+                inFlight.delete(cacheKey);
+                return resultado;
+              }
+            }
+          } catch (retryErr) {
+            // Reintento falló: log y continúa con respaldos
+            if (retryErr.name !== "AbortError" && retryErr.type !== "timeout") {
+              console.warn(`shipping georef fallback (retry): ${retryErr.message}`);
+            }
+          }
+        } else {
+          suspendProvider("georef");
+        }
+      }
+    }
+
+    // 2) ORS Pelias como RESPALDO (solo si hay key)
+    //    boundary.circle es BIAS, no filtro duro; validamos sanityRadiusKm
+    if (ORS_KEY) {
+      try {
+        resultado = await geocodeOrs(query, cfg, opts);
+        if (resultado && dentroDelRadio(cfg, resultado)) {
+          geoCacheSet(cfg.city, textoNormalizado, resultado);
+          inFlight.delete(cacheKey);
+          return resultado;
+        }
+      } catch (err) {
+        if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
+      }
+    }
+
+    // 3) Búsqueda estructurada ORS para intersecciones (respaldos)
+    const { cruces } = normalizarTexto(query);
+    if (cruces.length && ORS_KEY) {
+      const partes = cruces[0].split(/\s+y\s+/i);
+      if (partes.length >= 2) {
+        try {
+          resultado = await geocodeOrsStructured(
+            partes[0].trim(),
+            cfg.city,
+            cfg.region,
+            cfg.country,
+            cfg,
+            opts
+          );
           if (resultado && dentroDelRadio(cfg, resultado)) {
             geoCacheSet(cfg.city, textoNormalizado, resultado);
             inFlight.delete(cacheKey);
             return resultado;
           }
-          // Resultado fuera del radio de sanity: se descarta y se pasa a respaldos.
         } catch (err) {
-          // Fallback a respaldos validados. ORS no marca transient: si falla,
-          // se prueban Nominatim/Photon y ellos deciden el resultado.
+          if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
         }
       }
-      // 2) Búsqueda estructurada para intersecciones / avenidas sin altura.
-      const { cruces } = normalizarTexto(query);
-      if (cruces.length) {
-        const partes = cruces[0].split(/\s+y\s+/i);
-        if (partes.length >= 2) {
-          try {
-            resultado = await geocodeOrsStructured(
-              partes[0].trim(),
-              cfg.city,
-              cfg.region,
-              cfg.country,
-              cfg,
-              opts
-            );
-            if (resultado && dentroDelRadio(cfg, resultado)) {
-              geoCacheSet(cfg.city, textoNormalizado, resultado);
-              inFlight.delete(cacheKey);
-              return resultado;
-            }
-            // Resultado fuera del radio de sanity: se descarta.
-          } catch {}
-        }
-      }
-      // 3) Variantes: cruce como "calle X y calle Y", solo calle + ciudad.
+    }
+
+    // 4) Variantes ORS (respaldos)
+    if (ORS_KEY) {
       const variantes = buildVariants(query, cfg);
       for (const v of variantes) {
+        if (Date.now() > deadline) break;
         try {
           resultado = await geocodeOrs(v.texto, cfg, opts);
           if (resultado && dentroDelRadio(cfg, resultado)) {
@@ -628,35 +748,26 @@ export async function geocode(query, cfg, opts = {}) {
             inFlight.delete(cacheKey);
             return resultado;
           }
-          // Resultado fuera del radio de sanity: se descarta y se prueba la siguiente variante.
-        } catch {}
+        } catch (err) {
+          if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
+        }
       }
     }
 
-    // 4) Respaldos Nominatim → Photon. Para AMBOS motores (ors-anclado y legacy)
-    //    se usan variantes que incluyen ciudad/región/país para evitar que
-    //    devuelvan direcciones de otras ciudades con el mismo nombre de calle
-    //    (ej.: "Casacuberta 695" en CABA en lugar de Tandil).
-    //    Además, SIEMPRE se valida el radio de sanity (50 km) para ambas sucursales.
-    const validarRadio = true;
-
-    // Para los respaldos, usar las mismas variantes que ORS (incluyen ciudad/región/país)
-    // para evitar que devuelvan direcciones de otras ciudades con el mismo nombre de calle.
+    // 5) Respaldos Nominatim → Photon (último recurso)
+    //    Usan variantes con ciudad/región/país y validan sanityRadiusKm + ciudad
     const variantesParaRespaldo = buildVariants(query, cfg);
-
     for (const p of GEO_PROVIDERS) {
       if (Date.now() > deadline) break;
-      // Probar cada variante hasta encontrar una que devuelva un punto válido.
       for (const v of variantesParaRespaldo) {
         if (Date.now() > deadline) break;
         try {
           const c = await p.fn(v.texto);
-          if (c && (!validarRadio || dentroDelRadio(cfg, c)) && ciudadValida(cfg, c)) {
+          if (c && dentroDelRadio(cfg, c) && ciudadValida(cfg, c)) {
             geoCacheSet(cfg.city, textoNormalizado, c);
             inFlight.delete(cacheKey);
             return c;
           }
-          // Candidato fuera del radio o en otra ciudad: se descarta y se prueba la siguiente variante.
         } catch (err) {
           if (err.type === "timeout" || err.name === "AbortError") continue;
           const st = err.status;
