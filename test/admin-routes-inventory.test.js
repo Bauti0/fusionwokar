@@ -68,6 +68,7 @@ const ADMIN_ROUTES = [
   // Stats / Reports
   { method: "GET", path: "/api/admin/stats", scopeType: "branch_admin" },
   { method: "GET", path: "/api/admin/customers", scopeType: "branch_admin" },
+  { method: "GET", path: "/api/admin/customers/lookup", scopeType: "branch_admin" },
   { method: "GET", path: "/api/admin/sales", scopeType: "branch_admin" },
 
   // Cash Register

@@ -88,21 +88,6 @@ export function phonePlaceholderFor(branch) {
   return BRANCHES[id]?.phonePlaceholder || DEFAULT_PHONE_PLACEHOLDER;
 }
 
-// Normaliza un teléfono a solo dígitos y devuelve los últimos 10 dígitos
-// (formato usado en BD y API). Elimina espacios, guiones, paréntesis, +54, 0 inicial, 15.
-export function normalizePhone(phone) {
-  if (!phone) return "";
-  let digits = phone.replace(/\D/g, "");
-  // Quitar código de país +54 si está al inicio
-  if (digits.startsWith("54")) digits = digits.slice(2);
-  // Quitar 0 o 15 inicial (código de área nacional / móvil)
-  if (digits.startsWith("0")) digits = digits.slice(1);
-  if (digits.startsWith("15")) digits = digits.slice(2);
-  // Tomar últimos 10 dígitos (código de área + número)
-  if (digits.length > 10) digits = digits.slice(-10);
-  return digits;
-}
-
 // Instagram general de la marca (cuenta de ambas sucursales)
 export const BRAND = {
   name: "Fusión Wok",

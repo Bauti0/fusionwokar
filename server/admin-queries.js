@@ -18,6 +18,7 @@
 
 import { MENUS } from "../src/data/menus.js";
 import { refundedQuery, sumRefunded, refundedByBranch, netAmount, buildSalesReport, arDay } from "./reports.js";
+import { normalizePhone } from "../src/utils/phone.js";
 
 // Normaliza nombre de adicional para agrupado: minúsculas, sin tildes, sin espacios de más
 function normalizeExtraName(name) {
@@ -243,7 +244,7 @@ export async function listCustomers(db, { scope, branch, search } = {}) {
 // que la pantalla no use.
 // ============================================================
 export async function lookupCustomerByPhone(db, { phone, scope } = {}) {
-  const digits = String(phone || "").replace(/\D/g, "");
+  const digits = normalizePhone(phone);
   if (digits.length < 8) return { found: false };
   const last10 = digits.slice(-10);
 
@@ -272,7 +273,7 @@ export async function lookupCustomerByPhone(db, { phone, scope } = {}) {
 
   const matches = [];
   for (const r of rows) {
-    const rowDigits = String(r.phone || "").replace(/\D/g, "");
+    const rowDigits = normalizePhone(r.phone);
     if (rowDigits.slice(-10) === last10) {
       matches.push(r);
     }

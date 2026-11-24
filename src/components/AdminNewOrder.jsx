@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getMenu, adminCreateManualOrder, adminCustomerLookup } from "../api.js";
-import { BRANCH_LIST, phonePlaceholderFor, normalizePhone } from "../data/branches.js";
+import { BRANCH_LIST, phonePlaceholderFor } from "../data/branches.js";
+import { normalizePhone } from "../utils/phone.js";
 import { formatPrice } from "../utils/format.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
