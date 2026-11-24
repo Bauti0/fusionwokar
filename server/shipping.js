@@ -424,12 +424,18 @@ const GEO_PROVIDERS = [
         e.suspended = true;
         throw e;
       }
-      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`;
+      // addressdetails=1 devuelve address.city, address.town, address.village, etc.
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=1&q=${encodeURIComponent(q)}`;
       try {
         const j = await fetchJson(url);
         const hit = Array.isArray(j) ? j[0] : null;
         if (!hit || hit.lat == null || hit.lon == null) return null;
-        return { lat: Number(hit.lat), lng: Number(hit.lon) };
+        return {
+          lat: Number(hit.lat),
+          lng: Number(hit.lon),
+          // Nominatim: address.city / address.town / address.village / address.state
+          address: hit.address || {},
+        };
       } catch (err) {
         if (err.type === "timeout" || err.name === "AbortError") {
           console.warn(`shipping provider fail: nominatim timeout`);
@@ -472,9 +478,22 @@ const GEO_PROVIDERS = [
       const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1`;
       try {
         const j = await fetchJson(url);
-        const c = j?.features?.[0]?.geometry?.coordinates;
+        const feat = j?.features?.[0];
+        const c = feat?.geometry?.coordinates;
         if (!c || !c.length) return null;
-        return { lat: c[1], lng: c[0] };
+        const props = feat?.properties || {};
+        // Photon: properties.city, properties.state, properties.country
+        return {
+          lat: c[1],
+          lng: c[0],
+          address: {
+            city: props.city,
+            town: props.city, // Photon usa city para ambos
+            village: props.city,
+            state: props.state,
+            country: props.country,
+          },
+        };
       } catch (err) {
         if (err.type === "timeout" || err.name === "AbortError") {
           console.warn(`shipping provider fail: photon timeout`);
@@ -514,6 +533,29 @@ const GEO_PROVIDERS = [
 function dentroDelRadio(cfg, c) {
   if (c.lat < -90 || c.lat > 90 || c.lng < -180 || c.lng > 180) return true;
   return haversineKm(cfg.center, c) <= cfg.sanityRadiusKm;
+}
+
+// Extrae la ciudad/localidad del resultado del geocodificador y valida
+// que coincida con la ciudad de la sucursal.
+// Nominatim: address.city / address.town / address.village / address.state
+// Photon: address.city / address.town / address.village / address.state
+// ORS Pelias: ya validado en geocodeOrs/geocodeOrsStructured vía props.locality
+function ciudadValida(cfg, c) {
+  if (!c || !c.address) return true; // sin datos de dirección = no validar (compatibilidad)
+  const addr = c.address;
+  const candidatos = [
+    addr.city,
+    addr.town,
+    addr.village,
+    addr.suburb,
+    addr.municipality,
+    addr.state,
+    addr.region,
+  ].filter(Boolean).map(String).map(s => s.toLowerCase());
+  const expected = (cfg.city || "").toLowerCase();
+  if (!expected) return true;
+  // Coincidencia exacta o que la ciudad esperada esté contenida en algún candidato
+  return candidatos.some(cand => cand === expected || cand.includes(expected));
 }
 
 // Geocodifica con el motor de la sucursal. Siempre valida el radio.
@@ -609,12 +651,12 @@ export async function geocode(query, cfg, opts = {}) {
         if (Date.now() > deadline) break;
         try {
           const c = await p.fn(v.texto);
-          if (c && (!validarRadio || dentroDelRadio(cfg, c))) {
+          if (c && (!validarRadio || dentroDelRadio(cfg, c)) && ciudadValida(cfg, c)) {
             geoCacheSet(cfg.city, textoNormalizado, c);
             inFlight.delete(cacheKey);
             return c;
           }
-          // Candidato fuera del radio (solo ors-anclado): se descarta y se prueba la siguiente variante.
+          // Candidato fuera del radio o en otra ciudad: se descarta y se prueba la siguiente variante.
         } catch (err) {
           if (err.type === "timeout" || err.name === "AbortError") continue;
           const st = err.status;

@@ -62,14 +62,29 @@ function mockearRed(t, { origen = { lat: "-37.32154", lon: "-59.13024" }, destin
   const METROS_POR_GRADO_LAT = 111320;
   // Mapa clave -> metros para que OSRM calcule distancia real desde coordenadas
   const metrosPorClave = Object.fromEntries(destinos.map(d => [d.clave, Number(d.metros) || 0]));
+  // Helper: respuesta Nominatim con address.city para validación de ciudad
+  const nomResponse = (lat, lon, city) => [{
+    lat: String(lat),
+    lon: String(lon),
+    address: { city: city, town: city, village: city, state: "Buenos Aires", country: "Argentina" }
+  }];
+  // Detectar ciudad esperada según la query (Necochea usa "Calle N", "Diagonal", "Av." + número)
+  const detectarCiudad = (q) => {
+    if (q.includes("Diagonal San Martín")) return "Necochea";
+    if (q.includes("Chacabuco 660")) return "Tandil";
+    // Calles numeradas estilo Necochea/La Plata: "Calle 5", "95 1513", "Av. 59"
+    if (/\b(Calle|Av\.|Avenida)\s+\d+/.test(q) || /^\d+\s+\d+/.test(q)) return "Necochea";
+    return "Tandil"; // default
+  };
   t.mock.method(globalThis, "fetch", async (url) => {
     const u = String(url);
     const q = new URL(u).searchParams.get("q") || "";
     llamadasExternas += 1;
+    const city = detectarCiudad(q);
     // Origen Tandil (Chacabuco 660): coordenadas fijas
-    if (q.includes("Chacabuco 660")) return respuestaJson([{ lat: origen.lat, lon: origen.lon }]);
+    if (q.includes("Chacabuco 660")) return respuestaJson(nomResponse(origen.lat, origen.lon, city));
     // Origen Necochea (Diagonal San Martín 1258): coordenadas fijas
-    if (q.includes("Diagonal San Martín")) return respuestaJson([{ lat: "-38.56705", lon: "-58.72938" }]);
+    if (q.includes("Diagonal San Martín")) return respuestaJson(nomResponse("-38.56705", "-58.72938", city));
     // Destino: para geocodificación, devolver coordenadas a la distancia esperada del origen.
     // Mantenemos la misma longitud y ajustamos latitud según metros (hacia el sur = lat más negativa).
     for (const d of destinos) {
@@ -77,7 +92,7 @@ function mockearRed(t, { origen = { lat: "-37.32154", lon: "-59.13024" }, destin
         const metros = Number(d.metros) || 0;
         const deltaLat = metros / METROS_POR_GRADO_LAT;
         const latDestino = Number(origen.lat) - deltaLat; // hacia el sur
-        return respuestaJson([{ lat: String(latDestino), lon: origen.lon }]);
+        return respuestaJson(nomResponse(latDestino, origen.lon, city));
       }
     }
     // OSRM / router: usa la misma aproximación lineal que el test (1 grado = 111320 m)
@@ -410,8 +425,12 @@ async function fetchMockeado(url) {
       return respuestaJson({ features: [] });
     }
     const coords = q.includes("Chacabuco 660") ? RED.origen : RED.destino;
+    const city = q.includes("Chacabuco 660") ? "Tandil" : "Tandil"; // tests usan Tandil
     return respuestaJson({
-      features: [{ geometry: { coordinates: [Number(coords.lon), Number(coords.lat)] } }],
+      features: [{
+        geometry: { coordinates: [Number(coords.lon), Number(coords.lat)] },
+        properties: { city, state: "Buenos Aires", country: "Argentina" }
+      }],
     });
   }
   // Para Nominatim: si hay sinResultado configurado (test de unknown), devolver vacío
@@ -419,8 +438,13 @@ async function fetchMockeado(url) {
   if (RED.sinResultado.length > 0 && !q.includes("Chacabuco 660")) {
     return respuestaJson([]);
   }
-  if (q.includes("Chacabuco 660")) return respuestaJson([RED.origen]);
-  return respuestaJson([RED.destino]);
+  // Nominatim response con address para validación de ciudad
+  const withAddress = (obj, city) => ({
+    ...obj,
+    address: { city, town: city, village: city, state: "Buenos Aires", country: "Argentina" }
+  });
+  if (q.includes("Chacabuco 660")) return respuestaJson([withAddress(RED.origen, "Tandil")]);
+  return respuestaJson([withAddress(RED.destino, "Tandil")]);
 }
 
 const WARNINGS = [];
