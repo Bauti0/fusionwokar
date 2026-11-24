@@ -4130,8 +4130,10 @@ app.put("/api/admin/shipping-settings", requireAdmin, async (req, res) => {
     // Solo se valida el origen cuando el admin envía un valor nuevo (y el
     // automático está encendido). Si deja el origen tal como está, no se
     // rechaza: el cálculo usa el del código/BD como respaldo.
+    // Usamos != null para no considerar "enviado" cuando el form manda null
+    // (campos ocultos que el usuario no editó).
     const tocaOrigen =
-      req.body.origin_lat !== undefined || req.body.origin_lng !== undefined || req.body.origin_address !== undefined;
+      req.body.origin_lat != null || req.body.origin_lng != null || req.body.origin_address !== undefined;
     if (autoEfectivo === 1 && tocaOrigen) {
       const latErr = validarLatitud(parsed.values.origin_lat);
       const lngErr = validarLongitud(parsed.values.origin_lng);

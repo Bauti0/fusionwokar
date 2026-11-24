@@ -123,14 +123,21 @@ export default function AdminShippingSettings({ me }) {
       const payload = {
         branch: branchId,
         origin_address: form.origin_address.trim(),
-        origin_lat: form.origin_lat ? Number(form.origin_lat) : null,
-        origin_lng: form.origin_lng ? Number(form.origin_lng) : null,
         base_cost: Number(form.base_cost || 0),
         flat_blocks: Number(form.flat_blocks || 0),
         per_block: Number(form.per_block || 0),
         max_blocks: Number(form.max_blocks || 0),
         auto_enabled: Number(form.auto_enabled || 1),
       };
+      // Solo enviar lat/lng si el usuario los editó (no están vacíos)
+      // Campos ocultos: no se envían para que el servidor use los valores guardados
+      // o geocodifique desde la dirección (cuando son NULL en BD)
+      if (form.origin_lat !== "" && form.origin_lat !== null && form.origin_lat !== undefined) {
+        payload.origin_lat = Number(form.origin_lat);
+      }
+      if (form.origin_lng !== "" && form.origin_lng !== null && form.origin_lng !== undefined) {
+        payload.origin_lng = Number(form.origin_lng);
+      }
       await adminUpdateShippingSettings(payload);
       // Usar el payload que enviamos (sabemos qué guardamos) en vez de la respuesta del server
       // que solo devuelve { ok: true, branch, changed }
@@ -178,14 +185,19 @@ export default function AdminShippingSettings({ me }) {
         branch: branchId,
         address: quoteAddress.trim(),
         origin_address: form.origin_address.trim(),
-        origin_lat: form.origin_lat ? Number(form.origin_lat) : null,
-        origin_lng: form.origin_lng ? Number(form.origin_lng) : null,
         base_cost: Number(form.base_cost || 0),
         flat_blocks: Number(form.flat_blocks || 0),
         per_block: Number(form.per_block || 0),
         max_blocks: Number(form.max_blocks || 0),
         auto_enabled: Number(form.auto_enabled || 1),
       };
+      // Solo enviar lat/lng si el usuario los editó (no están vacíos)
+      if (form.origin_lat !== "" && form.origin_lat !== null && form.origin_lat !== undefined) {
+        payload.origin_lat = Number(form.origin_lat);
+      }
+      if (form.origin_lng !== "" && form.origin_lng !== null && form.origin_lng !== undefined) {
+        payload.origin_lng = Number(form.origin_lng);
+      }
       const res = await adminShippingSettingsTest(payload);
       setQuoteResult(res);
     } catch (err) {

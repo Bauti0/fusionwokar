@@ -275,7 +275,9 @@ export async function saveShippingSettings({ db, branch, values, adminUserId, ad
 
 // Valida que una latitud esté dentro de Argentina (-55 a -21). Devuelve null
 // si es válida, o un mensaje de error si no.
+// null/undefined son válidos: significa "geocodificar desde la dirección".
 export function validarLatitud(v) {
+  if (v == null) return null; // null o undefined = válido (geocodificar por dirección)
   const n = Number(v);
   if (!Number.isFinite(n)) return "Latitud inválida.";
   if (n < -55 || n > -21) return "Latitud fuera de rango para Argentina (-55 a -21).";
@@ -284,7 +286,9 @@ export function validarLatitud(v) {
 
 // Valida que una longitud esté dentro de Argentina (-74 a -53). Devuelve null
 // si es válida, o un mensaje de error si no.
+// null/undefined son válidos: significa "geocodificar desde la dirección".
 export function validarLongitud(v) {
+  if (v == null) return null; // null o undefined = válido (geocodificar por dirección)
   const n = Number(v);
   if (!Number.isFinite(n)) return "Longitud inválida.";
   if (n < -74 || n > -53) return "Longitud fuera de rango para Argentina (-74 a -53).";
