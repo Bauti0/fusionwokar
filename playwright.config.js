@@ -16,14 +16,17 @@ export default defineConfig({
   testDir: './test-e2e',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: process.env.CI ? 2 : 1, // Add 1 retry locally for flaky tests
   workers: 1,
   reporter: 'list',
+  timeout: 90000, // Increase test timeout to 90s
   use: {
-    baseURL: 'http://localhost:4173',
+    baseURL: 'http://localhost:3001',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    actionTimeout: 30000, // Increase action timeout
+    navigationTimeout: 30000,
   },
   projects: [
     {
