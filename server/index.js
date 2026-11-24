@@ -1231,6 +1231,9 @@ function recordLoginSuccess(req) {
 }
 
 function progressiveLoginLimit(req, res, next) {
+  // En TEST_MODE (E2E) desactivamos el bloqueo progresivo para que los tests
+  // puedan loguearse repetidamente sin ser bloqueados por rate limiting.
+  if (process.env.TEST_MODE === 'true') return next();
   const entry = loginAttempts.get(getClientIp(req));
   if (entry && entry.blockedUntil > Date.now()) {
     const wait = Math.ceil((entry.blockedUntil - Date.now()) / 1000);
@@ -2653,9 +2656,6 @@ app.post(
       if (typeof username !== "string" || typeof password !== "string") {
         return res.status(400).json({ error: "Faltan credenciales" });
       }
-      // El superadmin del .env o una cuenta de sucursal de admin_users.
-      // authenticateAdmin devuelve exactamente lo mismo para todo fallo:
-      // no se enumeran usuarios ni se distingue una cuenta desactivada.
       const admin = await authenticateAdmin(db, {
         username,
         password,
@@ -5358,23 +5358,21 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Error interno" });
 });
 
-if (!process.env.TEST_MODE) {
-  app.listen(PORT, () => {
-    console.log(`🌱 Fusión Wok API corriendo en http://localhost:${PORT}`);
-    console.log(`   Modo demo: ${isDemoMode() ? "SÍ (sin credenciales reales)" : "NO (Mercado Pago real)"}`);
-  });
+app.listen(PORT, () => {
+  console.log(`🌱 Fusión Wok API corriendo en http://localhost:${PORT}`);
+  console.log(`   Modo demo: ${isDemoMode() ? "SÍ (sin credenciales reales)" : "NO (Mercado Pago real)"}`);
+});
 
-  process.on('unhandledRejection', (reason) => {
-    console.error('UNHANDLED REJECTION:', reason);
-  });
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
 
-  process.on('uncaughtException', (err) => {
-    console.error('UNCAUGHT EXCEPTION:', err);
-  });
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
 
-  // Keep process alive
-  setInterval(() => {}, 1000);
-}
+// Keep process alive
+setInterval(() => {}, 1000);
 
 // ============================================================
 // EXPORTS PARA TESTS (disponibles cuando TEST_MODE=true)
