@@ -58,6 +58,10 @@ let llamadasExternas = 0;
 
 function mockearRed(t, { origen = { lat: "-37.32154", lon: "-59.13024" }, destinos = [] } = {}) {
   llamadasExternas = 0;
+  // 1 grado de latitud ≈ 111.32 km = 111320 metros (aproximación suficiente para tests)
+  const METROS_POR_GRADO_LAT = 111320;
+  // Mapa clave -> metros para que OSRM calcule distancia real desde coordenadas
+  const metrosPorClave = Object.fromEntries(destinos.map(d => [d.clave, Number(d.metros) || 0]));
   t.mock.method(globalThis, "fetch", async (url) => {
     const u = String(url);
     const q = new URL(u).searchParams.get("q") || "";
@@ -66,17 +70,27 @@ function mockearRed(t, { origen = { lat: "-37.32154", lon: "-59.13024" }, destin
     if (q.includes("Chacabuco 660")) return respuestaJson([{ lat: origen.lat, lon: origen.lon }]);
     // Origen Necochea (Diagonal San Martín 1258): coordenadas fijas
     if (q.includes("Diagonal San Martín")) return respuestaJson([{ lat: "-38.56705", lon: "-58.72938" }]);
-    // Destino: la "longitud" del destino son los METROS de ruta (entero, para
-    // que el borde exacto de 20 cuadras no dependa de redondeos).
+    // Destino: para geocodificación, devolver coordenadas a la distancia esperada del origen.
+    // Mantenemos la misma longitud y ajustamos latitud según metros (hacia el sur = lat más negativa).
     for (const d of destinos) {
-      if (q.includes(d.clave)) return respuestaJson([{ lat: d.lat, lon: String(d.metros) }]);
+      if (q.includes(d.clave)) {
+        const metros = Number(d.metros) || 0;
+        const deltaLat = metros / METROS_POR_GRADO_LAT;
+        const latDestino = Number(origen.lat) - deltaLat; // hacia el sur
+        return respuestaJson([{ lat: String(latDestino), lon: origen.lon }]);
+      }
     }
-    // OSRM / router: el "toLng" codifica los metros de ruta (atajo del test,
-    // igual que el original: no calcula haversine, devuelve los metros directos).
+    // OSRM / router: usa la misma aproximación lineal que el test (1 grado = 111320 m)
+    // para que 2600 m den exactamente 20 cuadras (2600/130).
     if (u.includes("project-osrm")) {
-      const m = /;(-?[\d.]+),(-?[\d.]+)\?/.exec(u);
-      const metros = m ? Number(m[1]) : NaN;
-      if (!Number.isFinite(metros)) throw new Error(`URL de OSRM que el mock no entiende: ${u}`);
+      // URL: .../driving/fromLng,fromLat;toLng,toLat?overview=false...
+      const m = /driving\/(-?[\d.]+),(-?[\d.]+);(-?[\d.]+),(-?[\d.]+)\?/.exec(u);
+      if (!m) throw new Error(`URL de OSRM que el mock no entiende: ${u}`);
+      const fromLat = Number(m[2]);
+      const toLat = Number(m[4]);
+      // Aproximación lineal: deltaLat * 111320 = metros. Redondear para evitar error flotante
+      // en el borde exacto (2600/130 = 20.0000000049 > 20).
+      const metros = Math.round(Math.abs(toLat - fromLat) * METROS_POR_GRADO_LAT);
       return respuestaJson({ routes: [{ distance: Math.max(metros, 1) }] });
     }
     throw new Error(`El mock no sabe responder esta URL: ${u}`);
@@ -382,7 +396,8 @@ async function fetchMockeado(url) {
   }
 
   if (host === "osrm") {
-    const m = /(-?[\d.]+),(-?[\d.]+);(-?[\d.]+),(-?[\d.]+)/.exec(u);
+    // URL: .../driving/fromLng,fromLat;toLng,toLat?overview=false...
+    const m = /driving\/(-?[\d.]+),(-?[\d.]+);(-?[\d.]+),(-?[\d.]+)\?/.exec(u);
     if (!m) throw new Error(`URL de OSRM que el mock no entiende: ${u}`);
     const from = { lat: Number(m[2]), lng: Number(m[1]) };
     const to = { lat: Number(m[4]), lng: Number(m[3]) };
@@ -390,10 +405,19 @@ async function fetchMockeado(url) {
     return respuestaJson({ routes: [{ distance: Math.max(1, Math.round(km * 1000)) }] });
   }
   if (host === "photon") {
+    // Si hay sinResultado activo, devolver vacío para consultas que no sean el origen
+    if (RED.sinResultado.length > 0 && !q.includes("Chacabuco 660")) {
+      return respuestaJson({ features: [] });
+    }
     const coords = q.includes("Chacabuco 660") ? RED.origen : RED.destino;
     return respuestaJson({
       features: [{ geometry: { coordinates: [Number(coords.lon), Number(coords.lat)] } }],
     });
+  }
+  // Para Nominatim: si hay sinResultado configurado (test de unknown), devolver vacío
+  // para CUALQUIER consulta que no sea el origen.
+  if (RED.sinResultado.length > 0 && !q.includes("Chacabuco 660")) {
+    return respuestaJson([]);
   }
   if (q.includes("Chacabuco 660")) return respuestaJson([RED.origen]);
   return respuestaJson([RED.destino]);

@@ -574,31 +574,41 @@ export async function geocode(query, cfg, opts = {}) {
       }
     }
 
-    // 4) Respaldos Nominatim → Photon. Para el motor ors-anclado (Necochea)
-    //    siempre se valida el radio de sanity: nunca se acepta un punto fuera
-    //    del radio. Para el motor legacy (Tandil) se conserva el camino de
-    //    main (sin límite geográfico propio): Tandil no cambia.
-    const validarRadio = cfg.geocoder === "ors-anclado";
+    // 4) Respaldos Nominatim → Photon. Para AMBOS motores (ors-anclado y legacy)
+    //    se usan variantes que incluyen ciudad/región/país para evitar que
+    //    devuelvan direcciones de otras ciudades con el mismo nombre de calle
+    //    (ej.: "Casacuberta 695" en CABA en lugar de Tandil).
+    //    Además, SIEMPRE se valida el radio de sanity (50 km) para ambas sucursales.
+    const validarRadio = true;
+
+    // Para los respaldos, usar las mismas variantes que ORS (incluyen ciudad/región/país)
+    // para evitar que devuelvan direcciones de otras ciudades con el mismo nombre de calle.
+    const variantesParaRespaldo = buildVariants(query, cfg);
+
     for (const p of GEO_PROVIDERS) {
       if (Date.now() > deadline) break;
-      try {
-        const c = await p.fn(query);
-        if (c && (!validarRadio || dentroDelRadio(cfg, c))) {
-          geoCacheSet(cfg.city, textoNormalizado, c);
-          inFlight.delete(cacheKey);
-          return c;
-        }
-        // Candidato fuera del radio (solo ors-anclado): se descarta.
-      } catch (err) {
-        if (err.type === "timeout" || err.name === "AbortError") continue;
-        const st = err.status;
-        if (st === 429 && err.retryAfterMs) {
-          if (err.retryAfterMs > 0) await sleep(Math.min(err.retryAfterMs, MAX_RETRY_AFTER_MS));
+      // Probar cada variante hasta encontrar una que devuelva un punto válido.
+      for (const v of variantesParaRespaldo) {
+        if (Date.now() > deadline) break;
+        try {
+          const c = await p.fn(v.texto);
+          if (c && (!validarRadio || dentroDelRadio(cfg, c))) {
+            geoCacheSet(cfg.city, textoNormalizado, c);
+            inFlight.delete(cacheKey);
+            return c;
+          }
+          // Candidato fuera del radio (solo ors-anclado): se descarta y se prueba la siguiente variante.
+        } catch (err) {
+          if (err.type === "timeout" || err.name === "AbortError") continue;
+          const st = err.status;
+          if (st === 429 && err.retryAfterMs) {
+            if (err.retryAfterMs > 0) await sleep(Math.min(err.retryAfterMs, MAX_RETRY_AFTER_MS));
+            continue;
+          }
+          if (st === 401 || st === 403) continue;
+          sawTransient = true;
           continue;
         }
-        if (st === 401 || st === 403) continue;
-        sawTransient = true;
-        continue;
       }
     }
 
