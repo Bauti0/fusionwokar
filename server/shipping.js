@@ -341,6 +341,13 @@ async function geocodeOrs(query, cfg, opts = {}) {
     if (!["address", "street", "intersection"].includes(layer)) continue;
     const coords = f.geometry && f.geometry.coordinates;
     if (!coords || coords.length < 2) continue;
+    // Validar que la localidad coincida con la ciudad de la sucursal
+    // (ej.: Necochea usa calles numeradas; "Cuba" no existe ahí).
+    const locality = (props.locality || "").toLowerCase();
+    const expectedCity = (cfg.city || "").toLowerCase();
+    if (expectedCity && locality && locality !== expectedCity) {
+      continue;
+    }
     return {
       lat: Number(coords[1]),
       lng: Number(coords[0]),
@@ -384,6 +391,12 @@ async function geocodeOrsStructured(address, locality, region, country, cfg, opt
     if (!["address", "street", "intersection"].includes(layer)) continue;
     const coords = f.geometry && f.geometry.coordinates;
     if (!coords || coords.length < 2) continue;
+    // Validar que la localidad coincida con la ciudad de la sucursal.
+    const locality = (props.locality || "").toLowerCase();
+    const expectedCity = (cfg.city || "").toLowerCase();
+    if (expectedCity && locality && locality !== expectedCity) {
+      continue;
+    }
     return {
       lat: Number(coords[1]),
       lng: Number(coords[0]),
