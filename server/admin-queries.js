@@ -236,6 +236,63 @@ export async function listCustomers(db, { scope, branch, search } = {}) {
 }
 
 // ============================================================
+// Busca un cliente por teléfono normalizado (últimos 10 dígitos).
+// Devuelve { found: true, name, ordersCount, lastOrderAt, lastAddresses: [] }
+// o { found: false } si no existe. Respeta scope: branch_admin ve solo
+// su sucursal; superadmin ve consolidado. No devuelve email ni datos
+// que la pantalla no use.
+// ============================================================
+export async function lookupCustomerByPhone(db, { phone, scope } = {}) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (digits.length < 8) return { found: false };
+  const last10 = digits.slice(-10);
+
+  const conds = [];
+  const params = [];
+  if (scope) {
+    conds.push("branch = ?");
+    params.push(scope);
+  }
+  // Buscar por últimos 10 dígitos del teléfono normalizado
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const rows = await db
+    .prepare(
+      `SELECT
+         customer_phone AS phone,
+         customer_name AS name,
+         address,
+         branch,
+         total,
+         created_at
+       FROM orders ${where}
+       ORDER BY created_at DESC
+       LIMIT 1000`
+    )
+    .all(...params);
+
+  const matches = [];
+  for (const r of rows) {
+    const rowDigits = String(r.phone || "").replace(/\D/g, "");
+    if (rowDigits.slice(-10) === last10) {
+      matches.push(r);
+    }
+  }
+  if (!matches.length) return { found: false };
+
+  const name = matches[0].name;
+  const ordersCount = matches.length;
+  const lastOrderAt = matches[0].created_at;
+  const lastAddresses = [];
+  for (const m of matches) {
+    if (m.address && !lastAddresses.includes(m.address)) {
+      lastAddresses.push(m.address);
+      if (lastAddresses.length >= 3) break;
+    }
+  }
+  return { found: true, name, ordersCount, lastOrderAt, lastAddresses };
+}
+
+// ============================================================
 // Arqueo de caja (antes inline en los endpoints /cash-register).
 //
 // `scope` es el convenio de la etapa: el branch_admin opera SOLO

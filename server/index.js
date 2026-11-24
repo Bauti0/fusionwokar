@@ -3249,6 +3249,36 @@ app.get("/api/admin/customers", requireAdmin, async (req, res) => {
   }
 });
 
+// ---------- cliente existente por teléfono (para autocompletar en nuevo pedido) ----------
+// GET /api/admin/customers/lookup?phone=...
+// Normaliza a solo dígitos y compara últimos 10 dígitos.
+// branch_admin: scope SIEMPRE de la sesión (ignora ?branch=).
+// superadmin: scope null (ve consolidado o usa ?branch= del panel).
+// Límite 30 req/min por usuario. No loguea teléfonos.
+app.get(
+  "/api/admin/customers/lookup",
+  requireAdmin,
+  rateLimitByKey((req) => String(req.admin.username || req.ip || "unknown"), {
+    windowMs: 60 * 1000,
+    max: 30,
+    name: "customers-lookup",
+  }),
+  async (req, res) => {
+    try {
+      const { phone } = req.query;
+      if (!phone || typeof phone !== "string" || phone.trim() === "") {
+        return res.status(400).json({ error: "Falta el teléfono" });
+      }
+      const scope = adminScope(req);
+      const customer = await lookupCustomerByPhone(db, { phone: phone.trim(), scope });
+      res.json(customer);
+    } catch (err) {
+      console.error("GET /api/admin/customers/lookup:", err.message);
+      res.status(500).json({ error: "Error interno" });
+    }
+  }
+);
+
 // ---------- ventas (panel admin: filtro de fecha + medios de pago) ----------
 app.get("/api/admin/sales", requireAdmin, async (req, res) => {
   try {

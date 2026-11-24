@@ -438,6 +438,10 @@ export function adminCustomers(params = {}) {
   return request(`/api/admin/customers${qs ? `?${qs}` : ""}`);
 }
 
+export function adminCustomerLookup(phone) {
+  return request(`/api/admin/customers/lookup?phone=${encodeURIComponent(phone)}`);
+}
+
 // ---- ventas (admin) ----
 export function adminSales(params = {}) {
   const qs = new URLSearchParams(
