@@ -217,4 +217,83 @@ describe("getStats", () => {
     assert.equal(full.pedidos, 1);
     assert.equal(full.devuelto, 0);
   });
+
+  it("topExtras: cuenta cantidad de extras vendidos, agrupa por nombre normalizado", async () => {
+    const db = await makeDb();
+    const FROM = "2026-01-01T00:00:00.000Z";
+    const TO = "2026-01-31T23:59:59.999Z";
+    // Dos pedidos con el mismo extra (nombre distinto por formato)
+    // Pedido 1: extra "Queso" qty=1
+    // Pedido 2: extra "queso " (con espacio) qty=2 → debe sumar 3
+    await addOrder(db, {
+      branch: "tandil",
+      total: 10000,
+      items: [{ name: "Wok", unitPrice: 8000, qty: 1, extras: [{ label: "Queso", price: 500 }] }],
+    });
+    await addOrder(db, {
+      branch: "tandil",
+      total: 15000,
+      items: [{ name: "Wok", unitPrice: 8000, qty: 2, extras: [{ label: "queso ", price: 500 }] }],
+    });
+    // Pedido de otra sucursal: no debe contar para branch_admin de tandil
+    await addOrder(db, {
+      branch: "necochea",
+      total: 5000,
+      items: [{ name: "Wok", unitPrice: 3000, qty: 1, extras: [{ label: "Queso", price: 500 }] }],
+    });
+    // Pedido cancelado: no debe contar
+    await addOrder(db, {
+      branch: "tandil",
+      total: 5000,
+      status: "cancelled",
+      items: [{ name: "Wok", unitPrice: 3000, qty: 1, extras: [{ label: "Queso", price: 500 }] }],
+    });
+    // Pedido sin extras: no debe romper
+    await addOrder(db, {
+      branch: "tandil",
+      total: 3000,
+      items: [{ name: "Bao", unitPrice: 3000, qty: 1, extras: [] }],
+    });
+
+    const scoped = await getStats(db, { fromIso: FROM, toIso: TO, scope: "tandil" });
+    // Queso: 1 + 2 = 3 (el de necochea no cuenta, el cancelado no cuenta)
+    assert.equal(scoped.topExtras.length, 1);
+    assert.equal(scoped.topExtras[0].name, "Queso", "usa el formato más frecuente");
+    assert.equal(scoped.topExtras[0].qty, 3);
+    // Verificar que el extra de necochea no está en topExtras del branch_admin
+    assert.ok(!scoped.topExtras.some((e) => e.name === "Queso" && e.qty > 3));
+
+    // Superadmin ve consolidado
+    const full = await getStats(db, { fromIso: FROM, toIso: TO, scope: null });
+    assert.equal(full.topExtras[0].qty, 4, "superadmin ve 3 de tandil + 1 de necochea");
+  });
+
+  it("topExtras: periodo 'Este mes' respeta zona America/Argentina/Buenos_Aires", async () => {
+    const db = await makeDb();
+    // El front calcula from/to en UTC para "Este mes" en zona Bs.As. (UTC-3).
+    // Enero 2026 en Bs.As. = desde 2026-01-01 00:00-03:00 hasta 2026-01-31 23:59-03:00
+    // En UTC: 2025-12-31T21:00:00.000Z a 2026-02-01T02:59:59.999Z
+    const FROM = "2025-12-31T21:00:00.000Z"; // 2026-01-01 00:00 en Bs.As.
+    const TO = "2026-02-01T02:59:59.999Z"; // 2026-01-31 23:59 en Bs.As.
+
+    // Pedido a las 22hs del 31 de enero en Bs.As. = 2026-02-01T01:00:00.000Z (DENTRO del rango UTC)
+    await addOrder(db, {
+      branch: "tandil",
+      total: 10000,
+      created_at: "2026-02-01T01:00:00.000Z",
+      items: [{ name: "Wok", unitPrice: 8000, qty: 1, extras: [{ label: "Extra Test", price: 500 }] }],
+    });
+    // Pedido a las 4am del 1 de febrero en Bs.As. = 2026-02-01T07:00:00.000Z (FUERA del rango UTC)
+    await addOrder(db, {
+      branch: "tandil",
+      total: 10000,
+      created_at: "2026-02-01T07:00:00.000Z",
+      items: [{ name: "Wok", unitPrice: 8000, qty: 1, extras: [{ label: "Extra Test", price: 500 }] }],
+    });
+
+    const scoped = await getStats(db, { fromIso: FROM, toIso: TO, scope: "tandil" });
+    // Solo el primer pedido cae en "Enero" según zona Bs.As.
+    assert.ok(scoped.topExtras.length > 0, "debe haber al menos un extra");
+    assert.equal(scoped.topExtras[0].qty, 1);
+  });
 });

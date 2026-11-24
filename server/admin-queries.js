@@ -19,6 +19,32 @@
 import { MENUS } from "../src/data/menus.js";
 import { refundedQuery, sumRefunded, refundedByBranch, netAmount, buildSalesReport, arDay } from "./reports.js";
 
+// Normaliza nombre de adicional para agrupado: minúsculas, sin tildes, sin espacios de más
+function normalizeExtraName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // quitar tildes
+    .replace(/\s+/g, " ") // colapsar espacios
+    .trim();
+}
+
+// Cuenta el nombre original más frecuente para cada grupo normalizado
+function mostFrequentOriginalName(names) {
+  if (!names.length) return "";
+  const counts = new Map();
+  for (const n of names) counts.set(n, (counts.get(n) || 0) + 1);
+  let maxName = names[0];
+  let maxCount = 0;
+  for (const [name, count] of counts) {
+    if (count > maxCount) {
+      maxCount = count;
+      maxName = name;
+    }
+  }
+  return maxName;
+}
+
 // Listado de pedidos del panel: filtros + búsqueda + paginación.
 // `branch` es el filtro del ?branch= del query, que SOLO aplica
 // para el superadmin (scope null): el endpoint ni se lo pasa si
@@ -593,6 +619,8 @@ export async function getStats(db, { fromIso, toIso, scope } = {}) {
   // (netos, en $), calculado a partir de los mismos pedidos
   // confirmados del período.
   const productAgg = new Map(); // name -> { name, qty, revenue }
+  // Adicionales: grouped by normalized name, count qty (item qty), track original names
+  const extraAgg = new Map(); // normalized -> { norm, qty, names: [] }
   for (const row of confirmedItems) {
     let items;
     try { items = JSON.parse(row.items); } catch { items = []; }
@@ -604,11 +632,27 @@ export async function getStats(db, { fromIso, toIso, scope } = {}) {
       entry.qty += it.qty;
       entry.revenue += lineRevenue;
       productAgg.set(key, entry);
+
+      // Agregar adicionales
+      for (const ex of it.extras || []) {
+        const exName = ex.label || ex.name || ex.id || "";
+        const norm = normalizeExtraName(exName);
+        if (!norm) continue;
+        const exEntry = extraAgg.get(norm) || { norm, qty: 0, names: [] };
+        exEntry.qty += it.qty; // cantidad del ítem al que pertenece
+        exEntry.names.push(exName);
+        extraAgg.set(norm, exEntry);
+      }
     }
   }
   const allProducts = Array.from(productAgg.values());
   const topSelling = [...allProducts].sort((a, b) => b.qty - a.qty).slice(0, 8);
   const topRevenue = [...allProducts].sort((a, b) => b.revenue - a.revenue).slice(0, 8);
+  // Top 10 adicionales más vendidos (por cantidad)
+  const topExtras = [...extraAgg.values()]
+    .sort((a, b) => b.qty - a.qty)
+    .slice(0, 10)
+    .map((e) => ({ name: mostFrequentOriginalName(e.names), qty: e.qty }));
 
   if (scope) {
     const devuelto = sumRefunded(results[2].rows);
@@ -622,6 +666,7 @@ export async function getStats(db, { fromIso, toIso, scope } = {}) {
       pedidos,
       topSelling,
       topRevenue,
+      topExtras,
     };
   }
 
@@ -672,6 +717,7 @@ export async function getStats(db, { fromIso, toIso, scope } = {}) {
     conversion: visitantes > 0 ? Math.round((pedidos / visitantes) * 1000) / 10 : 0,
     topSelling,
     topRevenue,
+    topExtras,
   };
 }
 

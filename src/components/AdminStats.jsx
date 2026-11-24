@@ -3,7 +3,7 @@ import { adminStats } from "../api.js";
 import { formatPrice } from "../utils/format.js";
 import { periodRange } from "../utils/dates.js";
 import { useDelayedLoading } from "../utils/skeleton-delay.js";
-import { IconCash, IconReceipt, IconCart, IconLocation, IconUser, IconMoney, IconFlash } from "./ui/icons.jsx";
+import { IconCash, IconReceipt, IconCart, IconLocation, IconUser, IconMoney, IconFlash, IconTag } from "./ui/icons.jsx";
 
 // ============================================================
 // AdminStats — estadísticas del panel
@@ -150,6 +150,22 @@ export default function AdminStats({ me, period, from, to }) {
                   </ol>
                 )}
               </div>
+            </div>
+
+            <div className="top-extras">
+              <h4><IconTag /> Adicionales más vendidos (cantidad)</h4>
+              {stats.topExtras && stats.topExtras.length > 0 ? (
+                <ol className="top-products__list">
+                  {stats.topExtras.map((e) => (
+                    <li key={e.name}>
+                      <span className="top-products__name">{e.name}</span>
+                      <span className="top-products__qty">{e.qty}u</span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="hint">Sin adicionales vendidos en este período.</p>
+              )}
             </div>
           </>
         ) : (
