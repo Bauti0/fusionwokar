@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getMenu, adminCreateManualOrder } from "../api.js";
-import { BRANCH_LIST, phonePlaceholderFor } from "../data/branches.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getMenu, adminCreateManualOrder, adminCustomerLookup } from "../api.js";
+import { BRANCH_LIST, phonePlaceholderFor, normalizePhone } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
 import { useDelayedLoading } from "../utils/skeleton-delay.js";
-import { IconCash, IconCard, IconBank, IconDelivery, IconCheck, IconAlertCircle, IconTakeout } from "./ui/icons.jsx";
+import { IconCash, IconCard, IconBank, IconDelivery, IconCheck, IconAlertCircle, IconTakeout, IconSearch, IconUser, IconMapPin, IconClock } from "./ui/icons.jsx";
 
 const PAYMENT_OPTIONS = [
   { value: "efectivo", label: <><IconCash /> Efectivo</> },
@@ -77,6 +77,11 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
   const [cartCleared, setCartCleared] = useState("");
   const prefillDoneRef = useRef(false);
 
+  // Customer lookup by phone (debounced)
+  const [customerLookup, setCustomerLookup] = useState(null); // { customer, lastAddresses } or null
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const lookupDebounceRef = useRef(null);
+
   const [menuFetchSettled, setMenuFetchSettled] = useState(false);
 
   useEffect(() => {
@@ -86,6 +91,37 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
       .catch(() => { if (active) { setMenu(null); setMenuFetchSettled(true); } });
     return () => { active = false; };
   }, [branchId]);
+
+  // Debounced customer lookup by phone
+  useEffect(() => {
+    const digits = normalizePhone(phone);
+    // Solo buscar si hay al menos 8 dígitos (mínimo para un teléfono AR válido)
+    if (digits.length < 8) {
+      setCustomerLookup(null);
+      return;
+    }
+    // Debounce 400ms
+    if (lookupDebounceRef.current) clearTimeout(lookupDebounceRef.current);
+    lookupDebounceRef.current = setTimeout(async () => {
+      setLookupLoading(true);
+      try {
+        const data = await adminCustomerLookup(digits);
+        // data = { customer: {...}, lastAddresses: [...] } or { customer: null, lastAddresses: [] }
+        setCustomerLookup(data);
+      } catch (err) {
+        // 404 = cliente nuevo, no es error; otros errores se silencian (no rompemos el flujo)
+        if (err.status !== 404) {
+          console.warn("Customer lookup failed:", err.message);
+        }
+        setCustomerLookup({ customer: null, lastAddresses: [] });
+      } finally {
+        setLookupLoading(false);
+      }
+    }, 400);
+    return () => {
+      if (lookupDebounceRef.current) clearTimeout(lookupDebounceRef.current);
+    };
+  }, [phone]);
 
   // El menú viene por categorías > grupos > productos; lo aplanamos
   // para poder buscarlo como una sola lista.
@@ -229,6 +265,26 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
     }
   }
 
+  function useCustomerData() {
+    if (!customerLookup?.customer) return;
+    const c = customerLookup.customer;
+    // Solo completar si el campo está vacío o el usuario no lo editó
+    // Usamos una ref para saber si el usuario tocó el campo, pero por simplicidad
+    // completamos siempre y el usuario puede sobrescribir.
+    setName(c.name || "");
+    // Teléfono ya está en el input (lo que disparó la búsqueda)
+    if (orderMode === "delivery" && c.lastAddress) {
+      setAddress(c.lastAddress);
+    }
+    // No limpiamos customerLookup para que el card siga visible
+  }
+
+  function useAddressFromChip(addr) {
+    if (orderMode === "delivery") {
+      setAddress(addr);
+    }
+  }
+
   return (
     <section className="admin-new-order">
       {onBack && (
@@ -332,13 +388,79 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
             </button>
           </div>
 
+          {/* Teléfono primero, con autoFocus para agilizar la carga */}
+          <div className="field">
+            <label htmlFor="new-order-phone">Celular (opcional)</label>
+            <div className="field__with-suffix">
+              <input
+                id="new-order-phone"
+                type="tel"
+                placeholder={phonePlaceholderFor(branchId)}
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                autoFocus
+              />
+              {lookupLoading && <span className="field__loading" aria-label="Buscando cliente…">⟳</span>}
+            </div>
+          </div>
+
+          {/* Customer card cuando hay coincidencia */}
+          {customerLookup !== null && customerLookup.customer && (
+            <div className="customer-card">
+              <div className="customer-card__header">
+                <span className="customer-card__icon" aria-hidden="true"><IconUser /></span>
+                <div className="customer-card__info">
+                  <strong className="customer-card__name">{customerLookup.customer.name}</strong>
+                  <span className="customer-card__meta">
+                    <IconClock style={{ width: 14, height: 14, marginRight: 4, verticalAlign: "middle" }} />
+                    {customerLookup.customer.ordersCount} pedidos · último: {customerLookup.customer.lastOrderAt}
+                  </span>
+                </div>
+              </div>
+              <div className="customer-card__actions">
+                <button
+                  type="button"
+                  className="btn btn--primary btn--sm"
+                  onClick={useCustomerData}
+                >
+                  Usar sus datos
+                </button>
+                <span className="customer-card__hint">Se completa nombre y dirección (si es delivery)</span>
+              </div>
+              {customerLookup.lastAddresses?.length > 0 && orderMode === "delivery" && (
+                <div className="customer-card__addresses">
+                  <span className="customer-card__addresses-label"><IconMapPin style={{ width: 14, height: 14, marginRight: 4, verticalAlign: "middle" }} /> Direcciones recientes:</span>
+                  <div className="customer-card__chips">
+                    {customerLookup.lastAddresses.map((addr, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="chip chip--address"
+                        onClick={() => useAddressFromChip(addr)}
+                      >
+                        {addr}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Cliente nuevo: cuando la búsqueda terminó y no hay coincidencia */}
+          {customerLookup !== null && !customerLookup.customer && !lookupLoading && phone.trim().length >= 8 && (
+            <div className="customer-card customer-card--new">
+              <span className="customer-card__icon" aria-hidden="true"><IconUser /></span>
+              <div className="customer-card__info">
+                <strong>Cliente nuevo</strong>
+                <span className="customer-card__meta">El teléfono no está registrado. Completá los datos manualmente.</span>
+              </div>
+            </div>
+          )}
+
           <div className="field">
             <label htmlFor="new-order-name">Nombre del cliente</label>
             <input id="new-order-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="new-order-phone">Celular (opcional)</label>
-            <input id="new-order-phone" type="tel" placeholder={phonePlaceholderFor(branchId)} value={phone} onChange={(e) => setPhone(e.target.value)} />
           </div>
           {orderMode === "delivery" && (
             <div className="field">
