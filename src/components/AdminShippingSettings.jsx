@@ -131,9 +131,11 @@ export default function AdminShippingSettings({ me }) {
         max_blocks: Number(form.max_blocks || 0),
         auto_enabled: Number(form.auto_enabled || 1),
       };
-      const res = await adminUpdateShippingSettings(payload);
+      await adminUpdateShippingSettings(payload);
+      // Usar el payload que enviamos (sabemos qué guardamos) en vez de la respuesta del server
+      // que solo devuelve { ok: true, branch, changed }
       setSettings((prev) => ({ ...prev, ...payload, updated_at: new Date().toISOString(), updated_by: (me?.username || "superadmin") }));
-      setForm(settingsToForm(res));
+      setForm(settingsToForm(payload));
       setSaveMsg("Guardado");
       setTimeout(() => setSaveMsg(null), 2500);
     } catch (err) {
@@ -437,7 +439,9 @@ export default function AdminShippingSettings({ me }) {
             <div className="admin-shipping__quote-status">
               <span className="admin-shipping__quote-label">Estado:</span>
               <strong className={`admin-shipping__quote-value admin-shipping__quote-value--${quoteResult.status}`}>
-                {quoteResult.status === "ok" ? "✓ Disponible" : quoteResult.status === "out_of_range" ? "✗ Fuera de rango" : "⚠ Error"}
+                {quoteResult.status === "ubicada" ? "✓ Disponible" :
+                 quoteResult.status === "fuera_de_zona" ? "✗ Fuera de zona" :
+                 "⚠ No ubicada"}
               </strong>
             </div>
             {quoteResult.blocks != null && (
