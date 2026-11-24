@@ -524,15 +524,17 @@ export async function geocode(query, cfg, opts = {}) {
     let sawTransient = false;
 
     if (cfg.geocoder === "ors-anclado") {
-      // 1) ORS Pelias con límite geográfico (nunca devuelve fuera del radio).
+      // 1) ORS Pelias con límite geográfico (boundary.circle es bias, no filtro duro).
+      //    Validamos explícitamente el radio de sanity (50 km) tras la respuesta.
       if (ORS_KEY) {
         try {
           resultado = await geocodeOrs(query, cfg, opts);
-          if (resultado) {
+          if (resultado && dentroDelRadio(cfg, resultado)) {
             geoCacheSet(cfg.city, textoNormalizado, resultado);
             inFlight.delete(cacheKey);
             return resultado;
           }
+          // Resultado fuera del radio de sanity: se descarta y se pasa a respaldos.
         } catch (err) {
           // Fallback a respaldos validados. ORS no marca transient: si falla,
           // se prueban Nominatim/Photon y ellos deciden el resultado.
@@ -552,11 +554,12 @@ export async function geocode(query, cfg, opts = {}) {
               cfg,
               opts
             );
-            if (resultado) {
+            if (resultado && dentroDelRadio(cfg, resultado)) {
               geoCacheSet(cfg.city, textoNormalizado, resultado);
               inFlight.delete(cacheKey);
               return resultado;
             }
+            // Resultado fuera del radio de sanity: se descarta.
           } catch {}
         }
       }
@@ -565,11 +568,12 @@ export async function geocode(query, cfg, opts = {}) {
       for (const v of variantes) {
         try {
           resultado = await geocodeOrs(v.texto, cfg, opts);
-          if (resultado) {
+          if (resultado && dentroDelRadio(cfg, resultado)) {
             geoCacheSet(cfg.city, textoNormalizado, resultado);
             inFlight.delete(cacheKey);
             return resultado;
           }
+          // Resultado fuera del radio de sanity: se descarta y se prueba la siguiente variante.
         } catch {}
       }
     }
