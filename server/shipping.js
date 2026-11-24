@@ -597,21 +597,19 @@ function dentroDelRadio(cfg, c) {
 // Photon: address.city / address.town / address.village / address.state
 // ORS Pelias: ya validado en geocodeOrs/geocodeOrsStructured vía props.locality
 function ciudadValida(cfg, c) {
-  if (!c || !c.address) return true; // sin datos de dirección = no validar (compatibilidad)
+  if (!c || !c.address) return false; // SIN address = rechazar (evita falsos positivos)
   const addr = c.address;
   const candidatos = [
     addr.city,
     addr.town,
     addr.village,
-    addr.suburb,
     addr.municipality,
-    addr.state,
-    addr.region,
+    // suburb/state/region son demasiado amplios (ej. "Buenos Aires" contiene todo)
   ].filter(Boolean).map(String).map(s => s.toLowerCase());
   const expected = (cfg.city || "").toLowerCase();
-  if (!expected) return true;
-  // Coincidencia exacta o que la ciudad esperada esté contenida en algún candidato
-  return candidatos.some(cand => cand === expected || cand.includes(expected));
+  if (!expected) return false;
+  // Coincidencia EXACTA solamente (no substring) para evitar falsos positivos
+  return candidatos.some(cand => cand === expected);
 }
 
 // Geocodifica usando Georef Argentina API (primario) con respaldos.
@@ -668,30 +666,34 @@ export async function geocode(query, cfg, opts = {}) {
         suspendProvider("georef");
         // No marcar transient, continuar al siguiente provider
       } else if (status === 429) {
-        let wait = 0;
+        // 429 = rate limited. Esperar y reintentar aunque no haya Retry-After header.
+        // Georef es el geocodificador PRIMARIO oficial; vale la pena esperar.
+        console.warn(`shipping provider fail: georef HTTP 429`);
+        let wait = 2000; // default 2s si no hay header
         try {
           if (err.retryAfter) wait = Math.min(Number(err.retryAfter) * 1000, MAX_RETRY_AFTER_MS);
         } catch {}
-        if (wait > 0) {
-          // Esperar y reintentar Georef una vez (no suspender)
-          await sleep(Math.min(wait, MAX_RETRY_AFTER_MS));
-          try {
-            if (!isProviderSuspended("georef")) {
-              resultado = await geocodeGeoref(query, cfg, opts);
-              if (resultado && dentroDelRadio(cfg, resultado)) {
-                geoCacheSet(cfg.city, textoNormalizado, resultado);
-                inFlight.delete(cacheKey);
-                return resultado;
-              }
+        // Esperar y reintentar Georef (máx 2 intentos totales)
+        await sleep(Math.min(wait, MAX_RETRY_AFTER_MS));
+        try {
+          if (!isProviderSuspended("georef")) {
+            resultado = await geocodeGeoref(query, cfg, opts);
+            if (resultado && dentroDelRadio(cfg, resultado)) {
+              geoCacheSet(cfg.city, textoNormalizado, resultado);
+              inFlight.delete(cacheKey);
+              return resultado;
             }
-          } catch (retryErr) {
-            // Reintento falló: log y continúa con respaldos
-            if (retryErr.name !== "AbortError" && retryErr.type !== "timeout") {
-              console.warn(`shipping georef fallback (retry): ${retryErr.message}`);
-            }
+            // Reintento exitoso pero sin resultado válido: NO suspender, continuar con respaldos
           }
-        } else {
-          suspendProvider("georef");
+        } catch (retryErr) {
+          // Reintento falló con error: suspender y continuar con respaldos
+          const retryStatus = retryErr.status;
+          if (retryStatus === 429 || retryStatus === 403) {
+            suspendProvider("georef");
+          }
+          if (retryErr.name !== "AbortError" && retryErr.type !== "timeout") {
+            console.warn(`shipping georef fallback (retry): ${retryErr.message}`);
+          }
         }
       }
     }

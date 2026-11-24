@@ -364,6 +364,7 @@ function redPorDefecto() {
     demoraPorConsulta: {},
     retryAfter: null,
     urls: [],
+    georefCallCount: new Map(), // query -> call count
   };
 }
 let RED = redPorDefecto();
@@ -427,23 +428,50 @@ async function fetchMockeado(url) {
   if (host === "ors") throw new Error(`El mock no debe consultar ORS: ${u}`);
 
   const q = consultaDe(u, host);
-  // Determinar modo de fallo para este host/consulta
-  // Prioridad: modoPorConsulta > RED[host] > "ok"
-  const modo = valorParaConsulta(RED.modoPorConsulta, q) ?? (RED[host] ?? "ok");
-  const demora = valorParaConsulta(RED.demoraPorConsulta, q) ?? RED.demora[host] ?? 0;
-  if (demora > 0) await dormirEnRelojFalso(demora);
 
-  if (modo === "403") return respuestaError(403);
-  if (modo === "429") {
-    const headers = RED.retryAfter == null ? {} : { "retry-after": String(RED.retryAfter) };
-    return respuestaError(429, headers);
+  // Track call count for georef to allow first call to fail with 429 and retry to succeed
+  if (host === "georef") {
+    const count = (RED.georefCallCount.get(q) || 0) + 1;
+    RED.georefCallCount.set(q, count);
+    // On first call, use default mode (e.g., 429). On retry, use modoPorConsulta if defined.
+    let modo;
+    if (count === 1) {
+      modo = RED[host] ?? "ok";
+    } else {
+      modo = valorParaConsulta(RED.modoPorConsulta, q) ?? (RED[host] ?? "ok");
+    }
+    const demora = valorParaConsulta(RED.demoraPorConsulta, q) ?? RED.demora[host] ?? 0;
+    if (demora > 0) await dormirEnRelojFalso(demora);
+
+    if (modo === "403") return respuestaError(403);
+    if (modo === "429") {
+      const headers = RED.retryAfter == null ? {} : { "retry-after": String(RED.retryAfter) };
+      return respuestaError(429, headers);
+    }
+    if (modo === "timeout") {
+      const e = new Error("abortado");
+      e.name = "AbortError";
+      throw e;
+    }
+    if (modo === "fail") throw new Error("red caída");
+  } else {
+    // For other hosts, use the original logic
+    const modo = valorParaConsulta(RED.modoPorConsulta, q) ?? (RED[host] ?? "ok");
+    const demora = valorParaConsulta(RED.demoraPorConsulta, q) ?? RED.demora[host] ?? 0;
+    if (demora > 0) await dormirEnRelojFalso(demora);
+
+    if (modo === "403") return respuestaError(403);
+    if (modo === "429") {
+      const headers = RED.retryAfter == null ? {} : { "retry-after": String(RED.retryAfter) };
+      return respuestaError(429, headers);
+    }
+    if (modo === "timeout") {
+      const e = new Error("abortado");
+      e.name = "AbortError";
+      throw e;
+    }
+    if (modo === "fail") throw new Error("red caída");
   }
-  if (modo === "timeout") {
-    const e = new Error("abortado");
-    e.name = "AbortError";
-    throw e;
-  }
-  if (modo === "fail") throw new Error("red caída");
 
   const ql = q.toLowerCase();
   if (RED.sinResultado.some((s) => ql.includes(String(s).toLowerCase()))) {
@@ -646,7 +674,8 @@ describe("resiliencia de la cadena externa (red mockeada, relojes falsos)", () =
       armarRed(t, { db });
       RED.georef = "429";
       RED.retryAfter = 3; // segundos
-      RED.modoPorConsulta = { "Chacabuco 660": "ok" };
+      // Permitir que el origen y el reintento de la primera consulta tengan éxito
+      RED.modoPorConsulta = { "Chacabuco 660": "ok", "San Martín 1500": "ok" };
 
       const r1 = await correr(t, () => computeShipping(db, "tandil", "San Martín 1500"));
       assert.equal(r1.error, null, `con Retry-After la cotización sale: ${r1.error?.message}`);
