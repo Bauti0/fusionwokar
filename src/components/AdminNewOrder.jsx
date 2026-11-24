@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getMenu, adminCreateManualOrder, adminCustomerLookup } from "../api.js";
 import { BRANCH_LIST, phonePlaceholderFor, normalizePhone } from "../data/branches.js";
 import { formatPrice } from "../utils/format.js";
 import Dropdown from "./ui/Dropdown.jsx";
 import CustomizeModal from "./CustomizeModal.jsx";
 import { useDelayedLoading } from "../utils/skeleton-delay.js";
-import { IconCash, IconCard, IconBank, IconDelivery, IconCheck, IconAlertCircle, IconTakeout, IconSearch, IconUser, IconMapPin, IconClock } from "./ui/icons.jsx";
+import { IconCash, IconCard, IconBank, IconDelivery, IconCheck, IconAlertCircle, IconTakeout, IconUser, IconMapPin, IconClock } from "./ui/icons.jsx";
 
 const PAYMENT_OPTIONS = [
   { value: "efectivo", label: <><IconCash /> Efectivo</> },
@@ -265,7 +265,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
     }
   }
 
-  function useCustomerData() {
+  function handleUseCustomerData() {
     if (!customerLookup?.customer) return;
     const c = customerLookup.customer;
     // Solo completar si el campo está vacío o el usuario no lo editó
@@ -279,7 +279,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
     // No limpiamos customerLookup para que el card siga visible
   }
 
-  function useAddressFromChip(addr) {
+  function handleUseAddressFromChip(addr) {
     if (orderMode === "delivery") {
       setAddress(addr);
     }
@@ -421,7 +421,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
                 <button
                   type="button"
                   className="btn btn--primary btn--sm"
-                  onClick={useCustomerData}
+                  onClick={handleUseCustomerData}
                 >
                   Usar sus datos
                 </button>
@@ -436,7 +436,7 @@ export default function AdminNewOrder({ onBack, onCreated, initialBranch = "", f
                         key={idx}
                         type="button"
                         className="chip chip--address"
-                        onClick={() => useAddressFromChip(addr)}
+                        onClick={() => handleUseAddressFromChip(addr)}
                       >
                         {addr}
                       </button>

@@ -91,6 +91,7 @@ import {
   getStats,
   getSalesReport,
   listCustomers,
+  lookupCustomerByPhone,
   getCashRegisterState,
   openCashRegister,
   closeCashRegister,
