@@ -59,6 +59,8 @@ ignores: [
       "insert-superadmin.mjs",
       "setup-e2e.mjs",
       "verify-e2e.mjs",
+      "start-test-server.mjs",
+      "test-e2e-setup.mjs",
     ],
   },
 
