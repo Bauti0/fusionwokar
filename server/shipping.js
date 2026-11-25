@@ -511,7 +511,7 @@ function validarCandidato(c, cfg, callePedida, acceptStreetLevel) {
 // Valida que un punto esté dentro del radio de sanity de la sucursal, usando
 // `ancla` (origen estable) como centro cuando se provee, o cfg.center como fallback.
 function dentroDelRadio(cfg, c, ancla) {
-  if (c.lat < -90 || c.lat > 90 || c.lng < -180 || c.lng > 180) return true;
+  if (c.lat < -90 || c.lat > 90 || c.lng < -180 || c.lng > 180) return false;
   const centro = ancla || cfg.center;
   return haversineKm(centro, c) <= cfg.sanityRadiusKm;
 }
@@ -787,7 +787,8 @@ async function getOrigin(cfg, opts = {}) {
   if (cfg.originLat != null && cfg.originLng != null) {
     const lat = Number(cfg.originLat);
     const lng = Number(cfg.originLng);
-    if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+    // Heurística Argentina: lat -56 a -21, lng -74 a -53.
+    if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 && lat >= -56 && lat <= -21 && lng >= -74 && lng <= -53) {
       return { lat, lng, source: "config", level: "address", from: "originLatLng" };
     }
     console.warn(`${branch}: origen.lat/lng inválidos, se ignoran`);
@@ -990,11 +991,16 @@ export async function geocode(query, cfg, opts = {}) {
     }
 
     // No se encontró nada válido dentro del radio.
-    const final = resultado || mejorSinPrecision;
-    if (final) {
-      geoCacheSet(cfg.city, textoNormalizado, final);
+    if (resultado) {
+      geoCacheSet(cfg.city, textoNormalizado, resultado);
       inFlight.delete(cacheKey);
-      return final;
+      return resultado;
+    }
+    // No cacheamos mejorSinPrecision (street/locality/region) como definitivo:
+    // una consulta posterior podría encontrar address/interpolated en otro proveedor.
+    if (mejorSinPrecision) {
+      inFlight.delete(cacheKey);
+      return mejorSinPrecision;
     }
     if (sawTransient) throw transient("No pudimos consultar el mapa. Volvé a intentar en unos segundos.");
     geoCacheSet(cfg.city, textoNormalizado, null);
