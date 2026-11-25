@@ -52,6 +52,11 @@ export const DEFAULT_SHIPPING = {
     perBlock: 100,
     maxBlocks: 0, // 0 = sin tope de cobertura
     autoEnabled: 1,
+    // Si true, se acepta nivel calle (street) para cotizar. Default false: solo
+    // address o interpolated generan precio. Config de código, no sale al panel.
+    acceptStreetLevel: false,
+    // Sinónimos de localidad aceptados para la ciudad de la sucursal.
+    localidadSinonimos: [],
   },
   necochea: {
     geocoder: "ors-anclado",
@@ -70,6 +75,9 @@ export const DEFAULT_SHIPPING = {
     perBlock: 100,
     maxBlocks: 0, // 0 = sin tope de cobertura
     autoEnabled: 1,
+    acceptStreetLevel: false,
+    // Quequén es una localidad/departamento dentro del partido de Necochea.
+    localidadSinonimos: ["quequen"],
   },
 };
 
@@ -108,6 +116,8 @@ export function envConfig(branch) {
     perBlock: envNumber(branch, "PER_BLOCK", d.perBlock),
     maxBlocks: Math.max(0, envNumber(branch, "MAX_BLOCKS", d.maxBlocks)),
     autoEnabled: 1,
+    acceptStreetLevel: d.acceptStreetLevel === true,
+    localidadSinonimos: Array.isArray(d.localidadSinonimos) ? d.localidadSinonimos : [],
   };
 }
 
@@ -145,6 +155,8 @@ function rowToConfig(branch, row) {
     perBlock: row.per_block != null ? Number(row.per_block) : d.perBlock,
     maxBlocks: row.max_blocks != null ? Number(row.max_blocks) : d.maxBlocks,
     autoEnabled: row.auto_enabled == null ? d.autoEnabled : Number(row.auto_enabled) === 0 ? 0 : 1,
+    acceptStreetLevel: d.acceptStreetLevel === true,
+    localidadSinonimos: Array.isArray(d.localidadSinonimos) ? d.localidadSinonimos : [],
     updatedAt: row.updated_at || null,
     updatedBy: row.updated_by || null,
   };
