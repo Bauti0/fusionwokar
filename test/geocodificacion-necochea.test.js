@@ -62,7 +62,7 @@ function instalarMOCK(t, geocodePorTexto, rutaKm = 1) {
   globalThis.fetch = async (url) => {
     const u = String(url);
     urls.push(u);
-    if (u.includes("/geocode/search")) {
+    if (u.includes("/pelias/v1/search")) {
       const q = new URL(u).searchParams.get("text") || "";
       const clave = Object.keys(geocodePorTexto).find((c) => q.includes(c));
       if (clave !== undefined) {
@@ -97,7 +97,7 @@ describe("geocodificación anclada a la sucursal (Necochea)", () => {
       "Diagonal San Martín": [feature({ lat: CENTRO_NECOCHEA.lat, lng: CENTRO_NECOCHEA.lng, label: "Diagonal San Martín 1258, Necochea" })],
       "Calle 95 1513": [feature({ lat: -38.567, lng: -58.729 })],
     });
-    const geo = urls.find((u) => u.includes("/geocode/search"));
+    const geo = urls.find((u) => u.includes("/pelias/v1/search"));
     assert.ok(geo, "se consultó el geocodificador");
     assert.ok(geo.includes("Necochea"), "la consulta incluye la ciudad de la sucursal");
     assert.ok(geo.includes("boundary.circle.lat"), "usa boundary.circle.lat");
@@ -173,7 +173,7 @@ describe("geocodificación anclada a la sucursal (Necochea)", () => {
     globalThis.fetch = async (url) => {
       const u = String(url);
       urls.push(u);
-      if (u.includes("/geocode/search")) {
+      if (u.includes("/pelias/v1/search")) {
         return { ok: false, status: 429, json: async () => ({}) };
       }
       if (u.includes("nominatim")) {
@@ -195,7 +195,7 @@ describe("geocodificación anclada a la sucursal (Necochea)", () => {
     }
     assert.equal(error.code, "unknown", "debe ser unknown (no ubicada): " + (error && error.code));
     // ORS se consultó (429) y los respaldos también, pero ninguno dio punto válido dentro del radio.
-    assert.ok(urls.some((u) => u.includes("/geocode/search")), "se consultó ORS");
+    assert.ok(urls.some((u) => u.includes("/pelias/v1/search")), "se consultó ORS");
     assert.ok(urls.some((u) => u.includes("nominatim")), "se consultó el respaldo Nominatim");
   });
 
@@ -210,7 +210,7 @@ describe("geocodificación anclada a la sucursal (Necochea)", () => {
     globalThis.fetch = async (url) => {
       const u = String(url);
       urls.push(u);
-      if (u.includes("/geocode/search")) {
+      if (u.includes("/pelias/v1/search")) {
         // No debería llegarse a llamar a ORS porque no hay clave.
         throw new Error("ORS no debe llamarse sin clave");
       }
@@ -231,7 +231,7 @@ describe("geocodificación anclada a la sucursal (Necochea)", () => {
       globalThis.fetch = origFetch;
     }
     assert.equal(error.code, "unknown", "debe ser unknown (no ubicada): " + (error && error.code));
-    assert.ok(!urls.some((u) => u.includes("/geocode/search")), "ORS no se consultó sin clave");
+    assert.ok(!urls.some((u) => u.includes("/pelias/v1/search")), "ORS no se consultó sin clave");
   });
 
   it("(h) caché de geocodificación evita la segunda consulta a ORS", async (t) => {

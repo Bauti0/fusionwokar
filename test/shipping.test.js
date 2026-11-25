@@ -52,6 +52,47 @@ function respuestaJson(obj) {
   return { ok: true, status: 200, json: async () => obj };
 }
 
+// Extrae calle y altura del principio de una query (antes de la primera coma).
+// "Uruguay 1200, Tandil, Buenos Aires, Argentina" -> { calle: "Uruguay", altura: "1200" }
+function parseCalleAlturaDeQuery(q) {
+  const primero = String(q || "").split(",")[0].trim();
+  const m = primero.match(/^(.*?)\s*(\d{1,5})\s*$/);
+  if (m) return { calle: m[1].trim(), altura: m[2] };
+  return { calle: primero, altura: "0" };
+}
+
+// Respuesta Georef Argentina API (campos aplanados, como devuelve aplanar=true).
+// Incluye altura (altura_valor) y localidad_censal_nombre para que el candidato
+// quede a nivel address y pase la validación de calle + localidad (pasos 3b-3d).
+function georefResponse(lat, lon, city, calle, altura) {
+  return {
+    direcciones: [{
+      tipo: "calle",
+      nomenclatura: `${calle} ${altura}, ${city}`,
+      nombre: `${calle} ${altura}`,
+      calle_nombre: calle,
+      altura_valor: altura,
+      ubicacion_lat: Number(lat),
+      ubicacion_lon: Number(lon),
+      localidad_censal_nombre: city,
+      departamento_nombre: city,
+      provincia_nombre: "Buenos Aires"
+    }]
+  };
+}
+
+// Respuesta Nominatim con address.city, road y house_number para que el
+// candidato quede a nivel address y pase la validación de calle + localidad.
+function nomResponse(lat, lon, city, calle, altura) {
+  return [{
+    lat: String(lat),
+    lon: String(lon),
+    address: { city, town: city, village: city, state: "Buenos Aires", country: "Argentina" },
+    road: calle || "",
+    house_number: altura || "",
+  }];
+}
+
 // Contador de llamadas "externas" del mock: sirve para afirmar que un caso
 // (p. ej. automático apagado) no consulta absolutamente nada.
 let llamadasExternas = 0;
@@ -62,24 +103,6 @@ function mockearRed(t, { origen = { lat: "-37.32154", lon: "-59.13024" }, destin
   const METROS_POR_GRADO_LAT = 111320;
   // Mapa clave -> metros para que OSRM calcule distancia real desde coordenadas
   const metrosPorClave = Object.fromEntries(destinos.map(d => [d.clave, Number(d.metros) || 0]));
-  // Helper: respuesta Nominatim con address.city para validación de ciudad
-  const nomResponse = (lat, lon, city) => [{
-    lat: String(lat),
-    lon: String(lon),
-    address: { city: city, town: city, village: city, state: "Buenos Aires", country: "Argentina" }
-  }];
-  // Helper: respuesta Georef Argentina API
-  const georefResponse = (lat, lon, city) => ({
-    direcciones: [{
-      tipo: "calle",
-      nomenclatura: `${city} street`,
-      nombre: `${city} street`,
-      ubicacion: { lat: Number(lat), lon: Number(lon) },
-      localidad: { nombre: city },
-      departamento: { nombre: city },
-      provincia: { nombre: "Buenos Aires" }
-    }]
-  });
   // Detectar ciudad esperada según la query (Necochea usa "Calle N", "Diagonal", "Av." + número)
   const detectarCiudad = (q) => {
     if (q.includes("Diagonal San Martín")) return "Necochea";
@@ -98,16 +121,23 @@ function mockearRed(t, { origen = { lat: "-37.32154", lon: "-59.13024" }, destin
       const dept = params.get("departamento") || "";
       const city = dept || detectarCiudad(direccion);
       // Origen Tandil (Chacabuco 660)
-      if (direccion.includes("Chacabuco 660")) return respuestaJson(georefResponse(origen.lat, origen.lon, city));
+      if (direccion.includes("Chacabuco 660")) {
+        const { calle, altura } = parseCalleAlturaDeQuery(direccion);
+        return respuestaJson(georefResponse(origen.lat, origen.lon, city, calle, altura));
+      }
       // Origen Necochea (Diagonal San Martín 1258)
-      if (direccion.includes("Diagonal San Martín")) return respuestaJson(georefResponse("-38.56705", "-58.72938", city));
+      if (direccion.includes("Diagonal San Martín")) {
+        const { calle, altura } = parseCalleAlturaDeQuery(direccion);
+        return respuestaJson(georefResponse("-38.56705", "-58.72938", city, calle, altura));
+      }
       // Destinos
       for (const d of destinos) {
         if (direccion.includes(d.clave)) {
+          const { calle, altura } = parseCalleAlturaDeQuery(direccion);
           const metros = Number(d.metros) || 0;
           const deltaLat = metros / METROS_POR_GRADO_LAT;
           const latDestino = Number(origen.lat) - deltaLat;
-          return respuestaJson(georefResponse(latDestino, origen.lon, city));
+          return respuestaJson(georefResponse(latDestino, origen.lon, city, calle, altura));
         }
       }
       // No encontrado: devolver vacío para que falle a respaldos
@@ -118,16 +148,23 @@ function mockearRed(t, { origen = { lat: "-37.32154", lon: "-59.13024" }, destin
     llamadasExternas += 1;
     const city = detectarCiudad(q);
     // Origen Tandil (Chacabuco 660): coordenadas fijas
-    if (q.includes("Chacabuco 660")) return respuestaJson(nomResponse(origen.lat, origen.lon, city));
+    if (q.includes("Chacabuco 660")) {
+      const { calle, altura } = parseCalleAlturaDeQuery(q);
+      return respuestaJson(nomResponse(origen.lat, origen.lon, city, calle, altura));
+    }
     // Origen Necochea (Diagonal San Martín 1258): coordenadas fijas
-    if (q.includes("Diagonal San Martín")) return respuestaJson(nomResponse("-38.56705", "-58.72938", city));
+    if (q.includes("Diagonal San Martín")) {
+      const { calle, altura } = parseCalleAlturaDeQuery(q);
+      return respuestaJson(nomResponse("-38.56705", "-58.72938", city, calle, altura));
+    }
     // Destino: para geocodificación, devolver coordenadas a la distancia esperada del origen.
     for (const d of destinos) {
       if (q.includes(d.clave)) {
+        const { calle, altura } = parseCalleAlturaDeQuery(q);
         const metros = Number(d.metros) || 0;
         const deltaLat = metros / METROS_POR_GRADO_LAT;
         const latDestino = Number(origen.lat) - deltaLat; // hacia el sur
-        return respuestaJson(nomResponse(latDestino, origen.lon, city));
+        return respuestaJson(nomResponse(latDestino, origen.lon, city, calle, altura));
       }
     }
     // OSRM / router: usa la misma aproximación lineal que el test (1 grado = 111320 m)
@@ -489,44 +526,17 @@ async function fetchMockeado(url) {
     }
     // Origen Tandil
     if (direccion.includes("Chacabuco 660")) {
-      return respuestaJson({
-        direcciones: [{
-          tipo: "calle",
-          nomenclatura: "Chacabuco 660",
-          nombre: "Chacabuco 660",
-          ubicacion: { lat: Number(RED.origen.lat), lon: Number(RED.origen.lon) },
-          localidad: { nombre: city },
-          departamento: { nombre: city },
-          provincia: { nombre: "Buenos Aires" }
-        }]
-      });
+      const { calle, altura } = parseCalleAlturaDeQuery(direccion);
+      return respuestaJson(georefResponse(Number(RED.origen.lat), Number(RED.origen.lon), city, calle, altura));
     }
     // Origen Necochea
     if (direccion.includes("Diagonal San Martín")) {
-      return respuestaJson({
-        direcciones: [{
-          tipo: "calle",
-          nomenclatura: "Diagonal San Martín 1258",
-          nombre: "Diagonal San Martín 1258",
-          ubicacion: { lat: Number(RED.origen.lat), lon: Number(RED.origen.lon) },
-          localidad: { nombre: city },
-          departamento: { nombre: city },
-          provincia: { nombre: "Buenos Aires" }
-        }]
-      });
+      const { calle, altura } = parseCalleAlturaDeQuery(direccion);
+      return respuestaJson(georefResponse(Number(RED.origen.lat), Number(RED.origen.lon), city, calle, altura));
     }
     // Destino: buscar en RED.destino o usar coordenadas por defecto
-    return respuestaJson({
-      direcciones: [{
-        tipo: "calle",
-        nomenclatura: direccion,
-        nombre: direccion,
-        ubicacion: { lat: Number(RED.destino.lat), lon: Number(RED.destino.lon) },
-        localidad: { nombre: city },
-        departamento: { nombre: city },
-        provincia: { nombre: "Buenos Aires" }
-      }]
-    });
+    const { calle: calleDestino, altura: alturaDestino } = parseCalleAlturaDeQuery(direccion);
+    return respuestaJson(georefResponse(Number(RED.destino.lat), Number(RED.destino.lon), city, calleDestino, alturaDestino));
   }
 
   if (host === "osrm") {
@@ -545,10 +555,11 @@ async function fetchMockeado(url) {
     }
     const coords = q.includes("Chacabuco 660") ? RED.origen : RED.destino;
     const city = q.includes("Chacabuco 660") ? "Tandil" : "Tandil"; // tests usan Tandil
+    const { calle, altura } = parseCalleAlturaDeQuery(q);
     return respuestaJson({
       features: [{
         geometry: { coordinates: [Number(coords.lon), Number(coords.lat)] },
-        properties: { city, state: "Buenos Aires", country: "Argentina" }
+        properties: { city, state: "Buenos Aires", country: "Argentina", street: calle, housenumber: altura }
       }],
     });
   }
@@ -557,13 +568,19 @@ async function fetchMockeado(url) {
   if (RED.sinResultado.length > 0 && !q.includes("Chacabuco 660")) {
     return respuestaJson([]);
   }
-  // Nominatim response con address para validación de ciudad
-  const withAddress = (obj, city) => ({
+  // Nominatim response con address, road y house_number para validación de ciudad/calle.
+  const withAddress = (obj, city, calle, altura) => ({
     ...obj,
+    road: calle || "",
+    house_number: altura || "",
     address: { city, town: city, village: city, state: "Buenos Aires", country: "Argentina" }
   });
-  if (q.includes("Chacabuco 660")) return respuestaJson([withAddress(RED.origen, "Tandil")]);
-  return respuestaJson([withAddress(RED.destino, "Tandil")]);
+  if (q.includes("Chacabuco 660")) {
+    const { calle, altura } = parseCalleAlturaDeQuery(q);
+    return respuestaJson([withAddress(RED.origen, "Tandil", calle, altura)]);
+  }
+  const { calle, altura } = parseCalleAlturaDeQuery(q);
+  return respuestaJson([withAddress(RED.destino, "Tandil", calle, altura)]);
 }
 
 const WARNINGS = [];
