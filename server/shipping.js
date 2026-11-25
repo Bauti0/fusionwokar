@@ -801,11 +801,19 @@ async function getOrigin(cfg, opts = {}) {
     return fallback;
   }
   // Geocodificar la dirección del origen una sola vez, exigiendo nivel address.
+  // Si no se puede geocodificar (Georef caído, timeout, sin respaldos), se usa
+  // el centro de la sucursal como origen de fallback para que la sucursal siga
+  // operando en vez de quedar bloqueada por completo.
   const o = await geocodeConMinNivel(cfg.originAddress, cfg, "address", opts);
-  if (!o) throw unknown(`No pudimos ubicar la dirección del local de ${cfg.city}.`);
-  const resultado = { lat: o.lat, lng: o.lng, source: o.provider, level: o.matchLevel, from: "geocode" };
+  let resultado;
+  if (!o) {
+    console.warn(`${branch}: origen no geocodificado, usando centro como fallback`);
+    resultado = { lat: cfg.center.lat, lng: cfg.center.lng, source: "center", level: "unknown", from: "center-fallback" };
+  } else {
+    resultado = { lat: o.lat, lng: o.lng, source: o.provider, level: o.matchLevel, from: "geocode" };
+    console.log(`shipping origin ${branch}: fuente=${resultado.source} nivel=${resultado.level}`);
+  }
   originCache.set(branch, resultado);
-  console.log(`shipping origin ${branch}: fuente=${resultado.source} nivel=${resultado.level}`);
   return resultado;
 }
 
