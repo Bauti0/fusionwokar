@@ -284,9 +284,9 @@ describe("Bug F-01 — Georef: parámetro `campos` válido", () => {
 });
 
 // ============================================================================
-// Bug F-02 — ORS: endpoint migrado a api.heiget.org (no 410 Gone)
+// Bug F-02 — ORS: endpoint migrado a api.heigit.org (no 410 Gone)
 // ============================================================================
-describe("Bug F-02 — ORS: endpoint migrado a api.heiget.org", () => {
+describe("Bug F-02 — ORS: endpoint migrado a api.heigit.org", () => {
   it("ORS geocodificación usa `api.heigit.org/pelias/v1` (no api.openrouteservice.org)", async (t) => {
     const mock = crearMock(t, {
       georef: "empty",
@@ -331,6 +331,10 @@ describe("Bug F-02 — ORS: endpoint migrado a api.heiget.org", () => {
     assert.ok(
       urlsORS.every((u) => !u.includes("api.openrouteservice.org")),
       "ninguna URL de ORS usa openrouteservice.org"
+    );
+    assert.ok(
+      urlsORS.every((u) => u.startsWith("https://api.heigit.org/")),
+      "todas las URLs de ORS empiezan con https://api.heigit.org/"
     );
   });
 });
