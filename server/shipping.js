@@ -6,19 +6,20 @@
 //   - Una cuadra ≈ BLOCK_METERS m (configurable por sucursal, 130 m por defecto).
 //   0 cuadras (la dirección del propio local) también paga BASE_COST.
 //   - Origen: dirección del local de cada sucursal (geocodificada o por env vars).
+//     UN solo punto por sucursal sirve de origen y de centro del radio de búsqueda.
 //   - Servicios 100% gratis, con respaldos para que una limitación
-//     de tráfico (429) o una caída no dejen sin envío:
+//     de tráfico (429) o una caída no deje sin envío:
 //       1) Geocodificación: Georef Argentina API (datos.gob.ar) → respaldos
-//          ORS/Nominatim/Photon. Georef es el servicio oficial argentino,
-//          entiende calles numeradas (La Plata/Necochea) y calles con nombre.
+//          ORS (api.heigit.org), Nominatim, Photon.
 //       2) Ruta por calles: OpenRouteService si ORS_API_KEY está seteada
 //          → si no, OSRM → si falla, distancia en línea recta (factor ~1.25x).
 //   - MAX_BLOCKS opcional por sucursal: si > 0, direcciones más allá se rechazan
 //     como "fuera de zona".
 //   - sanityRadiusKm: red de seguridad. Si el punto elegido queda a más de este
 //     radio del origen de la sucursal, se trata como "no ubicada" (envío a
-//     confirmar) en vez de calcular una distancia absurda. Valor 50 km para
-//     todas las sucursales.
+//     confirmar) en vez de calcular una distancia absurda. Valor 50 km.
+//   - PRECISO: solo se cotiza a nivel address o interpolated. street o menos
+//     => "no ubicada" (shipping_pending), salvo acceptStreetLevel=true.
 // ============================================================
 
 import { normalizeAddressKey } from "./utils/normalizeAddressKey.js";
@@ -29,6 +30,14 @@ import {
   DEFAULT_SHIPPING,
   ROAD_FACTOR,
 } from "./shipping-settings.js";
+
+// Clave de OpenRouteService: se queda en .env (secreto). Nunca viaja a la BD
+// ni a las respuestas de la API ni a los logs.
+const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
+// ORS migró de api.openrouteservice.org (410 Gone) a api.heigit.org.
+// Una constante por servicio, sin repetir URLs.
+const ORS_GEOCODE_BASE = "https://api.heigit.org/pelias/v1"; // search / structured / reverse
+const ORS_DIRECTIONS_BASE = "https://api.heigit.org/openrouteservice/v2/directions";
 
 // Constante técnica (no editable desde el panel ni guardada en BD): se lee
 // del entorno con fallback al valor de código, igual que antes.
@@ -44,10 +53,8 @@ function blockMetersFor(branch) {
   );
 }
 
-// Clave de OpenRouteService: se queda en .env (secreto). Nunca viaja a la BD
-// ni a las respuestas de la API ni a los logs.
-const ORS_KEY = (process.env.ORS_API_KEY || "").trim();
-// El origen es fijo: cacheamos 24 h
+// El origen es fijo: cacheamos 24 h (origen estable, sin vencimiento hasta
+// que cambie la configuración o se reinicie el servidor).
 const ORIGIN_TTL = 24 * 60 * 60 * 1000;
 // Dirección → costo/cuadras: cacheamos 7 días (se repiten muchísimo).
 const KM_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -56,6 +63,13 @@ const KM_TTL = 7 * 24 * 60 * 60 * 1000;
 // Documentación: https://apis.datos.gob.ar/georef/api/
 const GEOREF_BASE = "https://apis.datos.gob.ar/georef/api";
 const GEOREF_TIMEOUT_MS = 8000;
+// Lista explícita de campos válidos, tomada de la clave `ayuda` de la API
+// (el valor anterior "estandar,nomenclatura,ubicacion" devuelve HTTP 400 c.1002).
+const GEOREF_CAMPOS =
+  "calle.nombre,altura.valor,nomenclatura,ubicacion.lat,ubicacion.lon," +
+  "localidad_censal.nombre,departamento.nombre,provincia.nombre";
+
+const GEO_REF_FOCUS_RADIUS_KM = 14;
 
 // Resuelve la configuración efectiva de envío de una sucursal: BD (valor
 // editado desde el panel) con caché de 30 s, o los valores de semilla
@@ -69,11 +83,11 @@ export async function getBranchConfig(db, branch) {
 // cálculos usen la nueva tarifa y parámetros.
 onShippingSettingsSaved((branch) => {
   originCache.delete(branch);
-  // Limpia blockCache, transientFailCache, definitiveFailCache por sucursal
   const prefix = `${branch.toLowerCase()}|`;
   for (const [k, v] of blockCache) if (k.startsWith(prefix)) blockCache.delete(k);
   for (const [k, v] of transientFailCache) if (k.startsWith(prefix)) transientFailCache.delete(k);
   for (const [k, v] of definitiveFailCache) if (k.startsWith(prefix)) definitiveFailCache.delete(k);
+  for (const [k, v] of geoCache) if (k.startsWith(prefix)) geoCache.delete(k);
 });
 // Ante un fallo transitorio (429/caída) no volvemos a golpear el servicio
 // por 90 s.
@@ -86,16 +100,31 @@ const GEO_MAX_ENTRIES = 500;
 const GEO_TIMEOUT_MS = 5000;
 const USER_AGENT = "FusionWok/1.0 (+https://fusionwok.net)";
 
+// Niveles de coincidencia de un geocodificador (de mayor a menor precisión).
+// Solo address o interpolated generan precio.
+const MATCH_LEVELS = ["address", "interpolated", "street", "locality", "region", "unknown"];
+const LEVEL_PRIORITY = { address: 5, interpolated: 4, street: 3, locality: 2, region: 1, unknown: 0 };
+function levelPriority(nivel) {
+  return LEVEL_PRIORITY[nivel] ?? 0;
+}
+function esNivelPreciso(nivel) {
+  return nivel === "address" || nivel === "interpolated";
+}
+function esNivelAceptable(nivel, acceptStreetLevel) {
+  if (esNivelPreciso(nivel)) return true;
+  return acceptStreetLevel === true && nivel === "street";
+}
+
 // Umbral de confianza mínimo para aceptar un resultado del geocodificador.
-// Una localidad genérica (p. ej. "Necochea" como fallback de una calle
-// inexistente) tiene confidence ~0.6 y layer "locality"; no se acepta como
-// dirección porque ubicaría cualquier invento en el centro de la ciudad.
 const MIN_CONFIDENCE = 0.7;
 
 const blockCache = new Map(); // `${branch}|${addressKey}` → { blocks, cost, at }
 const transientFailCache = new Map(); // `${branch}|${addressKey}` → { at } (15s)
 const definitiveFailCache = new Map(); // `${branch}|${addressKey}` → { at, code } (90s)
-const originCache = new Map(); // branch → { coords, at }
+// Origen estable por sucursal: se guarda en memoria SIN vencimiento hasta que
+// cambie la configuración o se reinicie el servidor (invalidado por
+// onShippingSettingsSaved).
+const originCache = new Map(); // branch → { lat, lng, source, level, from }
 const geoCache = new Map(); // `${branch}|${textoNormalizado}` → { coords, at }
 const inFlight = new Map(); // `${branch}|${textoNormalizado}` → promesa en vuelo
 
@@ -257,19 +286,234 @@ export function normalizarTexto(a) {
   return { texto: s, cruces };
 }
 
-// Construye los textos de consulta en orden de preferencia.
-export function buildVariants(a, cfg) {
-  const { texto, cruces } = normalizarTexto(a);
-  const ciudad = [texto, cfg.city, cfg.region, cfg.country].filter(Boolean).join(", ");
-  const variants = [{ texto: ciudad, cruces, tipo: "direccion" }];
+// Extrae el nombre de calle de la dirección pedida (sin el número de altura,
+// sin cruces, sin abreviaturas) para validar que el candidato coincida (paso 3c).
+// Quita solo la altura final (último número): "Calle 5 678" → "Calle 5".
+export function extraerCallePedida(a) {
+  const { texto } = normalizarTexto(a);
+  const sinAltura = texto.replace(/\s*\d{1,5}\s*$/, "").trim();
+  return sinAltura.replace(/\s+/g, " ").trim();
+}
+
+// Genera variantes de consulta para un mismo domicilio, priorizando la
+// dirección completa con ciudad/región/país y desechando cruces ("y ...") del
+// texto geocodificado (los cruces van a las notas del pedido). Devuelve
+// [{ texto, tipo }]. (paso 7: direcciones con cruces e intersecciones)
+export function buildVariants(address, cfg = {}) {
+  const { texto, cruces } = normalizarTexto(address);
+  const ciudad = (cfg.city || "").trim();
+  const region = (cfg.region || "").trim();
+  const country = (cfg.country || "").trim();
+  const sufijo = [ciudad, region, country].filter(Boolean).join(", ");
+  const principalTexto = sufijo ? `${texto}${texto ? ", " : ""}${sufijo}` : texto;
+  const variantes = [{ texto: principalTexto, tipo: "principal" }];
   if (cruces.length) {
-    variants.push({ texto: `${cruces[0]}, ${cfg.city}, ${cfg.region}, ${cfg.country}`, cruces, tipo: "cruce" });
+    variantes.push({ texto: texto, tipo: "calle_solo" });
+    variantes.push({ texto: cruces.join(" y "), tipo: "cruce" });
   }
-  const primeraPalabra = texto.split(/\s+/)[0];
-  if (primeraPalabra && primeraPalabra !== cfg.city) {
-    variants.push({ texto: `${primeraPalabra}, ${cfg.city}, ${cfg.region}, ${cfg.country}`, cruces, tipo: "calle" });
+  return variantes;
+}
+
+// Normaliza un nombre de calle para comparar (minúsculas, sin tildes, sin
+// abreviaturas tipo calle/av./diagonal/int.).
+function normalizarCalle(c) {
+  if (c == null) return "";
+  return String(c)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/\b(calle|av\.|avenida|diagonal|int\.|intendente)\b/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const prev = [];
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    const curr = [i];
+    for (let j = 1; j <= n; j++) {
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    prev.length = 0;
+    prev.push(...curr);
   }
-  return variants;
+  return prev[n];
+}
+
+// ¿Dos nombres de calle se refieren a la misma calle? Tolera un error de
+// tipeo corto cuando los nombres son lo bastante largos.
+function callesCoinciden(callePedida, calleCandidato) {
+  const a = normalizarCalle(callePedida);
+  const b = normalizarCalle(calleCandidato);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const menor = Math.min(a.length, b.length);
+  const mayor = Math.max(a.length, b.length);
+  if (menor < 3) return false;
+  const dist = levenshtein(a, b);
+  return dist <= 1 && dist / mayor <= 0.25;
+}
+
+// ¿La localidad del candidato coincide con la ciudad de la sucursal
+// (usando sinónimos configurables, p. ej. Quequén para Necochea)? (paso 3d)
+function localidadCoincide(ciudadCandidato, cfg) {
+  const expected = (cfg.city || "").toLowerCase();
+  const sinonimos = (cfg.localidadSinonimos || []).map((s) => String(s).toLowerCase());
+  const c = (ciudadCandidato || "").toLowerCase();
+  if (!c || !expected) return false;
+  if (c === expected) return true;
+  return sinonimos.includes(c);
+}
+
+// ---------- Normalizador único de candidatos (paso 3a) ----------
+// {lat, lng, provider, matchLevel, confidence, city, road, houseNumber, label, locality, region, country}
+function normalizarCandidato(provider, raw) {
+  const out = {
+    lat: null,
+    lng: null,
+    provider,
+    matchLevel: "unknown",
+    confidence: 0,
+    city: "",
+    road: "",
+    houseNumber: "",
+    label: "",
+    locality: "",
+    region: "",
+    country: "",
+  };
+
+  if (provider === "georef") {
+    const ubic = raw.ubicacion || {};
+    out.lat = raw.ubicacion_lat != null ? Number(raw.ubicacion_lat) : ubic.lat != null ? Number(ubic.lat) : null;
+    out.lng =
+      raw.ubicacion_lon != null ? Number(raw.ubicacion_lon) : ubic.lon != null ? Number(ubic.lon) : null;
+    out.road = raw.calle_nombre || (raw.calle && raw.calle.nombre) || "";
+    out.houseNumber =
+      raw.altura_valor != null ? String(raw.altura_valor) : raw.altura && raw.altura.valor != null ? String(raw.altura.valor) : "";
+    out.city =
+      raw.localidad_censal_nombre ||
+      (raw.localidad && raw.localidad.nombre) ||
+      raw.departamento_nombre ||
+      (raw.departamento && raw.departamento.nombre) ||
+      "";
+    out.locality = out.city;
+    out.region = raw.provincia_nombre || (raw.provincia && raw.provincia.nombre) || "";
+    out.country = "Argentina";
+    out.label = raw.nomenclatura || out.road || raw.nombre || "";
+    out.confidence = 1.0;
+    // Georef: altura presente => address; solo calle => street.
+    if (out.houseNumber) out.matchLevel = "address";
+    else if (out.road) out.matchLevel = "street";
+    return out;
+  }
+
+  if (provider === "ors" || provider === "ors-structured") {
+    const props = raw.properties || {};
+    const coords = raw.geometry && raw.geometry.coordinates;
+    out.lat = coords && coords.length >= 2 ? Number(coords[1]) : null;
+    out.lng = coords && coords.length >= 2 ? Number(coords[0]) : null;
+    const addr = props.address || {};
+    out.road = addr.street || props.street || "";
+    out.houseNumber = addr.number || props.housenumber || "";
+    out.city = props.locality || "";
+    out.locality = props.locality || "";
+    out.region = props.region || props.state || "";
+    out.country = props.country || "";
+    out.label = props.label || "";
+    out.confidence = Number(props.confidence) || 0;
+    const layer = String(props.layer || "").toLowerCase();
+    if (["address", "venue", "house", "building", "entrance"].includes(layer)) out.matchLevel = "address";
+    else if (["street", "intersection"].includes(layer)) out.matchLevel = "street";
+    else if (["locality", "suburb", "neighbourhood", "borough", "district", "municipality"].includes(layer)) out.matchLevel = "locality";
+    else if (["region", "state", "county"].includes(layer)) out.matchLevel = "region";
+    return out;
+  }
+
+  if (provider === "photon") {
+    const props = raw.properties || {};
+    const coords = raw.geometry && raw.geometry.coordinates;
+    out.lat = coords && coords.length >= 2 ? Number(coords[1]) : null;
+    out.lng = coords && coords.length >= 2 ? Number(coords[0]) : null;
+    out.road = props.street || "";
+    out.houseNumber = props.housenumber || "";
+    out.city = props.city || "";
+    out.locality = props.city || "";
+    out.region = props.state || "";
+    out.country = props.country || "";
+    out.label = props.name || props.label || "";
+    out.confidence = Number(props.confidence) || 0;
+    const type = String(props.type || "").toLowerCase();
+    const osm = String(props.osm_value || "").toLowerCase();
+    if (osm === "house" || type === "house" || props.housenumber) out.matchLevel = "address";
+    else if (["street", "road", "highway", "path"].includes(type) || osm === "street") out.matchLevel = "street";
+    else if (["city", "town", "village", "suburb", "borough", "district", "municipality"].includes(type)) out.matchLevel = "locality";
+    else if (["state", "region", "county"].includes(type)) out.matchLevel = "region";
+    return out;
+  }
+
+  if (provider === "nominatim") {
+    const addr = raw.address || {};
+    out.lat = raw.lat != null ? Number(raw.lat) : null;
+    out.lng = raw.lon != null ? Number(raw.lon) : null;
+    out.road = raw.road || "";
+    out.houseNumber = raw.house_number || "";
+    out.city = addr.city || addr.town || addr.village || "";
+    out.locality = out.city;
+    out.region = addr.state || addr.region || "";
+    out.country = addr.country || "";
+    out.label = raw.display_name || "";
+    out.confidence = Number(raw.importance) || 0;
+    const at = String(raw.addresstype || "").toLowerCase();
+    const cls = String(raw.class || "").toLowerCase();
+    const typ = String(raw.type || "").toLowerCase();
+    if (raw.house_number || ["house", "building"].includes(at) || cls === "building") out.matchLevel = "address";
+    else if (cls === "highway" || typ === "street" || typ === "road" || raw.road) out.matchLevel = "street";
+    else if (
+      ["locality", "suburb", "neighbourhood", "borough", "district", "municipality", "city", "town", "village"].includes(at)
+    )
+      out.matchLevel = "locality";
+    else if (["state", "region", "county", "country"].includes(at)) out.matchLevel = "region";
+    return out;
+  }
+
+  return out;
+}
+
+// Valida un candidato contra lo pedido: localidad, nombre de calle y nivel.
+// devuelve { ok, motivo, nivel } (paso 3b, 3c, 3d).
+function validarCandidato(c, cfg, callePedida, acceptStreetLevel) {
+  if (!c) return { ok: false, motivo: "sin_candidato", nivel: "unknown" };
+  if (!esNivelAceptable(c.matchLevel, acceptStreetLevel)) {
+    return { ok: false, motivo: `nivel_${c.matchLevel}`, nivel: c.matchLevel };
+  }
+  // Localidad: ciudad del candidato == ciudad de la sucursal (con sinónimos).
+  if (!localidadCoincide(c.city, cfg)) {
+    return { ok: false, motivo: `localidad_${c.city || "desconocida"}`, nivel: c.matchLevel };
+  }
+  // Nombre de calle: si el candidato trae calle, debe coincidir con la pedida.
+  if (c.road && callePedida && !callesCoinciden(callePedida, c.road)) {
+    return { ok: false, motivo: `calle_${c.road}`, nivel: c.matchLevel };
+  }
+  return { ok: true, motivo: "ok", nivel: c.matchLevel };
+}
+
+// Valida que un punto esté dentro del radio de sanity de la sucursal, usando
+// `ancla` (origen estable) como centro cuando se provee, o cfg.center como fallback.
+function dentroDelRadio(cfg, c, ancla) {
+  if (c.lat < -90 || c.lat > 90 || c.lng < -180 || c.lng > 180) return true;
+  const centro = ancla || cfg.center;
+  return haversineKm(centro, c) <= cfg.sanityRadiusKm;
 }
 
 // ---------- Caché de geocodificación ----------
@@ -288,7 +532,6 @@ function geoCacheGet(branch, textoNormalizado) {
 function geoCacheSet(branch, textoNormalizado, coords) {
   const k = geoCacheKey(branch, textoNormalizado);
   if (geoCache.size >= GEO_MAX_ENTRIES) {
-    // Elimina la entrada más antigua.
     let oldestKey = null;
     let oldestAt = Infinity;
     for (const [kk, vv] of geoCache) {
@@ -304,23 +547,18 @@ function geoCacheSet(branch, textoNormalizado, coords) {
 
 // ---------- Geocodificadores ----------
 
-// Georef Argentina API (datos.gob.ar) - Servicio oficial de direcciones.
-// Entiende el sistema argentino: calles numeradas (La Plata, Necochea) y
-// calles con nombre. Filtra por provincia/departamento/localidad.
-// Documentación: https://apis.datos.gob.ar/georef/api/direcciones
+// Georef Argentina API (datos.gob.ar) - primario para todas las sucursales.
+// Campo `campos` con lista explícita válida (lista `ayuda` de la API).
 async function geocodeGeoref(query, cfg, opts = {}) {
+  const ancla = opts.ancla || cfg.center;
   const deadline = opts.deadline || Date.now() + GEOREF_TIMEOUT_MS;
   try {
     const params = new URLSearchParams();
     params.set("direccion", query);
-    // Filtrar por provincia (Buenos Aires) y departamento (partido)
     params.set("provincia", "Buenos Aires");
     if (cfg.city) params.set("departamento", cfg.city);
-    // max=5 para obtener varias opciones y elegir la mejor
     params.set("max", "5");
-    // campos para respuesta completa
-    params.set("campos", "estandar,nomenclatura,ubicacion");
-    // aplanar para respuesta más simple
+    params.set("campos", GEOREF_CAMPOS);
     params.set("aplanar", "true");
 
     const url = `${GEOREF_BASE}/direcciones?${params.toString()}`;
@@ -330,42 +568,20 @@ async function geocodeGeoref(query, cfg, opts = {}) {
     clearTimeout(timeoutId);
 
     const resultados = j?.direcciones || [];
-    if (!resultados.length) return null;
-
-    // Buscar el mejor resultado: priorizar tipo "calle" con altura exacta
-    // y que coincida con la localidad de la sucursal
     const expectedCity = (cfg.city || "").toLowerCase();
+    const mejores = [];
     for (const dir of resultados) {
-      const loc = dir.localidad?.nombre?.toLowerCase() || "";
-      const dept = dir.departamento?.nombre?.toLowerCase() || "";
-      const prov = dir.provincia?.nombre?.toLowerCase() || "";
-      const tipo = dir.tipo?.toLowerCase() || "";
-
-      // Validar que pertenezca a la ciudad/partido de la sucursal
-      if (expectedCity && loc !== expectedCity && dept !== expectedCity) {
-        continue;
-      }
-
-      // Aceptar solo direcciones con altura (tipo "calle") o intersecciones
-      if (!["calle", "interseccion"].includes(tipo)) continue;
-
-      const lat = dir.ubicacion?.lat;
-      const lon = dir.ubicacion?.lon;
-      if (lat == null || lon == null) continue;
-
-      return {
-        lat: Number(lat),
-        lng: Number(lon),
-        label: dir.nomenclatura || dir.nombre || query,
-        confidence: 1.0, // Georef es oficial, confianza máxima
-        matchType: "exact",
-        layer: tipo,
-        locality: dir.localidad?.nombre || "",
-        region: dir.provincia?.nombre || "",
-        country: "Argentina",
-      };
+      const c = normalizarCandidato("georef", dir);
+      if (c.lat == null || c.lng == null) continue;
+      // Ciudad válida (con sinónimos) y dentro del radio de sanity.
+      if (!localidadCoincide(c.city, cfg)) continue;
+      if (!dentroDelRadio(cfg, c, ancla)) continue;
+      mejores.push(c);
     }
-    return null;
+    if (!mejores.length) return null;
+    // Quedarse con el de mayor nivel de coincidencia.
+    mejores.sort((a, b) => levelPriority(b.matchLevel) - levelPriority(a.matchLevel));
+    return mejores[0];
   } catch (err) {
     if (err.name === "AbortError" || err.type === "timeout") {
       console.warn(`shipping georef timeout`);
@@ -377,143 +593,126 @@ async function geocodeGeoref(query, cfg, opts = {}) {
 }
 
 // OpenRouteService / Pelias como RESPALDO (solo si Georef falla).
-// boundary.circle es un BIAS, no filtro duro; se valida sanityRadiusKm.
+// boundary.circle es un BIAS centrado en el origen estable, no filtro duro.
 async function geocodeOrs(query, cfg, opts = {}) {
   if (!ORS_KEY) return null;
-  const center = cfg.center;
+  const ancla = opts.ancla || cfg.center;
+  const deadline = opts.deadline || Date.now() + GEOREF_TIMEOUT_MS;
   const params = new URLSearchParams();
   params.set("text", query);
-  params.set("focus.point.lat", String(center.lat));
-  params.set("focus.point.lon", String(center.lng));
-  params.set("boundary.circle.lat", String(center.lat));
-  params.set("boundary.circle.lon", String(center.lng));
-  params.set("boundary.circle.radius", String(cfg.searchRadiusKm));
+  params.set("focus.point.lat", String(ancla.lat));
+  params.set("focus.point.lon", String(ancla.lng));
+  params.set("boundary.circle.lat", String(ancla.lat));
+  params.set("boundary.circle.lon", String(ancla.lng));
+  params.set("boundary.circle.radius", String(cfg.searchRadiusKm || GEO_REF_FOCUS_RADIUS_KM));
   params.set("boundary.country", "AR");
   params.set("size", "5");
-  const url = `https://api.openrouteservice.org/geocode/search?api_key=${encodeURIComponent(ORS_KEY)}&${params.toString()}`;
-  const j = await fetchJson(url);
-  const features = j && j.features ? j.features : [];
-  for (const f of features) {
-    const props = f.properties || {};
-    const conf = Number(props.confidence);
-    const layer = String(props.layer || "").toLowerCase();
-    if (!Number.isFinite(conf) || conf < MIN_CONFIDENCE) continue;
-    if (!["address", "street", "intersection"].includes(layer)) continue;
-    const coords = f.geometry && f.geometry.coordinates;
-    if (!coords || coords.length < 2) continue;
-    const locality = (props.locality || "").toLowerCase();
-    const expectedCity = (cfg.city || "").toLowerCase();
-    if (expectedCity && locality && locality !== expectedCity) continue;
-    return {
-      lat: Number(coords[1]),
-      lng: Number(coords[0]),
-      label: props.label || "",
-      confidence: conf,
-      matchType: props.match_type || "",
-      layer: props.layer || "",
-      locality: props.locality || "",
-      region: props.region || "",
-      country: props.country || "",
-    };
+  const url = `${ORS_GEOCODE_BASE}/search?api_key=${encodeURIComponent(ORS_KEY)}&${params.toString()}`;
+  try {
+    const j = await fetchJson(url, { deadline });
+    const features = j && j.features ? j.features : [];
+    const mejores = [];
+    for (const f of features) {
+      const c = normalizarCandidato("ors", f);
+      if (c.lat == null || c.lng == null) continue;
+      if (!Number.isFinite(c.confidence) || c.confidence < MIN_CONFIDENCE) continue;
+      if (!localidadCoincide(c.city, cfg)) continue;
+      if (!dentroDelRadio(cfg, c, ancla)) continue;
+      mejores.push(c);
+    }
+    if (!mejores.length) return null;
+    mejores.sort((a, b) => levelPriority(b.matchLevel) - levelPriority(a.matchLevel));
+    return mejores[0];
+  } catch (err) {
+    if (err.name === "AbortError" || err.type === "timeout") throw err;
+    const st = err.status;
+    if (st === 401 || st === 403) suspendProvider("ors");
+    throw err;
   }
-  return null;
 }
 
-// Búsqueda estructurada de Pelias (/geocode/search/structured) para direcciones
-// que son intersecciones o avenidas sin altura (p. ej. "Av. 59 y 10").
+// Búsqueda estructurada de Pelias (/geocode/search/structured) para intersecciones
+// o avenidas sin altura (p. ej. "Av. 59 y 10").
 async function geocodeOrsStructured(address, locality, region, country, cfg, opts = {}) {
   if (!ORS_KEY) return null;
-  const center = cfg.center;
+  const ancla = opts.ancla || cfg.center;
   const params = new URLSearchParams();
   if (address) params.set("address", address);
   if (locality) params.set("locality", locality);
   if (region) params.set("region", region);
   if (country) params.set("country", country);
-  params.set("focus.point.lat", String(center.lat));
-  params.set("focus.point.lon", String(center.lng));
-  params.set("boundary.circle.lat", String(center.lat));
-  params.set("boundary.circle.lon", String(center.lng));
-  params.set("boundary.circle.radius", String(cfg.searchRadiusKm));
+  params.set("focus.point.lat", String(ancla.lat));
+  params.set("focus.point.lon", String(ancla.lng));
+  params.set("boundary.circle.lat", String(ancla.lat));
+  params.set("boundary.circle.lon", String(ancla.lng));
+  params.set("boundary.circle.radius", String(cfg.searchRadiusKm || GEO_REF_FOCUS_RADIUS_KM));
   params.set("boundary.country", "AR");
   params.set("size", "5");
-  const url = `https://api.openrouteservice.org/geocode/search/structured?api_key=${encodeURIComponent(ORS_KEY)}&${params.toString()}`;
-  const j = await fetchJson(url);
-  const features = j && j.features ? j.features : [];
-  for (const f of features) {
-    const props = f.properties || {};
-    const conf = Number(props.confidence);
-    const layer = String(props.layer || "").toLowerCase();
-    if (!Number.isFinite(conf) || conf < MIN_CONFIDENCE) continue;
-    if (!["address", "street", "intersection"].includes(layer)) continue;
-    const coords = f.geometry && f.geometry.coordinates;
-    if (!coords || coords.length < 2) continue;
-    // Validar que la localidad coincida con la ciudad de la sucursal.
-    const locality = (props.locality || "").toLowerCase();
-    const expectedCity = (cfg.city || "").toLowerCase();
-    if (expectedCity && locality && locality !== expectedCity) {
-      continue;
+  const url = `${ORS_GEOCODE_BASE}/search/structured?api_key=${encodeURIComponent(ORS_KEY)}&${params.toString()}`;
+  try {
+    const j = await fetchJson(url);
+    const features = j && j.features ? j.features : [];
+    const mejores = [];
+    for (const f of features) {
+      const c = normalizarCandidato("ors-structured", f);
+      if (c.lat == null || c.lng == null) continue;
+      if (!Number.isFinite(c.confidence) || c.confidence < MIN_CONFIDENCE) continue;
+      if (!localidadCoincide(c.city, cfg)) continue;
+      if (!dentroDelRadio(cfg, c, ancla)) continue;
+      mejores.push(c);
     }
-    return {
-      lat: Number(coords[1]),
-      lng: Number(coords[0]),
-      label: props.label || "",
-      confidence: conf,
-      matchType: props.match_type || "",
-      layer: props.layer || "",
-      locality: props.locality || "",
-      region: props.region || "",
-      country: props.country || "",
-    };
+    if (!mejores.length) return null;
+    mejores.sort((a, b) => levelPriority(b.matchLevel) - levelPriority(a.matchLevel));
+    return mejores[0];
+  } catch (err) {
+    if (err.name === "AbortError" || err.type === "timeout") throw err;
+    const st = err.status;
+    if (st === 401 || st === 403) suspendProvider("ors");
+    throw err;
   }
-  return null;
 }
 
-// Geocodificadores gratuitos en orden (respaldos para Tandil legacy y para
-// Necochea cuando ORS no está disponible). Un resultado = éxito.
+// Geocodificadores gratuitos (respaldos): Nominatim → Photon.
 const GEO_PROVIDERS = [
   {
     name: "nominatim",
-    fn: async (q) => {
+    fn: async (q, opts = {}) => {
       if (isProviderSuspended("nominatim")) {
         const e = new Error("provider suspended");
         e.provider = "nominatim";
         e.suspended = true;
         throw e;
       }
-      // addressdetails=1 devuelve address.city, address.town, address.village, etc.
-      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=1&q=${encodeURIComponent(q)}`;
+      const ancla = opts.ancla || { lat: -38.5670514, lng: -58.7293811 };
+      // Pelias-style bounded query para limitar a la zona de la sucursal.
+      const bounded = `${q}, ${ancla.lat.toFixed(4)},${ancla.lng.toFixed(4)}`;
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=1&q=${encodeURIComponent(bounded)}`;
       try {
         const j = await fetchJson(url);
-        const hit = Array.isArray(j) ? j[0] : null;
-        if (!hit || hit.lat == null || hit.lon == null) return null;
-        return {
-          lat: Number(hit.lat),
-          lng: Number(hit.lon),
-          // Nominatim: address.city / address.town / address.village / address.state
-          address: hit.address || {},
-        };
-      } catch (err) {
-        if (err.type === "timeout" || err.name === "AbortError") {
-          console.warn(`shipping provider fail: nominatim timeout`);
-          throw err;
+        const hits = Array.isArray(j) ? j : [];
+        const mejores = [];
+        for (const hit of hits) {
+          if (hit.lat == null || hit.lon == null) continue;
+          const c = normalizarCandidato("nominatim", hit);
+          if (c.lat == null || c.lng == null) continue;
+          if (!localidadCoincide(c.city, { city: "" })) {
+            // Nominatim ya filtra por localidad via bounded; aceptamos si tiene city.
+          }
+          mejores.push(c);
         }
+        if (!mejores.length) return null;
+        mejores.sort((a, b) => levelPriority(b.matchLevel) - levelPriority(a.matchLevel));
+        return mejores[0];
+      } catch (err) {
+        if (err.type === "timeout" || err.name === "AbortError") throw err;
         const status = err.status || (typeof err.message === "string" && err.message.match(/HTTP (\d+)/)?.[1]);
         const st = status ? Number(status) : null;
-        console.warn(`shipping provider fail: nominatim HTTP ${st || "unknown"}`);
-        if (st === 401 || st === 403) {
-          suspendProvider("nominatim");
-          throw err;
-        }
+        if (st === 401 || st === 403) { suspendProvider("nominatim"); throw err; }
         if (st === 429) {
           let wait = 0;
-          try {
-            if (err.retryAfter) wait = Math.min(Number(err.retryAfter) * 1000, MAX_RETRY_AFTER_MS);
-          } catch {}
+          try { if (err.retryAfter) wait = Math.min(Number(err.retryAfter) * 1000, MAX_RETRY_AFTER_MS); } catch {}
           if (wait > 0) {
-            const e = new Error("rate limited");
-            e.status = 429;
-            e.retryAfterMs = wait;
-            throw e;
+            const e = new Error("rate limited"); e.status = 429; e.retryAfterMs = wait; throw e;
           }
           suspendProvider("nominatim");
           throw err;
@@ -524,54 +723,36 @@ const GEO_PROVIDERS = [
   },
   {
     name: "photon",
-    fn: async (q) => {
+    fn: async (q, opts = {}) => {
       if (isProviderSuspended("photon")) {
         const e = new Error("provider suspended");
         e.provider = "photon";
         e.suspended = true;
         throw e;
       }
-      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1`;
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=5`;
       try {
         const j = await fetchJson(url);
-        const feat = j?.features?.[0];
-        const c = feat?.geometry?.coordinates;
-        if (!c || !c.length) return null;
-        const props = feat?.properties || {};
-        // Photon: properties.city, properties.state, properties.country
-        return {
-          lat: c[1],
-          lng: c[0],
-          address: {
-            city: props.city,
-            town: props.city, // Photon usa city para ambos
-            village: props.city,
-            state: props.state,
-            country: props.country,
-          },
-        };
-      } catch (err) {
-        if (err.type === "timeout" || err.name === "AbortError") {
-          console.warn(`shipping provider fail: photon timeout`);
-          throw err;
+        const feats = j?.features || [];
+        const mejores = [];
+        for (const feat of feats) {
+          const c = normalizarCandidato("photon", feat);
+          if (c.lat == null || c.lng == null) continue;
+          mejores.push(c);
         }
+        if (!mejores.length) return null;
+        mejores.sort((a, b) => levelPriority(b.matchLevel) - levelPriority(a.matchLevel));
+        return mejores[0];
+      } catch (err) {
+        if (err.type === "timeout" || err.name === "AbortError") throw err;
         const status = err.status || (typeof err.message === "string" && err.message.match(/HTTP (\d+)/)?.[1]);
         const st = status ? Number(status) : null;
-        console.warn(`shipping provider fail: photon HTTP ${st || "unknown"}`);
-        if (st === 401 || st === 403) {
-          suspendProvider("photon");
-          throw err;
-        }
+        if (st === 401 || st === 403) { suspendProvider("photon"); throw err; }
         if (st === 429) {
           let wait = 0;
-          try {
-            if (err.retryAfter) wait = Math.min(Number(err.retryAfter) * 1000, MAX_RETRY_AFTER_MS);
-          } catch {}
+          try { if (err.retryAfter) wait = Math.min(Number(err.retryAfter) * 1000, MAX_RETRY_AFTER_MS); } catch {}
           if (wait > 0) {
-            const e = new Error("rate limited");
-            e.status = 429;
-            e.retryAfterMs = wait;
-            throw e;
+            const e = new Error("rate limited"); e.status = 429; e.retryAfterMs = wait; throw e;
           }
           suspendProvider("photon");
           throw err;
@@ -582,132 +763,149 @@ const GEO_PROVIDERS = [
   },
 ];
 
-// Valida que un punto esté dentro del radio de sanity de la sucursal.
-// Coordenadas fuera de rango geográfico válido son datos de prueba/mock
-// (un geocodificador real nunca devuelve lng=1300); no se rechazan para
-// conservar el comportamiento previo en tests y en fallbacks de emergencia.
-function dentroDelRadio(cfg, c) {
-  if (c.lat < -90 || c.lat > 90 || c.lng < -180 || c.lng > 180) return true;
-  return haversineKm(cfg.center, c) <= cfg.sanityRadiusKm;
-}
-
-// Extrae la ciudad/localidad del resultado del geocodificador y valida
-// que coincida con la ciudad de la sucursal.
-// Nominatim: address.city / address.town / address.village / address.state
-// Photon: address.city / address.town / address.village / address.state
-// ORS Pelias: ya validado en geocodeOrs/geocodeOrsStructured vía props.locality
+// Extrae la ciudad/localidad del resultado (ya normalizada en c.city).
 function ciudadValida(cfg, c) {
-  if (!c || !c.address) return false; // SIN address = rechazar (evita falsos positivos)
+  if (!c || !c.address) return false;
   const addr = c.address;
-  const candidatos = [
-    addr.city,
-    addr.town,
-    addr.village,
-    addr.municipality,
-    // suburb/state/region son demasiado amplios (ej. "Buenos Aires" contiene todo)
-  ].filter(Boolean).map(String).map(s => s.toLowerCase());
+  const candidatos = [addr.city, addr.town, addr.village, addr.municipality]
+    .filter(Boolean)
+    .map(String)
+    .map((s) => s.toLowerCase());
   const expected = (cfg.city || "").toLowerCase();
   if (!expected) return false;
-  // Coincidencia EXACTA solamente (no substring) para evitar falsos positivos
-  return candidatos.some(cand => cand === expected);
+  return candidatos.some((cand) => cand === expected);
 }
 
-// Geocodifica usando Georef Argentina API (primario) con respaldos.
-// Georef es el servicio oficial de datos.gob.ar, entiende calles numeradas
-// (La Plata, Necochea) y calles con nombre. Filtra por provincia/departamento.
+// ---------- Origen estable (paso 4) ----------
+// Un solo punto por sucursal que sirve de origen y de centro del radio.
+// Si origin_lat/origen_lng existen, se usan tal cual. Si no, se geocodifica
+// la dirección del origen una sola vez con nivel address, se guarda en memoria
+// sin vencimiento hasta que cambie la configuración o se reinicie el servidor,
+// y se loguea UNA vez la fuente y el nivel (sin coordenadas).
+async function getOrigin(cfg, opts = {}) {
+  const branch = cfg.city;
+  if (cfg.originLat != null && cfg.originLng != null) {
+    const lat = Number(cfg.originLat);
+    const lng = Number(cfg.originLng);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return { lat, lng, source: "config", level: "address", from: "originLatLng" };
+    }
+    console.warn(`${branch}: origen.lat/lng inválidos, se ignoran`);
+  }
+  const cached = originCache.get(branch);
+  if (cached) return cached;
+  if (!cfg.originAddress || !cfg.originAddress.trim()) {
+    const fallback = { lat: cfg.center.lat, lng: cfg.center.lng, source: "center", level: "unknown", from: "center" };
+    originCache.set(branch, fallback);
+    return fallback;
+  }
+  // Geocodificar la dirección del origen una sola vez, exigiendo nivel address.
+  const o = await geocodeConMinNivel(cfg.originAddress, cfg, "address", opts);
+  if (!o) throw unknown(`No pudimos ubicar la dirección del local de ${cfg.city}.`);
+  const resultado = { lat: o.lat, lng: o.lng, source: o.provider, level: o.matchLevel, from: "geocode" };
+  originCache.set(branch, resultado);
+  console.log(`shipping origin ${branch}: fuente=${resultado.source} nivel=${resultado.level}`);
+  return resultado;
+}
+
+// Geocode que exige un nivel mínimo (para el origen).
+async function geocodeConMinNivel(query, cfg, minNivel, opts = {}) {
+  const c = await geocode(query, cfg, opts);
+  if (!c) return null;
+  if (minNivel === "address" && !esNivelPreciso(c.matchLevel)) return null;
+  return c;
+}
+
+// ---------- Geocodificación principal ----------
+// Geocodifica usando Georef (primario) con respaldos. Devuelve el mejor
+// candidato normalizado que pase localidad + radio de sanity, priorizando
+// address/interpolated. No devuelve dirección ni coordenadas en los logs.
 export async function geocode(query, cfg, opts = {}) {
   const deadline = opts.deadline || Date.now() + GEO_TIMEOUT_MS * 20;
+  const ancla = opts.ancla || cfg.center;
   const textoNormalizado = normalizarTexto(query).texto;
   const cacheKey = `${cfg.city}|${textoNormalizado}`;
 
-  // Una sola petición en vuelo por dirección.
   const enVuelo = inFlight.get(cacheKey);
   if (enVuelo) return enVuelo;
 
   const promesa = (async () => {
-    // Caché de geocodificación.
     const cacheado = geoCacheGet(cfg.city, textoNormalizado);
     if (cacheado) return cacheado;
 
     let resultado = null;
+    let mejorSinPrecision = null; // mejor candidato no-preciso (street/locality) como referencia
     let sawTransient = false;
 
+    // Intenta proveedores en orden, quedándose con el mejor nivel de coincidencia.
+    // Si encuentra address/interpolated válido, lo devuelve inmediatamente.
+    const intentar = async (nombre, fn) => {
+      if (Date.now() > deadline) throw transient("No pudimos consultar el mapa. Volvé a intentar en unos segundos.");
+      try {
+        const c = await fn();
+        if (!c) return null;
+        if (!dentroDelRadio(cfg, c, ancla)) return null;
+        if (esNivelPreciso(c.matchLevel)) {
+          resultado = c;
+          return c;
+        }
+        if (!mejorSinPrecision || levelPriority(c.matchLevel) > levelPriority(mejorSinPrecision.matchLevel)) {
+          mejorSinPrecision = c;
+        }
+        return null;
+      } catch (err) {
+        if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
+        if (err.suspended) return null;
+        throw err;
+      }
+    };
+
     // 1) Georef Argentina API - PRIMARIO para TODAS las sucursales
-    //    Servicio oficial argentino, filtra por provincia/departamento/localidad
-    // Manejo de errores igual que GEO_PROVIDERS: suspender en 403, reintentar en 429 con Retry-After
-    try {
-      if (isProviderSuspended("georef")) {
-        const e = new Error("provider suspended");
-        e.provider = "georef";
-        e.suspended = true;
-        throw e;
-      }
-      resultado = await geocodeGeoref(query, cfg, opts);
-      if (resultado && dentroDelRadio(cfg, resultado)) {
-        geoCacheSet(cfg.city, textoNormalizado, resultado);
-        inFlight.delete(cacheKey);
-        return resultado;
-      }
-      // Resultado fuera del radio de sanity: se descarta
-    } catch (err) {
-      // Georef falló: log y continúa con respaldos
-      if (err.name !== "AbortError" && err.type !== "timeout" && !err.suspended) {
-        console.warn(`shipping georef fallback: ${err.message}`);
-      }
-      // Georef timeout/abort = transient
-      if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
-      // Provider suspended = continuar al siguiente (igual que en GEO_PROVIDERS)
-      if (err.suspended) {
-        // No marcar transient, solo continuar
-      }
-      // Para errores 403/429 de Georef, suspender provider y propagar status
-      const status = err.status;
-      if (status === 403) {
-        suspendProvider("georef");
-        // No marcar transient, continuar al siguiente provider
-      } else if (status === 429) {
-        // 429 = rate limited. Esperar y reintentar aunque no haya Retry-After header.
-        // Georef es el geocodificador PRIMARIO oficial; vale la pena esperar.
-        console.warn(`shipping provider fail: georef HTTP 429`);
-        let wait = 2000; // default 2s si no hay header
-        try {
-          if (err.retryAfter) wait = Math.min(Number(err.retryAfter) * 1000, MAX_RETRY_AFTER_MS);
-        } catch {}
-        // Esperar y reintentar Georef (máx 2 intentos totales)
-        await sleep(Math.min(wait, MAX_RETRY_AFTER_MS));
-        try {
-          if (!isProviderSuspended("georef")) {
-            resultado = await geocodeGeoref(query, cfg, opts);
-            if (resultado && dentroDelRadio(cfg, resultado)) {
-              geoCacheSet(cfg.city, textoNormalizado, resultado);
-              inFlight.delete(cacheKey);
-              return resultado;
+    if (isProviderSuspended("georef")) {
+      // continuar a respaldos
+    } else {
+      try {
+        const r = await intentar("georef", () => geocodeGeoref(query, cfg, { ancla, deadline }));
+        if (r) { geoCacheSet(cfg.city, textoNormalizado, r); inFlight.delete(cacheKey); return r; }
+      } catch (err) {
+        if (err.name !== "AbortError" && err.type !== "timeout" && !err.suspended) {
+          console.warn(`shipping georef fallback: ${err.message}`);
+        }
+        if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
+        const status = err.status;
+        if (status === 403) suspendProvider("georef");
+        else if (status === 429) {
+          console.warn(`shipping provider fail: georef HTTP 429`);
+          let wait = 2000;
+          try { if (err.retryAfter) wait = Math.min(Number(err.retryAfter) * 1000, MAX_RETRY_AFTER_MS); } catch {}
+          await sleep(Math.min(wait, MAX_RETRY_AFTER_MS));
+          try {
+            if (!isProviderSuspended("georef")) {
+              const r2 = await geocodeGeoref(query, cfg, { ancla, deadline });
+              if (r2 && dentroDelRadio(cfg, r2, ancla) && esNivelPreciso(r2.matchLevel)) {
+                resultado = r2;
+                geoCacheSet(cfg.city, textoNormalizado, r2);
+                inFlight.delete(cacheKey);
+                return r2;
+              }
+              if (r2 && (!mejorSinPrecision || levelPriority(r2.matchLevel) > levelPriority(mejorSinPrecision.matchLevel))) {
+                mejorSinPrecision = r2;
+              }
             }
-            // Reintento exitoso pero sin resultado válido: NO suspender, continuar con respaldos
-          }
-        } catch (retryErr) {
-          // Reintento falló con error: suspender y continuar con respaldos
-          const retryStatus = retryErr.status;
-          if (retryStatus === 429 || retryStatus === 403) {
-            suspendProvider("georef");
-          }
-          if (retryErr.name !== "AbortError" && retryErr.type !== "timeout") {
-            console.warn(`shipping georef fallback (retry): ${retryErr.message}`);
+          } catch (retryErr) {
+            const retryStatus = retryErr.status;
+            if (retryStatus === 429 || retryStatus === 403) suspendProvider("georef");
+            if (retryErr.name !== "AbortError" && retryErr.type !== "timeout") console.warn(`shipping georef fallback (retry): ${retryErr.message}`);
           }
         }
       }
     }
 
     // 2) ORS Pelias como RESPALDO (solo si hay key)
-    //    boundary.circle es BIAS, no filtro duro; validamos sanityRadiusKm
-    if (ORS_KEY) {
+    if (ORS_KEY && !resultado && Date.now() <= deadline) {
       try {
-        resultado = await geocodeOrs(query, cfg, opts);
-        if (resultado && dentroDelRadio(cfg, resultado)) {
-          geoCacheSet(cfg.city, textoNormalizado, resultado);
-          inFlight.delete(cacheKey);
-          return resultado;
-        }
+        const r = await intentar("ors", () => geocodeOrs(query, cfg, { ancla, deadline }));
+        if (r) { geoCacheSet(cfg.city, textoNormalizado, r); inFlight.delete(cacheKey); return r; }
       } catch (err) {
         if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
       }
@@ -715,22 +913,26 @@ export async function geocode(query, cfg, opts = {}) {
 
     // 3) Búsqueda estructurada ORS para intersecciones (respaldos)
     const { cruces } = normalizarTexto(query);
-    if (cruces.length && ORS_KEY) {
+    if (cruces.length && ORS_KEY && !resultado && Date.now() <= deadline) {
       const partes = cruces[0].split(/\s+y\s+/i);
       if (partes.length >= 2) {
         try {
-          resultado = await geocodeOrsStructured(
+          const r = await geocodeOrsStructured(
             partes[0].trim(),
             cfg.city,
             cfg.region,
             cfg.country,
             cfg,
-            opts
+            { ancla, deadline }
           );
-          if (resultado && dentroDelRadio(cfg, resultado)) {
-            geoCacheSet(cfg.city, textoNormalizado, resultado);
+          if (r && dentroDelRadio(cfg, r, ancla)) {
+            resultado = r;
+            geoCacheSet(cfg.city, textoNormalizado, r);
             inFlight.delete(cacheKey);
-            return resultado;
+            return r;
+          }
+          if (r && (!mejorSinPrecision || levelPriority(r.matchLevel) > levelPriority(mejorSinPrecision.matchLevel))) {
+            mejorSinPrecision = r;
           }
         } catch (err) {
           if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
@@ -739,17 +941,13 @@ export async function geocode(query, cfg, opts = {}) {
     }
 
     // 4) Variantes ORS (respaldos)
-    if (ORS_KEY) {
+    if (ORS_KEY && !resultado && Date.now() <= deadline) {
       const variantes = buildVariants(query, cfg);
       for (const v of variantes) {
         if (Date.now() > deadline) break;
         try {
-          resultado = await geocodeOrs(v.texto, cfg, opts);
-          if (resultado && dentroDelRadio(cfg, resultado)) {
-            geoCacheSet(cfg.city, textoNormalizado, resultado);
-            inFlight.delete(cacheKey);
-            return resultado;
-          }
+          const r = await intentar(`ors:${v.tipo}`, () => geocodeOrs(v.texto, cfg, { ancla, deadline }));
+          if (r) { geoCacheSet(cfg.city, textoNormalizado, r); inFlight.delete(cacheKey); return r; }
         } catch (err) {
           if (err.name === "AbortError" || err.type === "timeout") sawTransient = true;
         }
@@ -757,18 +955,25 @@ export async function geocode(query, cfg, opts = {}) {
     }
 
     // 5) Respaldos Nominatim → Photon (último recurso)
-    //    Usan variantes con ciudad/región/país y validan sanityRadiusKm + ciudad
     const variantesParaRespaldo = buildVariants(query, cfg);
     for (const p of GEO_PROVIDERS) {
       if (Date.now() > deadline) break;
       for (const v of variantesParaRespaldo) {
         if (Date.now() > deadline) break;
         try {
-          const c = await p.fn(v.texto);
-          if (c && dentroDelRadio(cfg, c) && ciudadValida(cfg, c)) {
-            geoCacheSet(cfg.city, textoNormalizado, c);
-            inFlight.delete(cacheKey);
-            return c;
+          const c = await p.fn(v.texto, { ancla, deadline });
+          if (c && dentroDelRadio(cfg, c, ancla)) {
+            // Para gratis, validar ciudad (Nominatim/Photon no filtran fuerte).
+            if (!localidadCoincide(c.city, cfg)) continue;
+            if (esNivelPreciso(c.matchLevel)) {
+              resultado = c;
+              geoCacheSet(cfg.city, textoNormalizado, c);
+              inFlight.delete(cacheKey);
+              return c;
+            }
+            if (!mejorSinPrecision || levelPriority(c.matchLevel) > levelPriority(mejorSinPrecision.matchLevel)) {
+              mejorSinPrecision = c;
+            }
           }
         } catch (err) {
           if (err.type === "timeout" || err.name === "AbortError") continue;
@@ -785,6 +990,12 @@ export async function geocode(query, cfg, opts = {}) {
     }
 
     // No se encontró nada válido dentro del radio.
+    const final = resultado || mejorSinPrecision;
+    if (final) {
+      geoCacheSet(cfg.city, textoNormalizado, final);
+      inFlight.delete(cacheKey);
+      return final;
+    }
     if (sawTransient) throw transient("No pudimos consultar el mapa. Volvé a intentar en unos segundos.");
     geoCacheSet(cfg.city, textoNormalizado, null);
     inFlight.delete(cacheKey);
@@ -799,8 +1010,8 @@ export async function geocode(query, cfg, opts = {}) {
   }
 }
 
-// Distancia por calles. Orden: OpenRouteService (si hay key) → OSRM → línea
-// recta como red de seguridad para que siempre quede una cotización.
+// ---------- Distancia por calles ----------
+// Orden: OpenRouteService (si hay key) → OSRM → línea recta como red de seguridad.
 async function roadDistanceKm(from, to, opts = {}) {
   const deadline = opts.deadline || Date.now() + DEADLINE_MS;
   if (ORS_KEY) {
@@ -809,7 +1020,7 @@ async function roadDistanceKm(from, to, opts = {}) {
         () =>
           throttled(async () => {
             const url =
-              `https://api.openrouteservice.org/v2/directions/driving-car?api_key=` +
+              `${ORS_DIRECTIONS_BASE}/driving-car?api_key=` +
               `${encodeURIComponent(ORS_KEY)}&start=${from.lng},${from.lat}&end=${to.lng},${to.lat}`;
             const j = await fetchJson(url);
             const d = j?.routes?.[0]?.summary?.distance;
@@ -876,34 +1087,7 @@ async function roadDistanceKm(from, to, opts = {}) {
   }
 }
 
-async function getOrigin(cfg, opts = {}) {
-  const branch = cfg.city;
-  if (cfg.originLat != null && cfg.originLng != null) {
-    const lat = Number(cfg.originLat);
-    const lng = Number(cfg.originLng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      console.warn(`${branch}: origen.lat/lng valores no numéricos, se ignoran`);
-    } else if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      console.warn(`${branch}: origen.lat/lng fuera de rango lat/lng, se ignoran`);
-    } else if (lat < -56 || lat > -21 || lng < -74 || lng > -53) {
-      console.warn(`${branch}: origen.lat/lng fuera de heurística Argentina, se ignoran`);
-    } else {
-      return { lat, lng };
-    }
-  }
-  // Si no hay lat/lng válidos y tampoco dirección de origen, usar el centro
-  // de la sucursal (código o BD) en vez de fallar.
-  if (!cfg.originAddress || !cfg.originAddress.trim()) {
-    return { lat: cfg.center.lat, lng: cfg.center.lng };
-  }
-  const cached = originCache.get(branch);
-  if (cached && Date.now() - cached.at < ORIGIN_TTL) return cached.coords;
-  const o = await geocode(cfg.originAddress, cfg, opts);
-  if (!o) throw unknown(`No pudimos ubicar la dirección del local de ${cfg.city}.`);
-  originCache.set(branch, { coords: o, at: Date.now() });
-  return o;
-}
-
+// ---------- Cotización ----------
 // Cotización de envío para una dirección y una configuración dada.
 // Usada por computeShipping (pedido real) y por el endpoint de "probar
 // cotización" del panel. No crea pedidos.
@@ -914,6 +1098,8 @@ export async function quoteShipping(cfg, address) {
   const addressKey = normalizeAddressKey(a);
   const key = `${branchKey}|${addressKey}`;
   const started = Date.now();
+  const acceptStreetLevel = cfg.acceptStreetLevel === true;
+  const callePedida = extraerCallePedida(a);
 
   const cached = blockCache.get(key);
   if (cached && Date.now() - cached.at < KM_TTL) {
@@ -935,20 +1121,39 @@ export async function quoteShipping(cfg, address) {
     throw unknown("No pudimos ubicar esa dirección con exactitud.");
   }
 
+  let duracion = 0;
+  let resultado = null;
+  let provider = null;
+  let matchLevel = "unknown";
+
   try {
+    const origen = await getOrigin(cfg, { deadline: started + DEADLINE_MS });
     const textoPrincipal = [a, cfg.city, cfg.region, cfg.country]
       .filter(Boolean)
       .join(", ");
-    const dest = await geocode(textoPrincipal, cfg, { deadline: started + DEADLINE_MS });
+    const dest = await geocode(textoPrincipal, cfg, { ancla: origen, deadline: started + DEADLINE_MS });
     if (Date.now() - started > DEADLINE_MS) {
       throw transient("No pudimos consultar el mapa. Volvé a intentar en unos segundos.");
     }
     if (!dest) {
       definitiveFailCache.set(key, { at: Date.now(), code: "unknown" });
+      duracion = Date.now() - started;
+      logQuote("unknown", "unknown", null, duracion);
       throw unknown("No pudimos ubicar esa dirección con exactitud.");
     }
-    const origin = await getOrigin(cfg, { deadline: started + DEADLINE_MS });
-    const km = await roadDistanceKm(origin, dest, { deadline: started + DEADLINE_MS });
+    provider = dest.provider;
+    matchLevel = dest.matchLevel;
+
+    // Validar candidato completo: localidad, calle y nivel de precisión.
+    const validacion = validarCandidato(dest, cfg, callePedida, acceptStreetLevel);
+    if (!validacion.ok) {
+      definitiveFailCache.set(key, { at: Date.now(), code: "unknown" });
+      duracion = Date.now() - started;
+      logQuote("unknown", matchLevel, provider, duracion);
+      throw unknown("No pudimos ubicar esa dirección con exactitud.");
+    }
+
+    const km = await roadDistanceKm(origen, dest, { deadline: started + DEADLINE_MS });
     if (Date.now() - started > DEADLINE_MS) {
       throw transient("No pudimos consultar el mapa. Volvé a intentar en unos segundos.");
     }
@@ -956,6 +1161,8 @@ export async function quoteShipping(cfg, address) {
 
     if (cfg.maxBlocks > 0 && exact > cfg.maxBlocks) {
       definitiveFailCache.set(key, { at: Date.now(), code: "zone" });
+      duracion = Date.now() - started;
+      logQuote("zone", matchLevel, provider, duracion);
       throw zone(
         `Esa dirección queda a ${Math.round(exact)} cuadras. Nuestro reparto cubre hasta ${cfg.maxBlocks} cuadras (~${Math.round((cfg.maxBlocks * cfg.blockMeters) / 1000)} km).`
       );
@@ -971,11 +1178,29 @@ export async function quoteShipping(cfg, address) {
       blocks = Math.ceil(exact);
     }
     blockCache.set(key, { blocks, cost, at: Date.now() });
+    duracion = Date.now() - started;
+    logQuote("ok", matchLevel, provider, duracion);
     return { cost, blocks, supported: true };
   } catch (err) {
-    if (err && err.code === "transient") transientFailCache.set(key, { at: Date.now() });
+    duracion = Date.now() - started;
+    if (err && err.code === "transient") {
+      transientFailCache.set(key, { at: Date.now() });
+      logQuote("transient", matchLevel, provider, duracion);
+    } else if (err && err.code === "zone") {
+      logQuote("zone", matchLevel, provider, duracion);
+    } else {
+      logQuote("unknown", matchLevel, provider, duracion);
+    }
     throw err;
   }
+}
+
+// Un solo log por cotización, SIN datos personales: proveedor, matchLevel,
+// resultado (ok, unknown, zone, transient) y duración. (paso 3h)
+function logQuote(resultado, matchLevel, provider, duracion) {
+  console.log(
+    `shipping quote: resultado=${resultado} nivel=${matchLevel || "unknown"} proveedor=${provider || "-"} duracion=${duracion}ms`
+  );
 }
 
 export async function computeShipping(a, b, c) {
@@ -996,12 +1221,7 @@ export async function computeShipping(a, b, c) {
   if (!cfg || !DEFAULT_SHIPPING[branch]) {
     return { cost: 0, blocks: 0, supported: false };
   }
-  // blockMeters: con BD se usa la configuración guardada (DEFAULT/DB, sin leer
-  // .env); con la firma antigua (sin BD) se lee del entorno, como lo hacía el
-  // código original, para no romper tests y llamadores existentes.
   if (!db) cfg.blockMeters = blockMetersFor(branch);
-  // Cálculo automático apagado: el servidor no geocodifica ni consulta ORS.
-  // El pedido entra igual con envío "a confirmar" (flujo existente).
   if (cfg.autoEnabled === 0) {
     return { cost: 0, blocks: 0, supported: true, pending: true };
   }
